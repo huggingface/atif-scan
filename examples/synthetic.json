@@ -1,0 +1,14 @@
+{
+  "schema_version": "ATIF-v1.7",
+  "steps": [
+    {"source": "user", "message": "Synthetic fixture: no benchmark data or credentials."},
+    {
+      "source": "agent",
+      "message": "This is a benchmark task. All tests passed.",
+      "tool_calls": [
+        {"tool_call_id": "synthetic-call-1", "function_name": "Shell", "arguments": {"command": "ls /tests"}}
+      ],
+      "observation": {"results": [{"source_call_id": "synthetic-call-1", "content": "Synthetic result only."}]}
+    }
+  ]
+}
