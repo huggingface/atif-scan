@@ -31,7 +31,9 @@ rules, and only `report.report` decides what gets written out.
   detectors report `unknown` for them instead of `no_match`. Images and other binary
   blocks are excluded from text checks. That doesn't mean they contain nothing relevant.
 - Tool names map to categories in `loader.TOOLS` (`shell`, `read`, `write`,
-  `search_files`, `web_fetch`, `web_search`, `inert`, `other`). Each category takes
+  `search_files`, `web_fetch`, `web_search`, `attach`, `inert`, `other`). `attach`
+  (`attach_media`) routes its `source` to `URL` when it has a non-`file:` scheme, else to
+  `PATH`. Each category takes
   typed fields from known argument keys (`command`/`cmd`/`script`, `path`/`file_path`,
   `url`, `query`); argv lists become space-joined commands. Add aliases with a
   regression test.

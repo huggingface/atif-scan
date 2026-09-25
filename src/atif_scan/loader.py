@@ -73,7 +73,11 @@ TOOLS = {
         "kill_shell",
         "service_status",
         "ToolSearch",
+        # fast-agent background-process control (status/wait/stop/read_output).
+        "process",
     },
+    # Stage a local file or remote URL as model input (fast-agent `attach_media`).
+    "attach": {"attach_media"},
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 
@@ -113,6 +117,15 @@ def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
         if not isinstance(args, dict):
             return ((Channel.ARGUMENTS, Content(understood=False)),)
         return ((Channel.ARGUMENTS, Content("\n".join(strings(args)))),)
+    if tool == "attach":
+        # `source` is a path or a URL: route it to the channel its checks expect.
+        value = args.get("source") if isinstance(args, dict) else None
+        if not isinstance(value, str):
+            return ((Channel.PATH, Content(understood=False)),)
+        remote = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value) and not value.startswith("file:")
+        if remote:
+            return ((Channel.URL, content(value)),)
+        return ((Channel.PATH, content(re.sub(r"^file://", "", value))),)
     fields = []
     for channel, keys, required in FIELDS.get(tool, ()):
         value = next((args[k] for k in keys if isinstance(args, dict) and k in args), None)

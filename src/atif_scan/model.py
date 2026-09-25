@@ -57,7 +57,7 @@ class Surface:
 @dataclass(frozen=True)
 class ToolCall:
     index: int
-    # Normalized category: shell, read, write, search_files, web_fetch, web_search,
+    # Normalized category: shell, read, write, search_files, web_fetch, web_search, attach,
     # inert (orchestration with no evidence value) or other (unrecognized).
     tool: str
     fields: tuple[tuple[Channel, Content], ...] = field(repr=False)

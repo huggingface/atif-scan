@@ -69,7 +69,7 @@ def destinations(surface: Surface) -> frozenset[str]:
         NETWORK.search(surface.content.text) or re.search(PACKAGE, surface.content.text, re.I)
     ):
         return frozenset()
-    if surface.tool not in {"shell", "web_fetch", "web_search"}:
+    if surface.tool not in {"shell", "web_fetch", "web_search", "attach"}:
         return frozenset()
     kinds = set()
     for value in URL.findall(surface.content.text):
