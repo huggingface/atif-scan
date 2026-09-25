@@ -10,7 +10,8 @@
 - When a directory or `hf://` prefix is expanded, each input is labelled by its path
   *relative to the root you passed* (e.g. `trial-1/agent/trajectory.json`). The root
   itself never appears. Don't scan roots whose sub-paths are sensitive; use a manifest.
-- `hf://` reads use `huggingface_hub` and your saved token. Remote error messages
+- Network access happens only for `hf://` / huggingface.co inputs you name, via
+  `huggingface_hub` and your saved token. Other URLs are refused. Remote error messages
   (which may contain URLs) are withheld; files over the size cap are rejected.
 - Plugins and rule files are **trusted** code/configuration, not a sandbox. A plugin can
   read raw text and do its own I/O. Only load modules you have reviewed. Plugins are

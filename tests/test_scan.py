@@ -317,13 +317,23 @@ def test_policy_strict_parsing():
             load_rules(value)
 
 
-def test_cli_json_missing_input_and_no_raw_error(tmp_path, capsys):
+def test_cli_missing_path_is_an_error_without_echoing_it(tmp_path, capsys):
     path = tmp_path / "sensitive-path.json"
     assert main([str(path)]) == 2
     captured = capsys.readouterr()
-    output = json.loads(captured.out)
-    assert output["coverage"]["available"] == 0
-    assert str(path) not in captured.out + captured.err
+    assert not captured.out and "path_not_found" in captured.err
+    assert str(path) not in captured.err
+
+
+def test_cli_manifest_missing_file_is_reported_unavailable(tmp_path, capsys):
+    manifest = tmp_path / "inputs.json"
+    manifest.write_text(json.dumps({"inputs": [{"id": "gone", "path": "sensitive.json"}]}))
+    assert main(["--manifest", str(manifest), "--format", "json"]) == 2
+    captured = capsys.readouterr()
+    item = json.loads(captured.out)["inputs"][0]
+    assert item["input_status"] == "unavailable_or_invalid"
+    assert item["input_error"] == "unreadable_trace"
+    assert "sensitive" not in captured.out + captured.err
 
 
 def test_cli_threshold(tmp_path, capsys):

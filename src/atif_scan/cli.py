@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import re
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -15,7 +16,7 @@ from .engine import Engine
 from .loader import TraceError
 from .policy import load_rules
 from .report import document, render_rich, report, to_json, to_text
-from .sources import DEFAULT_PATTERN, Source, SourceError, is_remote, resolve
+from .sources import DEFAULT_PATTERN, Source, SourceError, file_source, resolve
 
 
 def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
@@ -34,11 +35,12 @@ def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
             raise ValueError("invalid_input_record")
         if not {"id", "path"} <= set(raw) or not isinstance(raw["path"], str):
             raise ValueError("invalid_input_record")
-        location = raw["path"] if is_remote(raw["path"]) else str(path.parent / raw["path"])
-        (source,) = resolve([location], pattern="*")  # a file: exactly one source
+        location = raw["path"]
+        if "://" not in location:
+            location = str(path.parent / location)
         result.append(
             (
-                Source(identifier(raw["id"]), source.load),
+                file_source(identifier(raw["id"]), location),
                 Context(raw.get("task"), raw.get("partial", False)),
             )
         )
@@ -87,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "paths",
         nargs="*",
-        help="trace files, directories, or hf:// paths (e.g. hf://buckets/org/name/run1)",
+        help="trace files, directories, hf:// paths or huggingface.co URLs "
+        "(e.g. hf://buckets/org/name/run1)",
     )
     parser.add_argument(
         "--pattern",
@@ -141,17 +144,24 @@ def main(argv: list[str] | None = None) -> int:
     output = []
     invalid = failed = False
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
-    for source, context in records:
+    progress = sys.stderr.isatty() and len(records) > 1
+    for number, (source, context) in enumerate(records, 1):
+        if progress:
+            print(f"\ratif-scan: scanning {number}/{len(records)}", end="", file=sys.stderr)
+        error = None
         try:
             trace = source.load()
-        except TraceError:
+        except TraceError as exc:
             trace = None
             invalid = True
+            # TraceError carries fixed codes only (e.g. trace_too_large); re-check anyway.
+            error = str(exc) if re.fullmatch(r"[a-z_]{1,64}", str(exc)) else "unreadable_trace"
         assessments = engine.evaluate(trace, context)
         item = report(assessments)
         item.update(
             input_id=source.label,
             input_status="available" if trace is not None else "unavailable_or_invalid",
+            input_error=error,
             partial=context.partial,
             agent_steps=trace.agent_steps if trace is not None else None,
             # Counts only: tool names and arguments never enter the report.
@@ -164,6 +174,8 @@ def main(argv: list[str] | None = None) -> int:
             threshold is not None
             and any(a.counts and a.spec.severity >= threshold for a in assessments)
         )
+    if progress:
+        print("\r\033[K", end="", file=sys.stderr)
     emit(document(output, version("atif-scan")), args.format)
     return 2 if invalid else 1 if failed else 0
 

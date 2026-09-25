@@ -2,7 +2,9 @@
 
 <!-- fast-agent subagents -->
 
-Read README.md and SECURITY.md first. Keep the core dependency-free and offline.
+Read README.md and SECURITY.md first. Keep the core (model, loader, detectors, rules,
+engine) stdlib-only and offline; `huggingface_hub` and `rich` are imported lazily, only
+by `sources` (hf:// inputs) and `report` (rich text).
 Do not execute trajectory commands or URLs. Never commit real traces, auth files,
 raw findings or copied benchmark solutions. Use synthetic fixtures only.
 

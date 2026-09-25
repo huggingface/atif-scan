@@ -65,7 +65,15 @@ TOOLS = {
     "web_fetch": {"web_fetch", "fetch_url", "webfetch", "WebFetch", "fetch"},
     "web_search": {"web_search", "web_search_preview", "WebSearch"},
     # Orchestration tools whose arguments carry no command/path/URL evidence.
-    "inert": {"todo_write", "TodoWrite", "get_output", "kill_shell", "service_status"},
+    # ToolSearch is Claude Code's deferred-tool registry lookup, not a web search.
+    "inert": {
+        "todo_write",
+        "TodoWrite",
+        "get_output",
+        "kill_shell",
+        "service_status",
+        "ToolSearch",
+    },
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 

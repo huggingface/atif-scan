@@ -112,8 +112,13 @@ def sections(item: dict) -> dict[str, list[dict]]:
 
 def headline(item: dict) -> str:
     if item["input_status"] != "available":
-        return "unavailable or invalid input"
-    score = f"score {item['score']} ({item['severity']})" if item["severity"] else "no findings"
+        return f"not scanned: {item.get('input_error') or 'unavailable_or_invalid'}"
+    if item["severity"] is None:
+        score = "no findings"
+    elif item["severity"] == "info":
+        score = "info only"
+    else:
+        score = f"score {item['score']} ({item['severity']})"
     return f"{score} · {'INCOMPLETE' if item['incomplete'] else 'complete'}"
 
 
@@ -125,6 +130,22 @@ def counts(item: dict) -> str:
         f"unrecognized tools {item['unrecognized_tool_calls']}"
         + (" · partial" if item["partial"] else "")
     )
+
+
+def unresolved(item: dict, group: dict[str, list[dict]]) -> list[str]:
+    """One line per unresolved status, instead of a row per check. Skipped if unscanned."""
+    if item["input_status"] != "available":
+        return []
+    lines = []
+    for status in (Status.ERROR, Status.UNKNOWN):
+        ids = [a["id"] for a in group["unresolved"] if a["status"] == status]
+        if ids:
+            lines.append(f"{status.value} ({len(ids)}): {', '.join(ids)}")
+    return lines
+
+
+def tally(group: dict[str, list[dict]]) -> str:
+    return f"{len(group['no_match'])} no match · {len(group['not_applicable'])} not applicable"
 
 
 def footer(doc: dict) -> str:
@@ -188,16 +209,11 @@ def render_rich(doc: dict, file: IO[str] | None = None) -> None:
             table.add_row(
                 Text("expected", style="green"), a["id"], "by " + ", ".join(a["expected_by"])
             )
-        for a in group["unresolved"]:
-            table.add_row(Text(a["status"], style="magenta"), a["id"], "")
         if table.row_count:
             console.print(table)
-        console.print(
-            Text(
-                f"{len(group['no_match'])} no match · "
-                f"{len(group['not_applicable'])} not applicable",
-                style="dim",
-            )
-        )
+        for line in unresolved(item, group):
+            console.print(Text(line, style="magenta"))
+        if item["input_status"] == "available":
+            console.print(Text(tally(group), style="dim"))
     console.print()
     console.print(Text(footer(doc), style="dim"))

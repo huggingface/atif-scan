@@ -106,6 +106,15 @@ def test_inert_tools_do_not_reduce_coverage():
     assert r["lookup.benchmark_source"].status == Status.NO_MATCH
 
 
+def test_claude_code_tool_search_is_inert_not_web_search():
+    # Regression: ToolSearch (deferred-tool registry lookup) made traces incomplete.
+    raw = trace(step(calls=[call("ToolSearch", {"query": "select:WebFetch", "max_results": 1})]))
+    r = results(raw)
+    assert parse_trace(raw).unrecognized_tool_calls == 0
+    assert r["network.web_search"].status == Status.NO_MATCH
+    assert r["network.external_url"].status == Status.NO_MATCH
+
+
 def test_optional_search_path_absent_is_complete():
     raw = trace(step(calls=[call("grep", {"pattern": "TODO"})]))
     assert status(raw, "access.test_path") == Status.NO_MATCH

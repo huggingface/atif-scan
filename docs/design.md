@@ -7,7 +7,7 @@ detector or changing the engine.
 
 | Module | Role |
 |---|---|
-| `sources` | Resolves files, directories and `hf://` paths to loadable inputs (the only input I/O) |
+| `sources` | Resolves files, directories, `hf://` paths and Hub URLs to loadable inputs (the only input I/O) |
 | `model`, `loader` | Immutable `Trace → Step → ToolCall / Observation` view of ATIF v1 |
 | `checks` | The plugin contract: `CheckSpec`, `Context`, `Detection`, `Status`, `Severity` |
 | `detectors` | Built-ins (`builtin`, `integrity`) and the `RegexDetector` / `SurfaceDetector` / `ObservationDetector` helpers |

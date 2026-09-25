@@ -229,8 +229,8 @@ def test_directory_expansion_is_sorted_relative_and_pattern_scoped(tmp_path, cap
     (tmp_path / "a-trial" / "agent" / "other.json").write_text("{}")
     labels = [s.label for s in resolve([str(tmp_path)])]
     assert labels == [
-        "a-trial/agent/trajectory.json",
-        "b-trial/agent/trajectory.json",
+        "a-trial/agent",
+        "b-trial/agent",
         "input-0003",
     ]
     assert len(resolve([str(tmp_path)], pattern="*.json")) == 4
@@ -241,10 +241,10 @@ def test_directory_expansion_is_sorted_relative_and_pattern_scoped(tmp_path, cap
 
 
 def test_empty_directory_is_an_error_not_a_clean_result(tmp_path, capsys):
-    with pytest.raises(SourceError, match="no_traces_found"):
+    with pytest.raises(SourceError, match="no_files_match_pattern"):
         resolve([str(tmp_path)])
     assert main([str(tmp_path)]) == 2
-    assert "no_traces_found" in capsys.readouterr().err
+    assert "no_files_match_pattern" in capsys.readouterr().err
 
 
 class FakeHubFS:
@@ -254,8 +254,12 @@ class FakeHubFS:
         self.files = files
         self.fail_open = fail_open
 
-    def isdir(self, path):
-        return any(p.startswith(path + "/") for p in self.files)
+    def info(self, path):
+        if path in self.files:
+            return {"type": "file", "size": len(self.files[path])}
+        if any(p.startswith(path + "/") for p in self.files):
+            return {"type": "directory", "size": 0}
+        raise FileNotFoundError(f"https://huggingface.co/{path}?token={SECRET}")
 
     def find(self, path, detail=False):
         return {
@@ -282,7 +286,7 @@ def hub_files():
 def test_hf_bucket_prefix_expansion_and_loading():
     fs = FakeHubFS(hub_files())
     found = resolve(["hf://buckets/org/runs/job1/"], fs=fs)
-    assert [s.label for s in found] == ["t1/agent/trajectory.json", "t2/agent/trajectory.json"]
+    assert [s.label for s in found] == ["t1/agent", "t2/agent"]
     assert found[0].load().agent_steps == 1
     (single,) = resolve(["hf://buckets/org/runs/job1/t1/agent/trajectory.json"], fs=fs)
     assert single.label == "input-0001" and single.load().tool_calls == 1
@@ -300,21 +304,68 @@ def test_hf_read_errors_are_withheld_and_size_capped(monkeypatch):
         source.load()
 
 
-def test_cli_hf_paths_and_missing_extra(monkeypatch, capsys, tmp_path):
+def test_cli_hf_paths_web_urls_and_manifest(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(sources_module, "hf_filesystem", lambda: FakeHubFS(hub_files()))
-    assert main(["hf://buckets/org/runs/job1", "--fail-on", "medium", "--format", "json"]) == 1
-    out = capsys.readouterr().out
-    assert "buckets/org" not in out
-    assert [x["input_id"] for x in json.loads(out)["inputs"]] == [
-        "t1/agent/trajectory.json",
-        "t2/agent/trajectory.json",
-    ]
+    web = "https://huggingface.co/buckets/org/runs/tree/job1"
+    for location in ["hf://buckets/org/runs/job1", web]:
+        assert main([location, "--fail-on", "medium", "--format", "json"]) == 1
+        out = capsys.readouterr().out
+        assert "buckets/org" not in out
+        assert [x["input_id"] for x in json.loads(out)["inputs"]] == ["t1/agent", "t2/agent"]
     manifest = tmp_path / "inputs.json"
     remote = "hf://buckets/org/runs/job1/t1/agent/trajectory.json"
     manifest.write_text(json.dumps({"inputs": [{"id": "one", "path": remote}]}))
     assert main(["--manifest", str(manifest), "--format", "json"]) == 0
     assert json.loads(capsys.readouterr().out)["inputs"][0]["input_id"] == "one"
-    monkeypatch.undo()
-    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
-    assert main(["hf://buckets/org/runs/job1"]) == 2
-    assert "hf_paths_require_atif_scan_hub_extra" in capsys.readouterr().err
+
+
+def test_cli_hf_missing_path_is_an_error_without_echoing_remote_message(monkeypatch, capsys):
+    monkeypatch.setattr(sources_module, "hf_filesystem", lambda: FakeHubFS(hub_files()))
+    assert main(["hf://buckets/org/runs/nope"]) == 2
+    err = capsys.readouterr().err
+    assert "hf_path_not_found_or_no_access" in err and SECRET not in err
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://huggingface.co/buckets/o/b/tree/run/x",
+            "hf://buckets/o/b/run/x",
+        ),
+        ("https://huggingface.co/buckets/o/b", "hf://buckets/o/b"),
+        (
+            "https://huggingface.co/buckets/o/b/resolve/run/trajectory.json",
+            "hf://buckets/o/b/run/trajectory.json",
+        ),
+        (
+            "https://huggingface.co/datasets/o/d/tree/main/traces/run%201",
+            "hf://datasets/o/d@main/traces/run 1",
+        ),
+        ("https://hf.co/datasets/o/d/blob/v2/t.json", "hf://datasets/o/d@v2/t.json"),
+        ("https://huggingface.co/o/model/tree/main/logs", "hf://o/model@main/logs"),
+        ("hf://buckets/o/b/x", "hf://buckets/o/b/x"),
+        ("relative/dir", "relative/dir"),
+    ],
+)
+def test_hub_web_urls_normalize_to_hf_paths(url, expected):
+    assert sources_module.normalize(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://example.org/trace.json", "s3://bucket/x", "https://huggingface.co/buckets/o"],
+)
+def test_other_urls_are_rejected(url):
+    with pytest.raises(SourceError):
+        sources_module.normalize(url)
+
+
+def test_core_import_does_not_load_optional_io_libraries():
+    import subprocess
+
+    code = (
+        "import sys, atif_scan, atif_scan.cli; "
+        "assert not {'huggingface_hub', 'rich'} & set(sys.modules), sorted(sys.modules)"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)

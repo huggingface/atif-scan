@@ -23,33 +23,26 @@ wheels = [
 name = "atif-scan"
 version = "0.2.0"
 source = { editable = "." }
-
-[package.optional-dependencies]
-hub = [
+dependencies = [
     { name = "huggingface-hub" },
-]
-pretty = [
     { name = "rich" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
-    { name = "rich" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=2.0.0" },
-    { name = "rich", marker = "extra == 'pretty'", specifier = ">=15.0.0" },
+    { name = "huggingface-hub", specifier = ">=2.0.0" },
+    { name = "rich", specifier = ">=15.0.0" },
 ]
-provides-extras = ["hub", "pretty"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8" },
-    { name = "rich", specifier = ">=15.0.0" },
     { name = "ruff", specifier = ">=0.11" },
 ]
 
