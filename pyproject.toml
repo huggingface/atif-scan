@@ -4,16 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "atif-scan"
-version = "0.1.0"
+version = "0.2.0"
 description = "Composable, evidence-scoped behavioral checks over ATIF trajectories"
 requires-python = ">=3.11"
 dependencies = []
+
+[project.optional-dependencies]
+# hf:// inputs (Hub buckets, datasets, models). Imported lazily; core stays offline.
+hub = ["huggingface_hub>=2.0.0"]
+# Rich text reports; plain text is used when absent.
+pretty = ["rich>=15.0.0"]
 
 [project.scripts]
 atif-scan = "atif_scan.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.11"]
+dev = ["pytest>=8", "ruff>=0.11", "rich>=15.0.0"]
 
 [tool.ruff]
 line-length = 100

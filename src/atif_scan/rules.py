@@ -93,3 +93,50 @@ class Requires:
 class Rule:
     spec: CheckSpec
     expression: Expression
+
+    @property
+    def dependencies(self) -> tuple[str, ...]:
+        return tuple(sorted(self.expression.dependencies()))
+
+    def evaluate(self, results: Mapping[str, Detection]) -> Detection:
+        """Combine already-evaluated dependency results; cites matched dependency evidence."""
+        truth = self.expression.evaluate(results)
+        if truth is None:
+            return Detection(Status.UNKNOWN, complete=False)
+        if truth is False:
+            # Short-circuit truth can be known even when an irrelevant input is unknown.
+            return Detection(Status.NO_MATCH)
+        deps = [results[d] for d in self.dependencies]
+        evidence = dict.fromkeys(at for r in deps if r.status == Status.MATCH for at in r.evidence)
+        return Detection(Status.MATCH, tuple(evidence), all(r.complete for r in deps))
+
+
+@dataclass(frozen=True)
+class Allowance:
+    """A "positive" component: declares that matches of `covers` are expected.
+
+    It never changes what a detector found. When `when` is true (or absent, meaning the
+    allowance holds within its task scope), matched assessments it covers are reported as
+    expected and excluded from the score. An unknown `when` does not apply the allowance:
+    a finding is only excused on positive evidence. Rules see raw detector results, so to
+    excuse a rule's match, cover the rule's own ID.
+    """
+
+    spec: CheckSpec
+    covers: frozenset[str]
+    when: Expression | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.covers, frozenset) or not self.covers:
+            raise ValueError("allowance_must_cover_checks")
+        for key in self.covers:
+            identifier(key)
+
+    @property
+    def dependencies(self) -> tuple[str, ...]:
+        return tuple(sorted(self.when.dependencies())) if self.when is not None else ()
+
+    def evaluate(self, results: Mapping[str, Detection]) -> Detection:
+        if self.when is None:
+            return Detection(Status.MATCH)
+        return Rule(self.spec, self.when).evaluate(results)

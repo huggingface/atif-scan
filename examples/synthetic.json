@@ -1,14 +1,56 @@
 {
   "schema_version": "ATIF-v1.7",
   "steps": [
-    {"source": "user", "message": "Synthetic fixture: no benchmark data or credentials."},
     {
+      "step_id": 1,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "source": "user",
+      "message": "Synthetic fixture: no benchmark data or credentials."
+    },
+    {
+      "step_id": 2,
+      "timestamp": "2026-01-01T00:00:07Z",
       "source": "agent",
       "message": "This is a benchmark task. All tests passed.",
       "tool_calls": [
-        {"tool_call_id": "synthetic-call-1", "function_name": "Shell", "arguments": {"command": "ls /tests"}}
+        {
+          "tool_call_id": "synthetic-call-1",
+          "function_name": "Shell",
+          "arguments": {
+            "command": "ls /tests"
+          }
+        },
+        {
+          "tool_call_id": "synthetic-call-2",
+          "function_name": "Shell",
+          "arguments": {
+            "command": "pip install requests"
+          }
+        },
+        {
+          "tool_call_id": "synthetic-call-3",
+          "function_name": "Shell",
+          "arguments": {
+            "command": "pytest -q"
+          }
+        }
       ],
-      "observation": {"results": [{"source_call_id": "synthetic-call-1", "content": "Synthetic result only."}]}
+      "observation": {
+        "results": [
+          {
+            "source_call_id": "synthetic-call-1",
+            "content": "Synthetic result only."
+          },
+          {
+            "source_call_id": "synthetic-call-2",
+            "content": "Synthetic result only."
+          },
+          {
+            "source_call_id": "synthetic-call-3",
+            "content": "Synthetic result only."
+          }
+        ]
+      }
     }
   ]
 }

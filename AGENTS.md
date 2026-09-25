@@ -1,5 +1,7 @@
 # atif-scan development
 
+<!-- fast-agent subagents -->
+
 Read README.md and SECURITY.md first. Keep the core dependency-free and offline.
 Do not execute trajectory commands or URLs. Never commit real traces, auth files,
 raw findings or copied benchmark solutions. Use synthetic fixtures only.

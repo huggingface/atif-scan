@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -15,7 +16,14 @@ class Channel(StrEnum):
     QUERY = "query"
     URL = "url"
     OBSERVATION = "observation"
+    # Uninterpreted string arguments of unrecognized tools (never recognized-tool payloads).
     ARGUMENTS = "arguments"
+    # Recorded step metadata such as step_id and timestamp; used by integrity checks.
+    METADATA = "metadata"
+
+
+# Channels whose meaning depends on recognizing the tool that produced them.
+TOOL_INPUT_CHANNELS = frozenset({Channel.COMMAND, Channel.PATH, Channel.QUERY, Channel.URL})
 
 
 @dataclass(frozen=True, order=True)
@@ -49,7 +57,9 @@ class Surface:
 @dataclass(frozen=True)
 class ToolCall:
     index: int
-    tool: str  # Normalized allowlisted name, not an arbitrary provider tool string.
+    # Normalized category: shell, read, write, search_files, web_fetch, web_search,
+    # inert (orchestration with no evidence value) or other (unrecognized).
+    tool: str
     fields: tuple[tuple[Channel, Content], ...] = field(repr=False)
     id: str = field(repr=False)
     name: str = field(repr=False)
@@ -71,12 +81,21 @@ class Step:
     reasoning: Content = field(repr=False)
     calls: tuple[ToolCall, ...] = ()
     observations: tuple[Observation, ...] = field(default=(), repr=False)
+    # Recorded metadata. `*_recorded` distinguishes "absent" from "present but invalid".
+    step_id: int | None = None
+    step_id_recorded: bool = False
+    timestamp: datetime | None = None
+    timestamp_recorded: bool = False
+    # A non-agent step carrying agent-only fields (tool_calls, reasoning, metrics, model).
+    agent_only_fields: bool = False
 
 
 @dataclass(frozen=True)
 class Trace:
     schema_version: str | None
     steps: tuple[Step, ...]
+    # final_metrics.extra.total_tool_use_tokens when reported as an integer.
+    tool_use_tokens: int | None = None
 
     def agent_surfaces(self) -> Iterator[Surface]:
         """Never recursively walks a step: observations and prompt text stay separate."""
@@ -88,6 +107,12 @@ class Trace:
             for call in step.calls:
                 for channel, content in call.fields:
                     yield Surface(Locator(step.index, channel, call.index), content, call.tool)
+
+    def agent_calls(self) -> Iterator[tuple[Step, ToolCall]]:
+        for step in self.steps:
+            if step.source == "agent" and not step.copied:
+                for call in step.calls:
+                    yield step, call
 
     def observation_surfaces(self) -> Iterator[Surface]:
         """Explicit opt-in for plugins verifying outcomes, never default authored evidence."""
@@ -102,3 +127,11 @@ class Trace:
     @property
     def agent_steps(self) -> int:
         return sum(s.source == "agent" and not s.copied for s in self.steps)
+
+    @property
+    def tool_calls(self) -> int:
+        return sum(1 for _ in self.agent_calls())
+
+    @property
+    def unrecognized_tool_calls(self) -> int:
+        return sum(call.tool == "other" for _, call in self.agent_calls())

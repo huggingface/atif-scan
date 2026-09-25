@@ -1,12 +1,26 @@
-"""Dependency-ordered evaluation with isolated failures and safe report projection."""
+"""Dependency-ordered evaluation with isolated failures. Serialization lives in `report`."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .checks import CheckSpec, Context, Detection, Detector, Severity, Status
+from .checks import CheckSpec, Context, Detection, Detector, Status
 from .model import Trace
-from .rules import Rule
+from .rules import Allowance, Rule
+
+
+def validate_evidence(trace: Trace, result: object) -> None:
+    """Reject non-Detection results and locators pointing outside the trace."""
+    if not isinstance(result, Detection):
+        raise TypeError("invalid_detector_result")
+    for at in result.evidence:
+        if at.step >= len(trace.steps):
+            raise ValueError("invalid_evidence_locator")
+        step = trace.steps[at.step]
+        if at.call is not None and at.call >= len(step.calls):
+            raise ValueError("invalid_call_locator")
+        if at.observation is not None and at.observation >= len(step.observations):
+            raise ValueError("invalid_observation_locator")
 
 
 @dataclass(frozen=True)
@@ -14,13 +28,42 @@ class Assessment:
     spec: CheckSpec
     result: Detection
     dependencies: tuple[str, ...] = ()
+    kind: str = "detector"  # detector | rule | allowance
+    covers: tuple[str, ...] = ()  # allowances only
+    expected_by: tuple[str, ...] = ()  # applied allowances covering this match
+
+    @property
+    def counts(self) -> bool:
+        """An unexcused finding: contributes to the score and to --fail-on."""
+        return (
+            self.kind != "allowance" and self.result.status == Status.MATCH and not self.expected_by
+        )
+
+
+def kind(check: object) -> str:
+    return (
+        "allowance"
+        if isinstance(check, Allowance)
+        else "rule"
+        if isinstance(check, Rule)
+        else "detector"
+    )
 
 
 class Engine:
-    def __init__(self, checks: list[Detector | Rule]):
-        self.checks = {c.spec.id: c for c in checks}
-        if len(self.checks) != len(checks):
+    """Evaluates detectors and rules in dependency order, then allowances.
+
+    Allowances may reference detectors and rules; nothing may reference an allowance.
+    """
+
+    def __init__(self, checks: list[Detector | Rule | Allowance]):
+        ids = [c.spec.id for c in checks]
+        if len(set(ids)) != len(ids):
             raise ValueError("duplicate_check_id")
+        self.allowances = sorted(
+            (c for c in checks if isinstance(c, Allowance)), key=lambda c: c.spec.id
+        )
+        self.checks = {c.spec.id: c for c in checks if not isinstance(c, Allowance)}
         self.order: list[str] = []
         active: set[str] = set()
         done: set[str] = set()
@@ -35,7 +78,7 @@ class Engine:
             active.add(key)
             check = self.checks[key]
             if isinstance(check, Rule):
-                for dependency in sorted(check.expression.dependencies()):
+                for dependency in check.dependencies:
                     visit(dependency)
             active.remove(key)
             done.add(key)
@@ -43,101 +86,66 @@ class Engine:
 
         for key in sorted(self.checks):
             visit(key)
+        for allowance in self.allowances:
+            if not set(allowance.dependencies) | allowance.covers <= set(self.checks):
+                raise ValueError("missing_dependency")
+
+    def _run(self, check, trace: Trace | None, context: Context, results) -> Detection:
+        if check.spec.tasks and context.task is None:
+            result = Detection(Status.UNKNOWN, complete=False)
+        elif check.spec.tasks and context.task not in check.spec.tasks:
+            result = Detection(Status.NOT_APPLICABLE)
+        elif trace is None:
+            result = Detection(Status.UNKNOWN, complete=False)
+        else:
+            try:
+                if isinstance(check, Rule | Allowance):
+                    result = check.evaluate(results)
+                else:
+                    result = check.evaluate(trace, context)
+                validate_evidence(trace, result)
+            except Exception:
+                # Plugins can see raw data; never emit their exception text.
+                result = Detection(Status.ERROR, complete=False)
+        if context.partial and result.status == Status.NO_MATCH:
+            result = Detection(Status.UNKNOWN, complete=False)
+        elif context.partial and result.status == Status.MATCH:
+            result = Detection(Status.MATCH, result.evidence, complete=False)
+        return result
 
     def evaluate(
         self, trace: Trace | None, context: Context | None = None
     ) -> tuple[Assessment, ...]:
         context = context or Context()
         results: dict[str, Detection] = {}
-        assessments = []
         for key in self.order:
-            check = self.checks[key]
-            dependencies = (
-                tuple(sorted(check.expression.dependencies())) if isinstance(check, Rule) else ()
+            results[key] = self._run(self.checks[key], trace, context, results)
+        excused: dict[str, list[str]] = {}
+        allowed = []
+        for allowance in self.allowances:
+            result = self._run(allowance, trace, context, results)
+            if result.status == Status.MATCH:
+                for key in allowance.covers:
+                    excused.setdefault(key, []).append(allowance.spec.id)
+            allowed.append(
+                Assessment(
+                    allowance.spec,
+                    result,
+                    allowance.dependencies,
+                    "allowance",
+                    tuple(sorted(allowance.covers)),
+                )
             )
-            if check.spec.tasks and context.task is None:
-                result = Detection(Status.UNKNOWN, complete=False)
-            elif check.spec.tasks and context.task not in check.spec.tasks:
-                result = Detection(Status.NOT_APPLICABLE)
-            elif trace is None:
-                result = Detection(Status.UNKNOWN, complete=False)
-            else:
-                try:
-                    if isinstance(check, Rule):
-                        truth = check.expression.evaluate(results)
-                        status = {True: Status.MATCH, False: Status.NO_MATCH, None: Status.UNKNOWN}[
-                            truth
-                        ]
-                        evidence = (
-                            tuple(
-                                dict.fromkeys(
-                                    at
-                                    for dep in dependencies
-                                    for at in results[dep].evidence
-                                    if results[dep].status == Status.MATCH
-                                )
-                            )
-                            if truth is True
-                            else ()
-                        )
-                        # Short-circuit truth can be known even when an irrelevant input is unknown.
-                        complete = truth is False or (
-                            truth is True and all(results[d].complete for d in dependencies)
-                        )
-                        result = Detection(status, evidence, complete)
-                    else:
-                        result = check.evaluate(trace, context)
-                        if not isinstance(result, Detection):
-                            raise TypeError("invalid_detector_result")
-                    for at in result.evidence:
-                        if at.step >= len(trace.steps):
-                            raise ValueError("invalid_evidence_locator")
-                        step = trace.steps[at.step]
-                        if at.call is not None and at.call >= len(step.calls):
-                            raise ValueError("invalid_call_locator")
-                        if at.observation is not None and at.observation >= len(step.observations):
-                            raise ValueError("invalid_observation_locator")
-                except Exception:
-                    # Plugins can see raw data; never emit their exception text.
-                    result = Detection(Status.ERROR, complete=False)
-            if context.partial and result.status == Status.NO_MATCH:
-                result = Detection(Status.UNKNOWN, complete=False)
-            elif context.partial and result.status == Status.MATCH:
-                result = Detection(Status.MATCH, result.evidence, complete=False)
-            results[key] = result
-            assessments.append(Assessment(check.spec, result, dependencies))
-        return tuple(assessments)
-
-
-def report(assessments: tuple[Assessment, ...]) -> dict:
-    """Only this explicit allowlist is serialized. Never dataclasses.asdict(trace)."""
-    matched = [a for a in assessments if a.result.status == Status.MATCH]
-    severity = max((a.spec.severity for a in matched), default=Severity.INFO)
-    return {
-        "schema_version": 1,
-        "score": int(severity),
-        "severity": severity.name.lower() if matched else None,
-        "score_semantics": "maximum_matched_review_priority_not_probability",
-        "incomplete": any(not a.result.complete for a in assessments),
-        "assessments": [
-            {
-                "id": a.spec.id,
-                "version": a.spec.version,
-                "status": a.result.status.value,
-                "severity": a.spec.severity.name.lower(),
-                "score": int(a.spec.severity) if a.result.status == Status.MATCH else None,
-                "complete": a.result.complete,
-                "dependencies": list(a.dependencies),
-                "evidence": [
-                    {
-                        "step": e.step,
-                        "channel": e.channel.value,
-                        "call": e.call,
-                        "observation": e.observation,
-                    }
-                    for e in a.result.evidence
-                ],
-            }
-            for a in assessments
-        ],
-    }
+        assessments = [
+            Assessment(
+                self.checks[key].spec,
+                results[key],
+                self.checks[key].dependencies if isinstance(self.checks[key], Rule) else (),
+                kind(self.checks[key]),
+                expected_by=tuple(excused.get(key, ()))
+                if results[key].status == Status.MATCH
+                else (),
+            )
+            for key in self.order
+        ]
+        return (*assessments, *allowed)
