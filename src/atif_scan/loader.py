@@ -73,68 +73,156 @@ TOOLS = {
         "kill_shell",
         "service_status",
         "ToolSearch",
-        # fast-agent background-process control (status/wait/stop/read_output).
-        "process",
     },
-    # Stage a local file or remote URL as model input (fast-agent `attach_media`).
-    "attach": {"attach_media"},
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 
-# category -> (channel, accepted argument keys, required)
-FIELDS = {
-    "shell": ((Channel.COMMAND, ("command", "cmd", "script"), True),),
-    "read": ((Channel.PATH, ("path", "file_path"), True),),
-    "write": ((Channel.PATH, ("path", "file_path"), True),),
-    "search_files": ((Channel.PATH, ("path",), False),),
-    "web_fetch": ((Channel.URL, ("url",), True),),
-    "web_search": ((Channel.QUERY, ("query",), True),),
+# Tool categories are *hints*: they name what a tool does (so e.g. only a known web-search
+# tool counts as a web search) and which evidence must be present. Evidence extraction
+# itself is generic and applies to every call; see `classify`.
+REQUIRED = {
+    "shell": Channel.COMMAND,
+    "read": Channel.PATH,
+    "write": Channel.PATH,
+    "web_fetch": Channel.URL,
+    "web_search": Channel.QUERY,
 }
+
+
+def _keys(*names: str) -> frozenset[str]:
+    return frozenset(names)
+
+
+# Argument key conventions (compared lowercased, without `_`/`-`), not tool names.
+COMMAND_KEYS = _keys("command", "cmd", "commands", "script", "shellcommand", "bash", "code")
+QUERY_KEYS = _keys("query", "q", "searchquery", "searchterm", "queries")
+URL_KEYS = _keys("url", "urls", "uri", "href", "link", "endpoint")
+PATH_KEYS = _keys(
+    "path",
+    "paths",
+    "filepath",
+    "file",
+    "files",
+    "filename",
+    "dir",
+    "directory",
+    "cwd",
+    "workdir",
+    "workingdirectory",
+    "source",
+    "src",
+    "target",
+    "destination",
+    "dest",
+    "output",
+    "outputpath",
+    "root",
+    "notebookpath",
+)
+PAYLOAD_KEYS = _keys(
+    "content",
+    "contents",
+    "text",
+    "body",
+    "data",
+    "newstring",
+    "oldstring",
+    "newstr",
+    "oldstr",
+    "newtext",
+    "oldtext",
+    "insertline",
+    "patch",
+    "diff",
+    "edits",
+    "description",
+    "prompt",
+    "message",
+    "messages",
+    "instructions",
+    "note",
+    "notes",
+    "todos",
+    "summary",
+    "reasoning",
+    "thought",
+    "explanation",
+    "title",
+    "pattern",
+    "regex",
+    "glob",
+    "include",
+    "exclude",
+)
+URL_VALUE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
+PATH_VALUE = re.compile(r"(?:/|~/|\./|\.\./|[A-Za-z]:[\\/])[^\n]{0,4095}")
 
 
 def normalize_tool(name: str) -> str:
     return ALIASES.get(name, "other")
 
 
-def strings(value: object) -> list[str]:
-    """String leaves of an argument structure, in order; keys are not evidence."""
-    if isinstance(value, str):
-        return [value]
+def _norm(key: str | None) -> str:
+    return re.sub(r"[_\-\s]", "", key.lower()) if key else ""
+
+
+def leaves(value: object, key: str | None = None):
+    """(nearest key, value) for every non-dict/list leaf; list items inherit their key."""
     if isinstance(value, dict):
-        return [s for v in value.values() for s in strings(v)]
-    if isinstance(value, list):
-        return [s for v in value for s in strings(v)]
-    return []
+        for k, v in value.items():
+            yield from leaves(v, k)
+    elif isinstance(value, list):
+        if _norm(key) in COMMAND_KEYS:
+            # argv form, e.g. ["bash", "-lc", "..."]; mixed lists are not understood.
+            yield key, " ".join(value) if argv(value) else value
+            return
+        for v in value:
+            yield from leaves(v, key)
+    else:
+        yield key, value
 
 
 def argv(value: object) -> bool:
     return isinstance(value, list) and bool(value) and all(isinstance(v, str) for v in value)
 
 
+def classify(key: str | None, value: str) -> tuple[Channel, str]:
+    """Route one argument string by key convention and value shape (see design.md)."""
+    k = _norm(key)
+    if k in PAYLOAD_KEYS:
+        return Channel.PAYLOAD, value
+    if value.startswith("file://"):
+        return Channel.PATH, value[len("file://") :]
+    if URL_VALUE.fullmatch(value):
+        return Channel.URL, value
+    if k in COMMAND_KEYS:
+        return Channel.COMMAND, value
+    if k in QUERY_KEYS:
+        return Channel.QUERY, value
+    if k in URL_KEYS:
+        return Channel.URL, value
+    if k in PATH_KEYS or PATH_VALUE.fullmatch(value):
+        return Channel.PATH, value
+    return Channel.ARGUMENTS, value
+
+
 def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
-    if tool == "other":
-        # Unrecognized tool: expose raw argument text only on the ARGUMENTS channel.
-        if not isinstance(args, dict):
-            return ((Channel.ARGUMENTS, Content(understood=False)),)
-        return ((Channel.ARGUMENTS, Content("\n".join(strings(args)))),)
-    if tool == "attach":
-        # `source` is a path or a URL: route it to the channel its checks expect.
-        value = args.get("source") if isinstance(args, dict) else None
-        if not isinstance(value, str):
-            return ((Channel.PATH, Content(understood=False)),)
-        remote = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value) and not value.startswith("file:")
-        if remote:
-            return ((Channel.URL, content(value)),)
-        return ((Channel.PATH, content(re.sub(r"^file://", "", value))),)
+    if tool == "inert":
+        return ()
+    if not isinstance(args, dict):
+        # Unparseable arguments could hold anything: every tool-input check is unknown.
+        channel = REQUIRED.get(tool, Channel.ARGUMENTS)
+        return ((channel, Content(understood=False)),)
     fields = []
-    for channel, keys, required in FIELDS.get(tool, ()):
-        value = next((args[k] for k in keys if isinstance(args, dict) and k in args), None)
-        if channel == Channel.COMMAND and argv(value):
-            value = " ".join(value)  # argv form, e.g. ["bash", "-lc", "..."]
+    for key, value in leaves(args):
         if isinstance(value, str):
-            fields.append((channel, content(value)))
-        elif required or value is not None or not isinstance(args, dict):
-            fields.append((channel, Content(understood=False)))
+            channel, text = classify(key, value)
+            fields.append((channel, content(text)))
+        elif isinstance(value, list) and _norm(key) in COMMAND_KEYS:
+            fields.append((Channel.COMMAND, Content(understood=False)))  # e.g. ["bash", 1]
+    required = REQUIRED.get(tool)
+    if required is not None and all(channel != required for channel, _ in fields):
+        fields.append((required, Content(understood=False)))
     return tuple(fields)
 
 
