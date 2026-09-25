@@ -13,10 +13,18 @@ from pathlib import Path
 from .checks import Context, Severity, Status, identifier
 from .detectors import builtin_detectors
 from .engine import Engine
+from .layout import document as inspection
 from .loader import TraceError
 from .policy import load_rules
-from .report import document, render_rich, report, to_json, to_text
-from .sources import DEFAULT_PATTERN, Source, SourceError, file_source, resolve
+from .report import document, inspection_text, render_rich, report, to_json, to_text
+from .sources import (
+    DEFAULT_PATTERN,
+    Source,
+    SourceError,
+    file_source,
+    list_input,
+    resolve,
+)
 
 
 def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
@@ -84,6 +92,22 @@ def emit(doc: dict, fmt: str) -> None:
         sys.stdout.write(to_text(doc))
 
 
+def inspect(args: argparse.Namespace) -> int:
+    if args.manifest or not args.paths:
+        print("atif-scan: --inspect takes paths, not a manifest", file=sys.stderr)
+        return 2
+    try:
+        doc = inspection([list_input(p) for p in args.paths], args.pattern)
+    except SourceError as error:
+        print(f"atif-scan: {error}", file=sys.stderr)
+        return 2
+    fmt = args.format
+    if fmt == "auto":
+        fmt = "text" if sys.stdout.isatty() else "json"
+    print(to_json(doc) if fmt == "json" else inspection_text(doc))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -96,6 +120,12 @@ def main(argv: list[str] | None = None) -> int:
         "--pattern",
         default=DEFAULT_PATTERN,
         help=f"filename glob when expanding a directory/prefix (default: {DEFAULT_PATTERN})",
+    )
+    parser.add_argument(
+        "--inspect",
+        action="store_true",
+        help="list what's under each path (layout, Harbor markers, what would be scanned) "
+        "without reading any trace",
     )
     parser.add_argument("--manifest", type=Path, help="explicit input manifest (JSON)")
     parser.add_argument("--task", help="task identity for task-scoped checks")
@@ -128,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 for an unexcused finding at/above this review severity",
     )
     args = parser.parse_args(argv)
+    if args.inspect:
+        return inspect(args)
     try:
         records = inputs(args)
         engine = Engine(load_checks(args))

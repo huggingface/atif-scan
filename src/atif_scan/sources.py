@@ -17,8 +17,9 @@ Hub input is used, so local scans never touch the network.
 
 from __future__ import annotations
 
+import os
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
@@ -92,18 +93,42 @@ def _remote_load(fs, path: str, size: int | None) -> Callable[[], Trace]:
     return load
 
 
-def _local(value: str, pattern: str) -> Iterator[tuple[str | None, Callable[[], Trace]]]:
+@dataclass(frozen=True)
+class Entry:
+    path: str  # POSIX path relative to the listed root
+    size: int | None
+
+
+@dataclass(frozen=True)
+class Listing:
+    """Names and sizes under one input; no file contents are read to build it."""
+
+    remote: bool
+    directory: bool
+    entries: tuple[Entry, ...]  # sorted; a single file is one entry with path ""
+    opener: Callable[[Entry], Callable[[], Trace]] = field(repr=False)
+
+
+def _list_local(value: str) -> Listing:
     root = Path(value)
     if root.is_file():
-        yield None, lambda: load_trace(root)
-    elif root.is_dir():
-        for path in sorted(p for p in root.rglob(pattern) if p.is_file()):
-            yield path.relative_to(root).as_posix(), lambda path=path: load_trace(path)
-    else:
+        entry = Entry("", root.stat().st_size)
+        return Listing(False, False, (entry,), lambda e: lambda: load_trace(root))
+    if not root.is_dir():
         raise SourceError("path_not_found")
+    entries = []
+    # os.walk without following symlinks: the same traversal on every Python version.
+    for folder, dirs, files in os.walk(root):
+        dirs.sort()
+        for name in files:
+            path = Path(folder) / name
+            if path.is_file() and not path.is_symlink():
+                entries.append(Entry(path.relative_to(root).as_posix(), path.stat().st_size))
+    entries.sort(key=lambda e: e.path)
+    return Listing(False, True, tuple(entries), lambda e: lambda: load_trace(root / e.path))
 
 
-def _remote(value: str, pattern: str, fs) -> Iterator[tuple[str | None, Callable[[], Trace]]]:
+def _list_remote(value: str, fs) -> Listing:
     root = value[len(HF_PREFIX) :].rstrip("/")
     try:
         info = fs.info(root)
@@ -112,21 +137,55 @@ def _remote(value: str, pattern: str, fs) -> Iterator[tuple[str | None, Callable
     except Exception:
         raise SourceError("hf_request_failed") from None
     if info.get("type") != "directory":
-        yield None, _remote_load(fs, root, info.get("size"))
-        return
+        entry = Entry("", info.get("size"))
+        return Listing(True, False, (entry,), lambda e: _remote_load(fs, root, e.size))
     try:
         found = fs.find(root, detail=True)
     except Exception:
         raise SourceError("hf_listing_failed") from None
-    for path in sorted(found):
-        entry = found[path]
-        if entry.get("type") != "file" or not fnmatchcase(PurePosixPath(path).name, pattern):
+    full: dict[str, str] = {}  # relative -> remote path
+    for path, meta in found.items():
+        if meta.get("type") != "file":
             continue
         try:
-            relative: str | None = PurePosixPath(path).relative_to(root).as_posix()
-        except ValueError:  # e.g. revision-qualified paths; fall back to a positional label
-            relative = None
-        yield relative, _remote_load(fs, path, entry.get("size"))
+            relative = PurePosixPath(path).relative_to(root).as_posix()
+        except ValueError:  # e.g. revision-qualified listings; keep the full path
+            relative = path
+        full[relative] = path
+    sizes = {path: meta.get("size") for path, meta in found.items()}
+    entries = [Entry(r, sizes[full[r]]) for r in sorted(full)]
+
+    def opener(entry: Entry) -> Callable[[], Trace]:
+        return _remote_load(fs, full[entry.path], entry.size)
+
+    return Listing(True, True, tuple(entries), opener)
+
+
+def list_input(value: str, fs=None) -> Listing:
+    """List one CLI input (see module docstring). The only traversal code."""
+    value = normalize(value)
+    if value.startswith(HF_PREFIX):
+        return _list_remote(value, fs or hf_filesystem())
+    return _list_local(value)
+
+
+def selected(listing: Listing, pattern: str) -> list[Entry]:
+    """What a scan reads: the file itself, or directory entries whose *name* matches."""
+    if not listing.directory:
+        return list(listing.entries)
+    return [e for e in listing.entries if fnmatchcase(PurePosixPath(e.path).name, pattern)]
+
+
+def label_for(entry: Entry, pattern: str) -> str | None:
+    """Relative path minus an implied file name; None means "use a positional label"."""
+    if not entry.path:
+        return None
+    folder, _, name = entry.path.rpartition("/")
+    relative = folder if folder and name == pattern else entry.path
+    try:
+        return identifier(relative)
+    except ValueError:
+        return None
 
 
 def file_source(label: str, location: str, fs=None) -> Source:
@@ -148,26 +207,13 @@ def resolve(values: list[str], pattern: str = DEFAULT_PATTERN, fs=None) -> list[
     """
     sources: list[Source] = []
     for value in values:
-        value = normalize(value)
-        if value.startswith(HF_PREFIX):
-            fs = fs or hf_filesystem()
-            items = list(_remote(value, pattern, fs))
-        else:
-            items = list(_local(value, pattern))
-        if not items:
+        listing = list_input(value, fs)
+        entries = selected(listing, pattern)
+        if not entries:
             raise SourceError("no_files_match_pattern")
-        for relative, load in items:
-            label = f"input-{len(sources) + 1:04d}"
-            if relative is not None:
-                # `run/trial-1/trajectory.json` -> `run/trial-1`: the name is implied.
-                folder, _, name = relative.rpartition("/")
-                if folder and name == pattern:
-                    relative = folder
-                try:
-                    label = identifier(relative)
-                except ValueError:
-                    pass
-            sources.append(Source(label, load))
+        for entry in entries:
+            label = label_for(entry, pattern) or f"input-{len(sources) + 1:04d}"
+            sources.append(Source(label, listing.opener(entry)))
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

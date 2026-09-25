@@ -217,3 +217,51 @@ def render_rich(doc: dict, file: IO[str] | None = None) -> None:
             console.print(Text(tally(group), style="dim"))
     console.print()
     console.print(Text(footer(doc), style="dim"))
+
+
+# --- Inspection view --------------------------------------------------------------------
+
+
+def size(value: int | None) -> str:
+    if value is None:
+        return "size unknown"
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return ""
+
+
+def inspection_text(doc: dict, examples: int = 3) -> str:
+    """Plain-text view of a `layout.document`: counts, labels and file names only."""
+    lines = [f"atif-scan inspect · pattern {doc['pattern']}", ""]
+    for item in doc["inputs"]:
+        where_ = ("hub " if item["remote"] else "local ") + (
+            "directory" if item["directory"] else "file"
+        )
+        lines.append(
+            f"[{item['input']}] {where_} · {item['files']} files · {size(item['bytes'])}"
+            f" · layout: {item['layout']}"
+        )
+        if item["harbor"]:
+            h = item["harbor"]
+            lines.append(
+                f"    harbor: {h['jobs']} jobs · {h['trials']} trials · "
+                f"{h['trials_with_reward']} with reward · {h['multi_step_trials']} multi-step"
+            )
+        roles = ", ".join(f"{k} {v}" for k, v in item["would_scan"]["by_role"].items())
+        lines.append(
+            f"    would scan {item['would_scan']['total']}" + (f" ({roles})" if roles else "")
+        )
+        if item["alongside"]:
+            names = ", ".join(f"{k} {v}/{item['folders']}" for k, v in item["alongside"].items())
+            lines.append(f"    alongside them: {names}")
+        if item["other_files"]:
+            names = ", ".join(f"{k} ×{v}" for k, v in item["other_files"].items())
+            lines.append(f"    other files ({item['other_file_count']}): {names}")
+        for a in item["anomalies"]:
+            shown = ", ".join(a["examples"][:examples])
+            more = f", +{a['count'] - examples} more" if a["count"] > examples else ""
+            lines.append(f"    ! {a['code']} ({a['count']}): {shown}{more}")
+        lines.append("")
+    return "\n".join(lines)

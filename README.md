@@ -212,6 +212,35 @@ from the JSON document only, so it has the same no-snippet guarantee.
 Exit codes: `0` scanned, `1` a match at or above `--fail-on SEVERITY`, `2` bad
 input/config/plugin.
 
+### Inspecting before scanning
+
+`--inspect` lists what's under each path and scans nothing. It uses file names and sizes
+only (one listing call on the Hub) and the same selection code as a scan, so "would scan"
+is exactly what a scan reads:
+
+```text
+$ atif-scan --inspect hf://buckets/my-org/traces
+[1] hub directory · 329 files · 115.9 MB · layout: trajectory_folders
+    would scan 244 (trajectory 244)
+    alongside them: summary.json 66/244
+    ! mixed_depths (4): run-1/replacements/…/trials/dna-insert__udxf6B9, …
+```
+
+It recognizes Harbor job and trial folders (`job.log`, `trial.log`, `result.json`,
+`agent/`, `user-agent/`, `verifier/reward.*`, `steps/`) and tags each trajectory's role:
+`agent`, `step_agent`, `simulated_user`, or `trajectory` outside Harbor folders. It
+flags:
+
+- simulated-user trajectories that the pattern would scan;
+- trials without an agent trajectory, or with several;
+- trials with `exception.txt`;
+- trajectories at unusual depths (e.g. replacement runs mixed with originals);
+- oversize files;
+- `*trajectory*.json` files the pattern skips;
+- labels that fall back to `input-NNNN`.
+
+Output is text or JSON (`--format`), with counts, relative labels and file names only.
+
 ### Manifests
 
 A manifest lists files explicitly with your own IDs. Local paths resolve relative to the
