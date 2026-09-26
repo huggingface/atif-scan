@@ -15,6 +15,10 @@
 - Besides trajectories, the scanner reads only small listed reward files
   (`verifier/reward.{json,txt}`, at most 4 KiB) to record the reward. `--inspect` reads no
   file contents.
+- Harbor Hub jobs are read through the user's own `harbor` CLI: no shell, fixed
+  arguments, a validated UUID, stderr withheld. Downloaded trajectories are real traces;
+  `--sync-to` puts them where you choose, otherwise they go to a temporary folder that's
+  removed afterwards.
 - Network access happens only for `hf://` / huggingface.co inputs you name, via
   `huggingface_hub` and your saved token. Other URLs are refused. Remote error messages
   (which may contain URLs) are withheld; files over the size cap are rejected.

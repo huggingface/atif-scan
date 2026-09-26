@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 
-from .model import Channel, Content, Observation, Step, ToolCall, Trace
+from .model import Channel, Content, Observation, Step, ToolCall, Trace, Usage
 
 MAX_BYTES = 64 * 1024 * 1024
 
@@ -335,7 +336,26 @@ def parse_trace(value: object) -> Trace:
     metrics = value.get("final_metrics")
     extra = metrics.get("extra") if isinstance(metrics, dict) else None
     tokens = extra.get("total_tool_use_tokens") if isinstance(extra, dict) else None
-    return Trace(version, tuple(steps), tokens if type(tokens) is int else None)
+    return Trace(version, tuple(steps), tokens if type(tokens) is int else None, usage(metrics))
+
+
+def usage(metrics: object) -> Usage | None:
+    if not isinstance(metrics, dict):
+        return None
+
+    def count(key: str) -> int | None:
+        value = metrics.get(key)
+        return value if type(value) is int and value >= 0 else None
+
+    cost = metrics.get("total_cost_usd")
+    cost = float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
+    found = Usage(
+        cost,
+        count("total_prompt_tokens"),
+        count("total_completion_tokens"),
+        count("total_cached_tokens"),
+    )
+    return None if found == Usage() else found
 
 
 def load_bytes(data: bytes) -> Trace:

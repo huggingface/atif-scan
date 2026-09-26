@@ -106,11 +106,23 @@ class Step:
 
 
 @dataclass(frozen=True)
+class Usage:
+    """ATIF final_metrics: total_cost_usd and prompt/completion/cached token totals."""
+
+    cost_usd: float | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cached_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class Trace:
     schema_version: str | None
     steps: tuple[Step, ...]
     # final_metrics.extra.total_tool_use_tokens when reported as an integer.
     tool_use_tokens: int | None = None
+    # final_metrics totals as recorded by the harness (None when absent/invalid).
+    usage: Usage | None = None
 
     def agent_surfaces(self) -> Iterator[Surface]:
         """Never recursively walks a step: observations and prompt text stay separate."""

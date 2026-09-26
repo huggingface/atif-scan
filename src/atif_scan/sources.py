@@ -21,7 +21,7 @@ import json
 import math
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
@@ -55,6 +55,9 @@ class Source:
     # The input path as given plus the entry's relative path. Used only to derive a task
     # from Harbor folder names (--task-from); never reported.
     hint: str = field(default="", repr=False)
+    # Allowlisted run facts about this trial (task, reward, error_type, cost, tokens, ...)
+    # from its source, e.g. the Harbor Hub listing or Harbor's exception.txt marker.
+    meta: Mapping[str, object] = field(default_factory=dict, repr=False)
 
 
 REWARD_FILES = ("reward.json", "reward.txt")  # Harbor reads reward.json first
@@ -275,6 +278,16 @@ def reward_lookup(listing: Listing, entry: Entry, value: str) -> Callable[[], fl
     return listed
 
 
+def errored(listing: Listing, entry: Entry) -> bool:
+    """Harbor writes `<trial>/exception.txt` when a trial raised; seen in the listing."""
+    if not listing.directory:
+        return False
+    present = {e.path for e in listing.entries}
+    parent = PurePosixPath(entry.path).parent
+    folders = [parent] + ([parent.parent] if parent != parent.parent else [])
+    return any((f / "exception.txt").as_posix().removeprefix("./") in present for f in folders)
+
+
 def file_source(label: str, location: str, fs=None) -> Source:
     """A single named file (manifest entries): no expansion; failures surface on load."""
     location = normalize(location)
@@ -302,7 +315,8 @@ def resolve(values: list[str], pattern: str = DEFAULT_PATTERN, fs=None) -> list[
             label = label_for(entry, pattern) or f"input-{len(sources) + 1:04d}"
             reward = reward_lookup(listing, entry, value)
             hint = "/".join(p for p in (normalize(value).rstrip("/"), entry.path) if p)
-            sources.append(Source(label, listing.opener(entry), reward, hint))
+            meta = {"error_type": "exception"} if errored(listing, entry) else {}
+            sources.append(Source(label, listing.opener(entry), reward, hint, meta))
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

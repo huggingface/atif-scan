@@ -295,6 +295,58 @@ trace text**, so handle it like the trace. Without `--cite` no trace text is emi
 Exit codes: `0` scanned, `1` a match at or above `--fail-on SEVERITY`, `2` bad
 input/config/plugin.
 
+### Harbor Hub jobs
+
+Point at a Hub job by URL or `harbor://jobs/<id>`. This uses your installed, logged-in
+`harbor` CLI (no extra dependency): the job and trial listings supply each trial's
+task, reward, error, cost and tokens. Then each trial's `trajectory.json` is fetched in
+parallel (`--jobs 8`), or the whole archive with `--full`:
+
+```bash
+atif-scan https://hub.harborframework.com/jobs/<id> --summary \
+  --plugin atif_scan.packs.tb21:checks --expect-tasks 89 --sync-to ~/data/hub
+atif-scan --inspect harbor://jobs/<id>      # listing only: nothing downloaded
+```
+
+- The task comes from the Hub record, so `--task-from` isn't needed. `--task` still
+  overrides it.
+- `--sync-to DIR` keeps downloads and reuses them next time. Without it, downloads go to
+  a temporary folder that's deleted afterwards.
+- Harbor is run without a shell, with a validated job ID. Its stderr is never echoed.
+- A trial without a trajectory (e.g. it errored first) is reported, not treated as bad
+  input.
+
+### Run overview
+
+`--overview` prints a run scorecard, and `--summary` puts it on top of the rollup.
+Definitions follow the Terminal-Bench leaderboard:
+
+```text
+run overview
+  job        tb21-…-daytona-20260827 (harbor 1fead079) · terminal-bench/terminal-bench-2-1@sha256:7d7bdc…
+  trials     420 present / 420 planned · 0 missing · 43 errored (AgentTimeoutError 42, …)
+  tasks      84 · trials/task min 5 median 5 max 5 · job config lists 84 tasks · 0 below 5 · 5 of 89 expected tasks missing
+  accuracy   84.8% ± 1.2 (successes / all trials; errored = 0)
+  DQ         3 candidate(s) = 0.7% of trials → accuracy 84.0% ± 1.3 if all disqualified
+  cost       $362.88 · $0.86/trial · 4 trial(s) missing cost (counted as $0)
+  settings   overrides set: … (leaderboard requires defaults)
+```
+
+- **Accuracy** is successes (reward > 0) over all trials. Errored trials count as 0.
+  Standard error is per task: `s² = (1/n²) Σ pᵢ(1−pᵢ)/(kᵢ−1)`.
+- **DQ candidates** are rewarded trials with an unexcused finding at or above `--dq-on`
+  (default `high`). The rate is taken over all trials, and "if all disqualified"
+  re-scores them as 0. "Not cleared" lists rewarded trials that weren't scanned, or
+  where a DQ-level check was unknown. These are review candidates, not disqualifications.
+- **Cost** counts every trial that ran. Missing telemetry counts as $0, as on the
+  leaderboard, so the scorecard reports how many trials had no cost, and how many
+  reported exactly $0 despite tokens. For local traces, cost comes from ATIF
+  `final_metrics`.
+- **Coverage:** planned vs present (Hub), trials per task against `--min-trials`
+  (default: the job's `n_attempts`), and missing tasks against `--expect-tasks`.
+  **Settings** lists any leaderboard-forbidden override (timeout multipliers ≠ 1,
+  timeout or resource overrides) found in the job or trial config.
+
 ### Inspecting before scanning
 
 `--inspect` lists what's under each path and scans nothing. It uses file names and sizes
