@@ -74,7 +74,8 @@ def test_observation_not_agent_text():
     content = {
         k: v for k, v in results(raw).items() if not k.startswith(("integrity.", "context."))
     }
-    assert all(r.status == Status.NO_MATCH for r in content.values())
+    # Tool output never counts as agent evidence (task-dependent checks: not applicable).
+    assert all(r.status in (Status.NO_MATCH, Status.NOT_APPLICABLE) for r in content.values())
 
 
 @pytest.mark.parametrize(
