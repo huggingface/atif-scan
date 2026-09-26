@@ -5,7 +5,9 @@
   solutions into this repository.
 - Built-ins never execute commands, visit URLs, run models or fetch files.
 - Reports are an explicit field allowlist: no raw text, paths, URLs, argument values or
-  exception messages. Text reports render only that allowlisted document. Manifest IDs
+  exception messages. The single exception is opt-in `--cite`, which adds bounded,
+  secret-masked excerpts of the trace. Masking is best-effort, so treat cited output
+  like the trace itself and keep it out of Git and issues. Text reports render only that allowlisted document. Manifest IDs
   and check IDs must be non-sensitive labels.
 - When a directory or `hf://` prefix is expanded, each input is labelled by its path
   *relative to the root you passed* (e.g. `trial-1/agent/trajectory.json`). The root

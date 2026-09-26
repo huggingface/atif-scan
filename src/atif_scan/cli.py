@@ -11,12 +11,22 @@ from importlib.metadata import version
 from pathlib import Path
 
 from .checks import Context, Severity, Status, identifier
+from .cite import citations
 from .detectors import builtin_detectors
 from .engine import Engine
 from .layout import document as inspection
 from .loader import TraceError
 from .policy import load_rules
-from .report import document, inspection_text, render_rich, report, to_json, to_text
+from .report import (
+    document,
+    inspection_text,
+    render_rich,
+    report,
+    summary,
+    summary_text,
+    to_json,
+    to_text,
+)
 from .sources import (
     DEFAULT_PATTERN,
     Source,
@@ -96,9 +106,16 @@ def load_checks(args: argparse.Namespace) -> list:
     return checks
 
 
-def emit(doc: dict, fmt: str) -> None:
+def emit(doc: dict, fmt: str, rollup: bool = False) -> None:
     if fmt == "auto":
         fmt = "text" if sys.stdout.isatty() else "json"
+    if rollup:
+        rolled = summary(doc)
+        print(
+            to_json(rolled) if fmt == "json" else summary_text(rolled),
+            end="\n" if fmt == "json" else "",
+        )
+        return
     if fmt == "json":
         print(to_json(doc))
         return
@@ -175,6 +192,20 @@ def main(argv: list[str] | None = None) -> int:
         help="auto: text on a terminal, JSON when piped",
     )
     parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="one rollup across inputs: counts for info/low, per-trace details for medium+",
+    )
+    parser.add_argument(
+        "--cite",
+        nargs="?",
+        const="medium",
+        choices=[s.name.lower() for s in Severity],
+        metavar="SEVERITY",
+        help="include the trace text (masked excerpt + before/after context) behind "
+        "findings at/above SEVERITY (default: medium). Output then contains trace text.",
+    )
+    parser.add_argument(
         "--fail-on",
         choices=[s.name.lower() for s in Severity],
         help="exit 1 for an unexcused finding at/above this review severity",
@@ -225,6 +256,9 @@ def main(argv: list[str] | None = None) -> int:
             tool_calls=trace.tool_calls if trace is not None else None,
             unrecognized_tool_calls=trace.unrecognized_tool_calls if trace is not None else None,
         )
+        if args.cite and trace is not None:
+            # Opt-in trace text; the only report field that isn't allowlisted metadata.
+            item["citations"] = citations(trace, assessments, Severity[args.cite.upper()])
         output.append(item)
         invalid = invalid or any(a.result.status == Status.ERROR for a in assessments)
         failed = failed or (
@@ -233,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if progress:
         print("\r\033[K", end="", file=sys.stderr)
-    emit(document(output, version("atif-scan")), args.format)
+    emit(document(output, version("atif-scan")), args.format, args.summary)
     return 2 if invalid else 1 if failed else 0
 
 

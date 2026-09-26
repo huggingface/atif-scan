@@ -20,6 +20,10 @@ def validate_evidence(trace: Trace, result: object) -> None:
         step = trace.steps[at.step]
         if at.call is not None and at.call >= len(step.calls):
             raise ValueError("invalid_call_locator")
+        if at.field is not None and (
+            at.call is None or at.field >= len(step.calls[at.call].fields)
+        ):
+            raise ValueError("invalid_field_locator")
         if at.observation is not None and at.observation >= len(step.observations):
             raise ValueError("invalid_observation_locator")
 

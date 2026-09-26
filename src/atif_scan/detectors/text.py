@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..checks import CheckSpec, Context, Detection, Status
-from ..model import TOOL_INPUT_CHANNELS, Channel, Surface, Trace
+from ..model import TOOL_INPUT_CHANNELS, Channel, Locator, Surface, Trace
+
+
+def matched(surface: Surface, result: object) -> Locator | None:
+    """A predicate may return a bool, a `re.Match` or a (start, end) span."""
+    if not result:
+        return None
+    if isinstance(result, re.Match):
+        return replace(surface.at, span=result.span())
+    if isinstance(result, tuple) and len(result) == 2:
+        return replace(surface.at, span=(int(result[0]), int(result[1])))
+    return surface.at
 
 
 def _result(hits: list, complete: bool) -> Detection:
@@ -43,8 +54,9 @@ class SurfaceDetector:
             if channel not in self.channels:
                 continue
             complete = complete and surface.content.understood
-            if self.predicate(surface):
-                hits.append(surface.at)
+            at = matched(surface, self.predicate(surface))
+            if at is not None:
+                hits.append(at)
             elif self.undecidable is not None and self.undecidable(surface):
                 complete = False
         return _result(hits, complete)
@@ -60,7 +72,7 @@ class RegexDetector(SurfaceDetector):
         channels: frozenset[Channel] = frozenset({Channel.MESSAGE, Channel.REASONING}),
     ) -> None:
         compiled = re.compile(pattern, re.IGNORECASE)
-        super().__init__(spec, channels, lambda s: bool(compiled.search(s.content.text)))
+        super().__init__(spec, channels, lambda s: compiled.search(s.content.text))
 
 
 @dataclass(frozen=True)
@@ -80,6 +92,7 @@ class ObservationDetector:
         complete = trace.agent_steps > 0 and (bool(surfaces) or trace.tool_calls == 0)
         for surface in surfaces:
             complete = complete and surface.content.understood
-            if self.predicate(surface):
-                hits.append(surface.at)
+            at = matched(surface, self.predicate(surface))
+            if at is not None:
+                hits.append(at)
         return _result(hits, complete)

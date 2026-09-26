@@ -31,7 +31,8 @@ def authored(pattern: str, *also: str):
     def predicate(surface: Surface) -> bool:
         if surface.at.channel == Channel.PAYLOAD and surface.tool == "shell":
             return False
-        return all(r.search(surface.content.text) for r in required)
+        matches = [r.search(surface.content.text) for r in required]
+        return matches[0] if all(matches) else False
 
     return predicate
 

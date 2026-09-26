@@ -14,7 +14,8 @@ detector or changing the engine.
 | `detectors` | Built-ins (`builtin`, `integrity`) and the `RegexDetector` / `SurfaceDetector` / `ObservationDetector` helpers |
 | `rules`, `policy` | Three-valued rule expressions, `Allowance`, and the JSON rule/allow format |
 | `engine` | Dependency ordering, task scope, error isolation, applying allowances |
-| `report` | The JSON allowlist, and text/rich views rendered only from it |
+| `report` | The JSON allowlist, summary rollup, and text/rich views rendered only from it |
+| `cite` | Opt-in (`--cite`) masked excerpts with before/after context: the only trace-text output |
 | `cli` | Picks inputs, loads trusted plugins, prints JSON or text |
 
 Keep these separate: parsing doesn't know about detectors, detectors don't know about
@@ -153,8 +154,11 @@ predicate drives `score`, `severity` and `--fail-on`.
 ## Report boundary
 
 `report.report` builds its output field by field and never serializes trace objects or
-plugin data. Evidence is `(step, channel, call, observation)` **array positions**, not
-ATIF step IDs. Check IDs, versions and manifest IDs must be static, non-sensitive
+plugin data. Evidence is `(step, channel, call, observation, field, span)`: **array
+positions** (not ATIF step IDs), the index of the classified call argument, and the
+character span of the match when the detector knows it. A `SurfaceDetector` predicate may
+return a `re.Match` or `(start, end)` to supply the span. `cite` turns these into
+excerpts only when asked; renderers never re-open the trace. Check IDs, versions and manifest IDs must be static, non-sensitive
 identifiers.
 
 Built-ins are deterministic: no clock, randomness, network or filesystem access. Bump a
