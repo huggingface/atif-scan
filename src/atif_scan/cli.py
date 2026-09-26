@@ -39,33 +39,49 @@ def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
         raise ValueError("invalid_input_manifest")
     result = []
     for raw in value["inputs"]:
-        if not isinstance(raw, dict) or set(raw) - {"id", "path", "task", "partial"}:
+        if not isinstance(raw, dict) or set(raw) - {"id", "path", "task", "partial", "reward"}:
             raise ValueError("invalid_input_record")
         if not {"id", "path"} <= set(raw) or not isinstance(raw["path"], str):
             raise ValueError("invalid_input_record")
         location = raw["path"]
         if "://" not in location:
             location = str(path.parent / location)
-        result.append(
-            (
-                file_source(identifier(raw["id"]), location),
-                Context(raw.get("task"), raw.get("partial", False)),
-            )
-        )
+        source = file_source(identifier(raw["id"]), location)
+        if "reward" in raw:
+            reward = Context(reward=raw["reward"]).reward  # validated number or None
+            source = Source(source.label, source.load, lambda reward=reward: reward)
+        result.append((source, Context(raw.get("task"), raw.get("partial", False))))
     return result
 
 
 def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
     if args.manifest:
-        if args.paths or args.task or args.partial:
+        if args.paths or args.task or args.task_from or args.partial:
             raise ValueError("manifest_cannot_be_combined_with_direct_inputs")
         result = manifest_inputs(args.manifest)
     else:
-        context = Context(args.task, args.partial)
-        result = [(s, context) for s in resolve(args.paths, args.pattern)]
+        result = [
+            (s, Context(task_for(s, args), args.partial)) for s in resolve(args.paths, args.pattern)
+        ]
     if not result or len({s.label for s, _ in result}) != len(result):
         raise ValueError("empty_or_duplicate_inputs")
     return result
+
+
+def task_for(source: Source, args: argparse.Namespace) -> str | None:
+    """--task for every input, or (explicitly) derived from the trial folder name."""
+    if args.task_from != "trial-dir":
+        return args.task
+    # Harbor trial folders are `<task>__<suffix>`. Job folders can contain `__` too
+    # (`2026-08-19__20-38-18`), so the part closest to the file wins.
+    for part in reversed(re.split(r"[\\/]", source.hint or source.label)):
+        task, separator, _ = part.partition("__")
+        if separator and task:
+            try:
+                return identifier(task)
+            except ValueError:
+                return None
+    return None
 
 
 def load_checks(args: argparse.Namespace) -> list:
@@ -128,7 +144,13 @@ def main(argv: list[str] | None = None) -> int:
         "without reading any trace",
     )
     parser.add_argument("--manifest", type=Path, help="explicit input manifest (JSON)")
-    parser.add_argument("--task", help="task identity for task-scoped checks")
+    tasks = parser.add_mutually_exclusive_group()
+    tasks.add_argument("--task", help="task identity for task-scoped checks")
+    tasks.add_argument(
+        "--task-from",
+        choices=["trial-dir"],
+        help="derive each input's task from its Harbor trial folder (<task>__<id>)",
+    )
     parser.add_argument(
         "--partial", action="store_true", help="live/incomplete trace; negatives unknown"
     )
@@ -180,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     for number, (source, context) in enumerate(records, 1):
         if progress:
             print(f"\ratif-scan: scanning {number}/{len(records)}", end="", file=sys.stderr)
+        context = Context(context.task, context.partial, source.reward())
         error = None
         try:
             trace = source.load()
@@ -194,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
             input_id=source.label,
             input_status="available" if trace is not None else "unavailable_or_invalid",
             input_error=error,
+            task=context.task,
+            reward=context.reward,
             partial=context.partial,
             agent_steps=trace.agent_steps if trace is not None else None,
             # Counts only: tool names and arguments never enter the report.

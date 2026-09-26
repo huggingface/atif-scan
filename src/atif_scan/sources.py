@@ -17,6 +17,8 @@ Hub input is used, so local scans never touch the network.
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import re
 from collections.abc import Callable
@@ -39,11 +41,50 @@ class SourceError(ValueError):
     """Fixed error codes only; never input paths or remote messages."""
 
 
+def _no_reward() -> float | None:
+    return None
+
+
 @dataclass(frozen=True)
 class Source:
     # Report label. Relative to the scanned root for expanded inputs, else `input-NNNN`.
     label: str
     load: Callable[[], Trace] = field(repr=False)
+    # Verifier reward recorded next to the trajectory, read lazily; None when unknown.
+    reward: Callable[[], float | None] = field(default=_no_reward, repr=False)
+    # The input path as given plus the entry's relative path. Used only to derive a task
+    # from Harbor folder names (--task-from); never reported.
+    hint: str = field(default="", repr=False)
+
+
+REWARD_FILES = ("reward.json", "reward.txt")  # Harbor reads reward.json first
+REWARD_BYTES = 4096
+
+
+def parse_reward(data: bytes, name: str) -> float | None:
+    """A finite number from Harbor's reward file; anything else is unknown (None)."""
+    try:
+        text = data[:REWARD_BYTES].decode("utf-8").strip()
+        value = json.loads(text) if name.endswith(".json") else float(text)
+    except (UnicodeError, ValueError):
+        return None
+    if isinstance(value, dict):
+        value = value.get("reward")
+    if type(value) in (int, float) and math.isfinite(value):
+        return float(value)
+    return None
+
+
+def reward_candidates(path: str) -> list[str]:
+    """Relative reward-file paths for a trajectory: `<dir>/verifier/` and one level up
+    (Harbor: `<trial>/agent/trajectory.json` -> `<trial>/verifier/reward.*`)."""
+    parent = PurePosixPath(path).parent
+    folders = [parent] + ([parent.parent] if parent != parent.parent else [])
+    return [
+        (folder / "verifier" / name).as_posix().removeprefix("./")
+        for folder in folders
+        for name in REWARD_FILES
+    ]
 
 
 def hf_filesystem():
@@ -107,6 +148,8 @@ class Listing:
     directory: bool
     entries: tuple[Entry, ...]  # sorted; a single file is one entry with path ""
     opener: Callable[[Entry], Callable[[], Trace]] = field(repr=False)
+    # Read up to REWARD_BYTES of a small listed metadata file by relative path.
+    reader: Callable[[str], bytes] | None = field(default=None, repr=False)
 
 
 def _list_local(value: str) -> Listing:
@@ -125,7 +168,12 @@ def _list_local(value: str) -> Listing:
             if path.is_file() and not path.is_symlink():
                 entries.append(Entry(path.relative_to(root).as_posix(), path.stat().st_size))
     entries.sort(key=lambda e: e.path)
-    return Listing(False, True, tuple(entries), lambda e: lambda: load_trace(root / e.path))
+
+    def read(relative: str) -> bytes:
+        with open(root / relative, "rb") as handle:
+            return handle.read(REWARD_BYTES)
+
+    return Listing(False, True, tuple(entries), lambda e: lambda: load_trace(root / e.path), read)
 
 
 def _list_remote(value: str, fs) -> Listing:
@@ -158,7 +206,11 @@ def _list_remote(value: str, fs) -> Listing:
     def opener(entry: Entry) -> Callable[[], Trace]:
         return _remote_load(fs, full[entry.path], entry.size)
 
-    return Listing(True, True, tuple(entries), opener)
+    def read(relative: str) -> bytes:
+        with fs.open(full[relative], "rb") as handle:
+            return handle.read(REWARD_BYTES)
+
+    return Listing(True, True, tuple(entries), opener, read)
 
 
 def list_input(value: str, fs=None) -> Listing:
@@ -188,6 +240,41 @@ def label_for(entry: Entry, pattern: str) -> str | None:
         return None
 
 
+def reward_lookup(listing: Listing, entry: Entry, value: str) -> Callable[[], float | None]:
+    """Find the reward next to a selected trajectory without any extra listing call."""
+    if not listing.directory:
+        if listing.remote:
+            return _no_reward
+        path = Path(normalize(value))
+        candidates = [
+            (folder / "verifier" / name)
+            for folder in (path.parent, path.parent.parent)
+            for name in REWARD_FILES
+        ]
+
+        def local() -> float | None:
+            for candidate in candidates:
+                if candidate.is_file():
+                    with open(candidate, "rb") as handle:
+                        return parse_reward(handle.read(REWARD_BYTES), candidate.name)
+            return None
+
+        return local
+    present = {e.path for e in listing.entries}
+    found = next((c for c in reward_candidates(entry.path) if c in present), None)
+    if found is None or listing.reader is None:
+        return _no_reward
+    reader = listing.reader
+
+    def listed() -> float | None:
+        try:
+            return parse_reward(reader(found), found)
+        except Exception:
+            return None  # unreadable reward is unknown, never an error or a zero
+
+    return listed
+
+
 def file_source(label: str, location: str, fs=None) -> Source:
     """A single named file (manifest entries): no expansion; failures surface on load."""
     location = normalize(location)
@@ -213,7 +300,9 @@ def resolve(values: list[str], pattern: str = DEFAULT_PATTERN, fs=None) -> list[
             raise SourceError("no_files_match_pattern")
         for entry in entries:
             label = label_for(entry, pattern) or f"input-{len(sources) + 1:04d}"
-            sources.append(Source(label, listing.opener(entry)))
+            reward = reward_lookup(listing, entry, value)
+            hint = "/".join(p for p in (normalize(value).rstrip("/"), entry.path) if p)
+            sources.append(Source(label, listing.opener(entry), reward, hint))
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

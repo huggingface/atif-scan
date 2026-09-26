@@ -71,7 +71,9 @@ def test_observation_not_agent_text():
     }
     trace = parse_trace(raw)
     assert len(list(trace.observation_surfaces())) == 1
-    content = {k: v for k, v in results(raw).items() if not k.startswith("integrity.")}
+    content = {
+        k: v for k, v in results(raw).items() if not k.startswith(("integrity.", "context."))
+    }
     assert all(r.status == Status.NO_MATCH for r in content.values())
 
 

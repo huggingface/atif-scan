@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .checks import CheckSpec, Context, Detection, Detector, Status
+from .detectors.context import ContextCheck
 from .model import Trace
 from .rules import Allowance, Rule
 
@@ -36,18 +37,20 @@ class Assessment:
     def counts(self) -> bool:
         """An unexcused finding: contributes to the score and to --fail-on."""
         return (
-            self.kind != "allowance" and self.result.status == Status.MATCH and not self.expected_by
+            self.kind in ("detector", "rule")
+            and self.result.status == Status.MATCH
+            and not self.expected_by
         )
 
 
 def kind(check: object) -> str:
-    return (
-        "allowance"
-        if isinstance(check, Allowance)
-        else "rule"
-        if isinstance(check, Rule)
-        else "detector"
-    )
+    if isinstance(check, Allowance):
+        return "allowance"
+    if isinstance(check, Rule):
+        return "rule"
+    if isinstance(check, ContextCheck):
+        return "context"
+    return "detector"
 
 
 class Engine:

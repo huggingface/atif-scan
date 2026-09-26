@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
@@ -39,12 +40,18 @@ class Severity(IntEnum):
 class Context:
     task: str | None = None
     partial: bool = False
+    # Verifier reward, when known (Harbor `verifier/reward.{json,txt}` or a manifest).
+    reward: float | None = None
 
     def __post_init__(self) -> None:
         if self.task is not None:
             identifier(self.task)
         if type(self.partial) is not bool:
             raise ValueError("invalid_partial_flag")
+        if self.reward is not None and (
+            type(self.reward) not in (int, float) or not math.isfinite(self.reward)
+        ):
+            raise ValueError("invalid_reward")
 
 
 @dataclass(frozen=True)

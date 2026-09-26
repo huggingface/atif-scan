@@ -126,11 +126,8 @@ PAYLOAD_KEYS = _keys(
     "body",
     "data",
     "newstring",
-    "oldstring",
     "newstr",
-    "oldstr",
     "newtext",
-    "oldtext",
     "insertline",
     "patch",
     "diff",
@@ -154,6 +151,8 @@ PAYLOAD_KEYS = _keys(
     "include",
     "exclude",
 )
+# Existing text an edit quotes (not authored by the agent): not evidence of anything.
+QUOTED_KEYS = _keys("oldstring", "oldstr", "oldtext", "original", "search", "find")
 URL_VALUE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
 PATH_VALUE = re.compile(r"(?:/|~/|\./|\.\./|[A-Za-z]:[\\/])[^\n]{0,4095}")
 
@@ -215,6 +214,8 @@ def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
         return ((channel, Content(understood=False)),)
     fields = []
     for key, value in leaves(args):
+        if _norm(key) in QUOTED_KEYS:
+            continue
         if isinstance(value, str):
             channel, text = classify(key, value)
             fields.append((channel, content(text)))
