@@ -9,6 +9,12 @@
   secret-masked excerpts of the trace. Masking is best-effort, so treat cited output
   like the trace itself and keep it out of Git and issues. Text reports render only that allowlisted document. Manifest IDs
   and check IDs must be non-sensitive labels.
+- `--questions DIR` and `atif-inspect` also write trace text: bounded, masked excerpts in
+  prompt files, and masked step dumps. Treat both like the trace itself. atif-scan never
+  sends prompts anywhere. Whoever answers them (e.g. `tools/ask-fast-agent.sh`) sends them
+  to a model provider, and that's the user's decision. Prompts frame trace text as
+  untrusted data, and the answering script gives the model no tools. `--answers` keeps
+  only the validated answer, confidence and steps, never the free-text reason.
 - When a directory or `hf://` prefix is expanded, each input is labelled by its path
   *relative to the root you passed* (e.g. `trial-1/agent/trajectory.json`). The root
   itself never appears. Don't scan roots whose sub-paths are sensitive; use a manifest.

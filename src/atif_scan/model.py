@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -59,6 +60,9 @@ class Locator:
 class Content:
     text: str = field(default="", repr=False)
     understood: bool = True
+    # An image/audio/video block (or a harness placeholder for one, e.g. "[Image 1]") was
+    # part of it: text the agent saw there isn't in `text`.
+    media: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,6 +129,30 @@ class Usage:
     reasoning_tokens: int | None = None  # final_metrics.extra.total_reasoning_tokens
 
 
+STATUS_ONLY = frozenset(
+    {
+        "success",
+        "failure",
+        "failed",
+        "error",
+        "ok",
+        "done",
+        "true",
+        "false",
+        "completed",
+        "null",
+        "none",
+        "✓",
+        "",
+    }
+)
+ACTION_CLAIM = re.compile(
+    r"\b(?:created|wrote|written|ran|installed|implemented|fixed|saved|executed|built|"
+    r"configured|updated|modified)\b",
+    re.I,
+)
+
+
 @dataclass(frozen=True)
 class Trace:
     schema_version: str | None
@@ -140,6 +168,50 @@ class Trace:
     llm_calls: int | None = None
     # ATIF root `agent` block: (name, version, model_name), each None when absent.
     agent: tuple[str | None, str | None, str | None] = (None, None, None)
+    # Bare `[REDACTED]` JSON values the loader read as null (a publisher redaction defect).
+    redacted_values: int = 0
+
+    @property
+    def results_unrecorded(self) -> bool:
+        """Tool results were exported as bare status words ("success"/"failure") instead of
+        output (ACE on TB2.1: every one of 12k results): checks on what the agent received
+        can't be answered."""
+        texts = [
+            (o.content.text or "").strip().strip('"').lower()
+            for s in self.steps
+            for o in s.observations
+        ]
+        return len(texts) >= 5 and sum(t in STATUS_ONLY for t in texts) >= 0.9 * len(texts)
+
+    @property
+    def actions_unrecorded(self) -> bool:
+        """The agent reports doing work but not one tool call was recorded (a TB2.1 harness
+        exported 105 rewarded traces as the instruction plus "Done. Files created: …")."""
+        if self.tool_calls or not self.agent_steps:
+            return False
+        return any(
+            ACTION_CLAIM.search(s.message.text or "")
+            for s in self.steps
+            if s.source == "agent" and not s.copied
+        )
+
+    @property
+    def head_missing(self) -> bool:
+        """The first recorded step is the agent's: the prompt wasn't exported. A TB2.1
+        harness exported 86 traces that way, keeping only the last ~27 steps (renumbered
+        from 1). Recall checks can't call anything unprimed then."""
+        for step in self.steps:
+            if step.source in ("system", "user"):
+                return False
+            if step.source == "agent":
+                return True
+        return False
+
+    @property
+    def recording_gaps(self) -> bool:
+        """Parts of the session aren't in the trace: negatives must not read as clean.
+        (`head_missing` isn't one: many exporters simply don't record the prompt.)"""
+        return bool(self.compacted) or self.results_unrecorded or self.actions_unrecorded
 
     @property
     def reasoning_hidden(self) -> bool:

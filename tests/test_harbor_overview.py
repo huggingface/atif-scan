@@ -426,3 +426,40 @@ def test_harbor_status_line_only_on_terminals(harbor, capsys, monkeypatch):
     assert "\r\033[Katif-scan: listing job" in err
     assert "atif-scan: downloading trajectories 6/6" in err and "scanning 6/6" in err
     assert JOB not in err
+
+
+class _PagedCLI:
+    """Stub `harbor` CLI: one job of 25 trials, served `size` per page."""
+
+    def __init__(self, size: int):
+        self.size, self.pages = size, []
+        self.trials = [{"id": f"t{i:02d}", "name": f"task__T{i:02d}"} for i in range(25)]
+
+    def json(self, *args):
+        if args[:3] == ("hub", "job", "show"):
+            return {"name": "paged-job"}
+        page, limit = int(args[args.index("--page") + 1]), int(args[args.index("--limit") + 1])
+        self.pages.append(page)
+        size = min(limit, self.size)
+        total_pages = (len(self.trials) + size - 1) // size
+        return {"items": self.trials[(page - 1) * size : page * size], "total_pages": total_pages}
+
+
+def test_job_listing_asks_for_large_pages_and_follows_a_smaller_server_cap():
+    from atif_scan.harbor_hub import PAGE_SIZE, listing
+
+    assert PAGE_SIZE == 1000  # a 2,225-trial job is 3 calls, not 23
+    cli = _PagedCLI(size=10)  # the server caps pages lower: still lists everything
+    _, rows = listing(cli, JOB)
+    assert len(rows) == 25 and cli.pages == [1, 2, 3]
+
+
+def test_row_listing_stops_paging_once_the_rows_trials_are_found():
+    from atif_scan.harbor_hub import listing
+
+    cli = _PagedCLI(size=10)  # the row holds one agent's share, all on page 1
+    _, rows = listing(cli, JOB, want={"t01", "t05"})
+    assert cli.pages == [1] and {"t01", "t05"} <= {r["id"] for r in rows}
+    cli = _PagedCLI(size=10)  # a wanted trial on the last page: every page is read
+    listing(cli, JOB, want={"t01", "t24"})
+    assert cli.pages == [1, 2, 3]

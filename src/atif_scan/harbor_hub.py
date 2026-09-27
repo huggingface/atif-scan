@@ -49,7 +49,9 @@ ACCEPTED = (
     "https://hub.harborframework.com/jobs/<uuid>, "
     "https://hub.harborframework.com/datasets/.../leaderboards/<lb>/rows/<uuid>"
 )
-PAGE_SIZE = 100
+# The Hub serves up to 1000 trials per page (a 2,225-trial job is 3 calls, not 23). A
+# smaller server cap still pages correctly: `total_pages` drives the loop.
+PAGE_SIZE = 1000
 MAX_JOB_LOOKUPS = 50
 
 # Progress callbacks receive fixed text plus counts only: never IDs, names or URLs.
@@ -174,8 +176,15 @@ def run_meta(job: str, show: Mapping, rows: list[Mapping]) -> dict:
 
 
 def listing(
-    cli: HarborCLI, job: str, progress: Progress = _quiet, label: str = "job"
+    cli: HarborCLI,
+    job: str,
+    progress: Progress = _quiet,
+    label: str = "job",
+    want: set[str] | None = None,
 ) -> tuple[dict, list[dict]]:
+    """Run facts and trial rows of one job. With `want` (a leaderboard row's trials),
+    paging stops once every wanted trial has been listed: a row often holds one agent's
+    share of a multi-agent job, so the rest of the job isn't needed."""
     progress(f"listing {label}")
     show = cli.json("hub", "job", "show", job)
     if not isinstance(show, Mapping):
@@ -191,7 +200,7 @@ def listing(
                 rows[str(row["id"])] = dict(row)
         pages = int(data.get("total_pages") or 1)
         progress(f"listing {label} trials · page {page}/{pages} · {len(rows)} trials")
-        if page >= pages:
+        if page >= pages or (want is not None and want <= rows.keys()):
             break
         page += 1
     ordered = sorted(rows.values(), key=lambda r: str(r.get("name") or r["id"]))
@@ -335,7 +344,7 @@ def row_listing(
             remaining.discard(trial)
             unresolved.add(trial)
             continue
-        run, rows = listing(cli, job, progress, f"job {len(jobs) + 1}")
+        run, rows = listing(cli, job, progress, f"job {len(jobs) + 1}", want=remaining)
         mine = [r for r in rows if str(r["id"]) in wanted]
         remaining -= {str(r["id"]) for r in mine}
         if trial in remaining:  # listed job didn't contain it
@@ -400,6 +409,7 @@ def _trial_sources(cli, job, rows, dest, full, workers, refresh, progress=_quiet
                 lambda reward=meta["reward"]: reward,
                 meta=meta,
                 fingerprint=local_fingerprint(paths[str(row["id"])]),
+                local=paths[str(row["id"])],
             )
         )
     return sources

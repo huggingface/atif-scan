@@ -22,6 +22,7 @@ from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
 from .loader import TraceError
 from .policy import load_rules
+from .questions import QUESTIONS, Answers, Writer
 from .report import (
     document,
     inspection_text,
@@ -71,7 +72,9 @@ def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
         source = file_source(identifier(raw["id"]), location)
         if "reward" in raw:
             reward = Context(reward=raw["reward"]).reward  # validated number or None
-            source = Source(source.label, source.load, lambda reward=reward: reward)
+            source = Source(
+                source.label, source.load, lambda reward=reward: reward, local=source.local
+            )
         result.append((source, Context(raw.get("task"), raw.get("partial", False))))
     return result
 
@@ -412,6 +415,27 @@ def main(argv: list[str] | None = None) -> int:
         help="tasks the dataset should cover (e.g. 89 for Terminal-Bench 2.1)",
     )
     parser.add_argument(
+        "--questions",
+        type=Path,
+        metavar="DIR",
+        help="write follow-up review prompts (one per trace and question) to DIR for a human "
+        "or any LLM to answer; prompts contain masked trace text",
+    )
+    parser.add_argument(
+        "--question",
+        action="append",
+        default=[],
+        choices=[q.id for q in QUESTIONS],
+        help="only these questions (repeatable; default: all)",
+    )
+    parser.add_argument(
+        "--answers",
+        type=Path,
+        metavar="DIR",
+        help="read answers (<input>/<question>.answer.json) from a --questions DIR and "
+        "annotate the report; answers never change findings or DQ candidates",
+    )
+    parser.add_argument(
         "--cite",
         nargs="?",
         const="medium",
@@ -457,7 +481,10 @@ def scan(args: argparse.Namespace) -> int:
     invalid = failed = False
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     cache = None
-    if not args.no_cache and not args.cite:  # citations carry trace text: never cached
+    writer = Writer(args.questions, args.question) if args.questions else None
+    answers = Answers.load(args.answers) if args.answers else None
+    # Citations and questions carry trace text, and answers need the trace: never cached.
+    if not args.no_cache and not args.cite and writer is None and answers is None:
         directory = args.cache or args.sync_root / "results"
         if directory is not None:
             cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
@@ -501,8 +528,9 @@ def scan(args: argparse.Namespace) -> int:
             # A Hub trial without a trajectory (e.g. it errored first) is a reported run
             # fact, not bad input; unreadable local/hf files still exit 2.
             invalid = invalid or error != "no_trajectory_downloaded"
-        if trace is not None and trace.compacted and not context.partial:
-            # Earlier history isn't recorded: negatives must not read as clean.
+        if trace is not None and trace.recording_gaps and not context.partial:
+            # Part of the session isn't recorded (compacted history, status-only results,
+            # unrecorded tool calls, missing start): negatives must not read as clean.
             context = Context(context.task, True, context.reward)
         assessments = engine.evaluate(trace, context)
         item = report(assessments, trace.step_numbers if trace is not None else None)
@@ -522,6 +550,10 @@ def scan(args: argparse.Namespace) -> int:
         )
         if key is not None:
             cache.put(key, item)
+        if writer is not None and trace is not None:
+            writer.add(trace, assessments, context, source.label, source.local)
+        if answers is not None:
+            item["answers"] = answers.annotate(source.label, trace)
         if args.cite and trace is not None:
             # Opt-in trace text; the only report field that isn't allowlisted metadata.
             item["citations"] = citations(trace, assessments, Severity[args.cite.upper()])
@@ -533,6 +565,13 @@ def scan(args: argparse.Namespace) -> int:
         )
     if progress:
         print("\r\033[K", end="", file=sys.stderr)
+    if writer is not None:
+        writer.close()
+        print(
+            f"atif-scan: {writer.count} question(s) written (prompts contain masked trace "
+            "text; keep them out of Git)",
+            file=sys.stderr,
+        )
     doc = document(output, version("atif-scan"))
     if args.runs:
         doc["runs"] = args.runs

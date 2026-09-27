@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -12,25 +14,35 @@ from types import MappingProxyType
 from . import jslit
 from .model import Channel, Content, Observation, Step, ToolCall, Trace, Usage
 
-MAX_BYTES = 64 * 1024 * 1024
+# TB4 leaderboard traces reach ~180 MB (images, huge tool outputs); parsing needs several
+# times the file size in memory, so larger files are rejected (reported, never cleared).
+MAX_BYTES = 128 * 1024 * 1024
 
 
 class TraceError(ValueError):
     """Messages contain fixed error codes only, never input snippets or filenames."""
 
 
+# Harness text standing in for an attached image (Devin CLI: "[Image 1]").
+MEDIA_PLACEHOLDER = re.compile(r"^\s*\[(?:Image|Screenshot|Attachment)\s*#?\d*\]\s*$", re.I | re.M)
+
+
 def content(value: object) -> Content:
     if value is None:
         return Content()
     if isinstance(value, str):
-        return Content(value)
+        return Content(value, media=bool(MEDIA_PLACEHOLDER.search(value)))
     if isinstance(value, list):
         parts = [content(part) for part in value]
-        return Content("\n".join(p.text for p in parts), all(p.understood for p in parts))
+        return Content(
+            "\n".join(p.text for p in parts),
+            all(p.understood for p in parts),
+            any(p.media for p in parts),
+        )
     if isinstance(value, dict):
         # Only text-bearing blocks, never arbitrary metadata/URL/image payloads.
         if value.get("type") in ("image", "image_url", "audio", "video"):
-            return Content()
+            return Content(media=True)
         if isinstance(value.get("text"), str):
             return Content(value["text"])
     return Content(understood=False)
@@ -126,6 +138,47 @@ HARNESS_ALIASES = {
     "Todo": "inert",
     "GitStatusInspect": "inert",
     "RunVerification": "inert",
+    # Claude Code task tools.
+    "TaskCreate": "inert",
+    "TaskUpdate": "inert",
+    "TaskStop": "inert",
+    # LemonCrow (Claude Code MCP tools), seen on the TB2.1 leaderboard.
+    "mcp__lc__bash": "shell",
+    "mcp__lc__read": "read",
+    "mcp__lc__edit": "write",
+    "mcp__lc__code_search": "search_files",
+    # Surf harness (nano-grok-build), seen on the TB2.1 leaderboard.
+    "run_terminal_command": "shell",
+    "search_replace": "write",
+    "list_dir": "search_files",
+    "get_terminal_command_output": "inert",
+    "kill_terminal_command": "inert",
+    # AiWork.Coder (dtcoder).
+    "background_exec": "shell",
+    "plan": "inert",
+    "read_tool_result_page": "inert",
+    # Dext.
+    "rg": "search_files",
+    "fd": "search_files",
+    "read_symbol": "read",
+    "multi_edit": "write",
+    "http": "web_fetch",
+    "git_diff": "read",
+    "git_log": "read",
+    # Mobile Coder.
+    "pdf_parse": "read",
+    "todowrite": "inert",
+    "invalid": "inert",
+    # WorkHarness.
+    "tool_search": "inert",
+    "image_to_text": "read",
+    "task_output": "inert",
+    "task_get": "inert",
+    "task_stop": "inert",
+    "sleep": "inert",
+    # OrcaTerm: completion reports (prose summaries, not written files).
+    "goal_complete": "inert",
+    "goal_blocked": "inert",
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 ALIASES.update(HARNESS_ALIASES)
@@ -259,6 +312,8 @@ def program_tool(name: str, args: object) -> str:
 
 
 def normalize_tool(name: str, args: object = None) -> str:
+    if name == "write_stdin" and isinstance(args, Mapping) and not args.get("chars"):
+        return "inert"  # Codex polling a running session: nothing was typed
     actions = ACTION_TOOLS.get(name)
     if actions is not None:
         action = args.get("action_type") if isinstance(args, dict) else None
@@ -549,12 +604,42 @@ def usage(metrics: object) -> Usage | None:
     return None if found == Usage() else found
 
 
+# A JSON string (skipped as a whole) or a bare `[REDACTED]` token outside any string.
+_STRING_OR_REDACTED = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|\[REDACTED\]')
+
+
+def _unredact(text: str) -> tuple[str, int]:
+    """Some published trajectories replace values (token counts) with a bare, unquoted
+    `[REDACTED]`, which is invalid JSON (TB4 on the Harbor Hub). Read those values as null
+    (unknown) and count them; redacted text inside strings is left as it is."""
+    count = 0
+
+    def value(m: re.Match[str]) -> str:
+        nonlocal count
+        if m[0][0] != "[":
+            return m[0]
+        count += 1
+        return "null"
+
+    return _STRING_OR_REDACTED.sub(value, text), count
+
+
 def load_bytes(data: bytes) -> Trace:
     """Parse raw trace bytes (from any source) under the same size cap."""
     if len(data) > MAX_BYTES:
         raise TraceError("trace_too_large")
     try:
-        return parse_trace(json.loads(data.decode("utf-8")))
+        text = data.decode("utf-8")
+        redacted = 0
+        try:
+            value = json.loads(text)
+        except ValueError:
+            if "[REDACTED]" not in text:
+                raise
+            text, redacted = _unredact(text)
+            value = json.loads(text)
+        trace = parse_trace(value)
+        return replace(trace, redacted_values=redacted) if redacted else trace
     except TraceError:
         raise
     except (UnicodeError, ValueError, RecursionError):

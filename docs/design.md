@@ -29,7 +29,7 @@ rules, and only `report.report` decides what gets written out.
 
 - Accepts `ATIF-v1.x` (or no version). Other major versions are rejected. The loader
   checks the structures it uses, ignores unrelated extensions, and doesn't claim full
-  schema validation. Files over 64 MiB are rejected.
+  schema validation. Files over 128 MiB are rejected.
 - The `Trace` is an analysis view, not a lossless copy. Top-level metadata and usage
   stats are dropped.
 - Text fields become `Content`. Formats it can't read get `understood=False`, and

@@ -71,8 +71,11 @@ def test_observation_not_agent_text():
     }
     trace = parse_trace(raw)
     assert len(list(trace.observation_surfaces())) == 1
+    # Prompt-relative checks are unknown here: the fixture records no prompt.
     content = {
-        k: v for k, v in results(raw).items() if not k.startswith(("integrity.", "context."))
+        k: v
+        for k, v in results(raw).items()
+        if not k.startswith(("integrity.", "context.", "recall.", "lookup.instruction_phrase"))
     }
     # Tool output never counts as agent evidence (task-dependent checks: not applicable).
     assert all(r.status in (Status.NO_MATCH, Status.NOT_APPLICABLE) for r in content.values())

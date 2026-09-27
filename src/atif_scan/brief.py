@@ -8,9 +8,12 @@ trace activity), trace/cost integrity, and counted findings. Detail stays behind
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 from .estimates import cost_estimate, missing_activity
+from .harbor_files import override_kind
+from .questions import tally
 from .report import RANK, _m, overview
 
 OK, WARN, BAD, INFO = "✓", "⚠", "✗", "·"
@@ -42,6 +45,11 @@ def output_ratios(items: list[dict]) -> dict | None:
     return result
 
 
+# Task packs a run's dataset has, by (dataset pattern, check-id prefix, plugin spec).
+# Never loaded automatically (plugins are trusted code): the brief only names them.
+PACKS = ((r"terminal-bench-2-1\b|terminal-bench-2\.1", "tb21", "atif_scan.packs.tb21:checks"),)
+
+
 def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price=None) -> dict:
     items = doc["inputs"]
     ov = overview(doc, dq, min_trials, expect_tasks=expect_tasks)
@@ -69,9 +77,19 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
     severity_of = {
         a["id"]: a["severity"] for item in items for a in item["assessments"] if a.get("severity")
     }
+    loaded = {a["id"].split(".", 1)[0] for item in items for a in item["assessments"]}
+    datasets = " ".join(d for run in ov["runs"] for d in run.get("datasets") or [])
+    suggested = [
+        pack
+        for pattern, prefix, pack in PACKS
+        if re.search(pattern, datasets, re.I) and prefix not in loaded
+    ]
     return {
         "schema_version": 1,
         "kind": "integrity_brief",
+        "suggested_packs": suggested,
+        # Reviewer answers to --questions prompts (annotations only; never DQ math).
+        "answers": tally(items),
         "scanner_version": doc["scanner_version"],
         "runs": ov["runs"],
         "agents": dict(agents.most_common()),
@@ -107,6 +125,9 @@ def _pct(n: int, total: int) -> str:
 RECORDING_LABELS = {
     "integrity.history_compacted": "compacted history (only the last context window recorded)",
     "integrity.reasoning_not_recorded": "reasoning produced but not recorded",
+    "integrity.tool_results_not_recorded": "tool results exported as status words only",
+    "integrity.actions_not_recorded": "work claimed but no tool calls recorded",
+    "integrity.trace_head_missing": "trace starts mid-session (no prompt recorded)",
     "integrity.timestamp_missing": "steps without timestamps",
     "integrity.tokens_exceed_recorded_calls": "token totals exceed what recorded calls could use",
     "integrity.cost_missing": "tokens recorded but no cost (anywhere)",
@@ -115,6 +136,8 @@ RECORDING_LABELS = {
     "integrity.orphan_observation": "tool results without a matching call",
     "integrity.agent_only_fields": "agent-only fields on system/user steps",
     "integrity.output_token_ratio": "recorded text doesn't fit reported output tokens",
+    "integrity.web_results_not_recorded": "web searches/fetches without recorded results or URLs",
+    "integrity.redacted_values": "bare [REDACTED] values (invalid JSON, read as unknown)",
 }
 RATIO_BASIS = {
     "answer_only": "excl. reasoning",
@@ -221,9 +244,12 @@ def brief_text(b: dict) -> str:
         cov.append(
             f"{OK if not below else WARN} {below} task(s) below {k['expected_per_task']} trials"
         )
-    cov.append(
-        f"{OK if not t['errored'] else WARN} {t['errored']} errored ({_pct(t['errored'], n)})"
-    )
+    errored = f"{OK if not t['errored'] else WARN} {t['errored']} errored ({_pct(t['errored'], n)})"
+    kinds = list(t["error_types"].items())
+    if kinds:  # Harbor's recorded exception types, not trajectory evidence
+        shown = ", ".join(f"{kind} {count}" for kind, count in kinds[:3])
+        errored += f": {shown}" + (f", +{len(kinds) - 3} more" if len(kinds) > 3 else "")
+    cov.append(errored)
     if t["without_trajectory"]:
         cov.append(f"{WARN} {t['without_trajectory']} without trajectory")
     lines.append("COVERAGE   " + " · ".join(cov))
@@ -260,6 +286,8 @@ def brief_text(b: dict) -> str:
                 "integrity.reasoning_not_recorded",
                 "integrity.tokens_exceed_recorded_calls",
                 "integrity.output_token_ratio",
+                "integrity.web_results_not_recorded",
+                "integrity.redacted_values",
             )
             else INFO
         )
@@ -275,9 +303,9 @@ def brief_text(b: dict) -> str:
             f" {RATIO_BASIS[basis]}"
         )
     if d and d["rewarded_not_cleared"]:
+        why = " · ".join(f"{reason} {count}" for reason, count in d["not_cleared_reasons"].items())
         lines.append(
-            f"{'':<10} → {d['rewarded_not_cleared']} rewarded trial(s) can't be cleared"
-            " (partial or missing traces)"
+            f"{'':<10} → {d['rewarded_not_cleared']} rewarded trial(s) can't be cleared: {why}"
         )
 
     # COST
@@ -325,19 +353,59 @@ def brief_text(b: dict) -> str:
         lines.append(f"{'':<10}   +{len(top) - 6} more medium+ checks (see --summary)")
 
     # SETTINGS
-    if ov["overrides"]:
-        lines.append(f"SETTINGS   {WARN} overrides set (leaderboards require defaults):")
-        lines += [f"{'':<10}   {name}" for name in ov["overrides"]]
-    elif b["runs"]:
+    scoring = [o for o in ov["overrides"] if override_kind(o) == "scoring"]
+    infra = [o for o in ov["overrides"] if override_kind(o) == "infrastructure"]
+    label = "SETTINGS"
+    if scoring:
+        lines.append(
+            f"{label:<10} {WARN} scoring overrides (change the agent's time or resources; "
+            "leaderboards require defaults): " + ", ".join(scoring)
+        )
+        label = ""
+    if infra:
+        lines.append(
+            f"{label:<10} · infrastructure overrides (provisioning only): " + ", ".join(infra)
+        )
+        label = ""
+    if not ov["overrides"] and b["runs"]:
         lines.append(f"SETTINGS   {OK} no leaderboard-forbidden overrides")
+    mm = ov.get("model_mismatch")
+    if mm:
+        others = ", ".join(f"{m} {k}" for m, k in mm["other_models"].items())
+        lines.append(
+            f"MODEL      {BAD} critical  {len(mm['trial_ids'])} trial(s)"
+            f" ({_pct(len(mm['trial_ids']), n)}) ran another model than {mm['expected']}:"
+            f" {others} · {len(mm['rewarded_ids'])} rewarded · ${mm['cost_usd']:,.2f}"
+        )
+        lines.append(
+            f"{'':<10} fallback or substitution: those rewards and costs aren't this model's"
+        )
+        label = ""
+    for r in b["runs"]:
+        if r.get("canonical_dataset") is False:
+            lines.append(
+                f"{label:<10} {WARN} tasks from a non-canonical source: "
+                + ", ".join(r.get("datasets") or ["?"])
+                + " (diff it against the benchmark: tools/task_diff.py)"
+            )
+            label = ""
+    for i, (question, counts) in enumerate(sorted((b.get("answers") or {}).items())):
+        shown = " · ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1]))
+        lines.append(f"{'ANSWERS' if i == 0 else '':<10} {question}: {shown}")
+    for pack in b.get("suggested_packs") or []:
+        lines.append(f"PACKS      {WARN} task pack for this dataset not loaded: --plugin {pack}")
 
     # ADJUSTMENTS summary
     adj = []
     if d and d["candidates"]:
         acc, _ = ov["accuracy"]
+        other = set((ov.get("model_mismatch") or {}).get("rewarded_ids") or [])
+        on_findings = [x for x in d["candidate_ids"] if x not in other]
+        parts = [f"{len(on_findings)} on findings, review with --cite high"] if on_findings else []
+        parts += [f"{len(other)} ran another model"] if other else []
         adj.append(
             f"accuracy {acc:.1f}% → {d['accuracy_if_disqualified'][0]:.1f}%"
-            f" ({d['candidates']} DQ candidates, review with --cite high)"
+            f" ({d['candidates']} DQ candidates: {'; '.join(parts)})"
         )
     if ce["estimate_usd"]:
         adj.append(
@@ -383,7 +451,10 @@ SEVERITY_STYLE = {
 }
 PATTERNS = [
     (r"^atif-scan .*$", "bold"),
-    (r"^(RESULT|REPORTED|COVERAGE|TRACES|COST|FINDINGS|SETTINGS|ADJUSTMENTS)\b", "bold cyan"),
+    (
+        r"^(RESULT|REPORTED|COVERAGE|TRACES|COST|FINDINGS|SETTINGS|MODEL|PACKS|ANSWERS|ADJUSTMENTS)\b",
+        "bold cyan",
+    ),
     (r"^agent\b", "dim"),
     (r"^leaderboard\b", "dim"),
     (r"✓", "bold green"),

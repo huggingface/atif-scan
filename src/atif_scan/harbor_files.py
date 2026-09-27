@@ -37,6 +37,48 @@ def _flatten(value: object, prefix: str = "") -> Iterator[tuple[str, object]]:
         yield prefix, value
 
 
+# Settings that only change how the environment is provisioned (image builds, agent
+# install): allowed "infrastructure replacements" for private runs. Everything else in
+# OVERRIDE changes what the agent is given (time, resources) and so affects the score.
+INFRA_OVERRIDE = re.compile(r"setup_timeout|build_timeout", re.I)
+# Datasets whose tasks are the published benchmark (registry name or upstream repo).
+CANONICAL_DATASETS = re.compile(
+    r"^(?:terminal-bench/[\w.-]+|(?:https?://)?github\.com/(?:harbor-framework|laude-institute)/"
+    r"terminal-bench[\w.-]*?(?:\.git)?)$",
+    re.I,
+)
+GIT_REPO = re.compile(
+    r"^(?:https?://)?(github\.com/[\w.-]+/[\w.-]+?)(?:\.git)?(?:@([0-9a-f]{7,40}))?$"
+)
+
+
+def override_kind(path: str) -> str:
+    """`infrastructure` (provisioning only) or `scoring` (time/resources the agent gets)."""
+    return "infrastructure" if INFRA_OVERRIDE.search(path) else "scoring"
+
+
+def dataset_source(entry: Mapping) -> tuple[str | None, str | None, bool | None]:
+    """(name, ref, canonical) for a job config dataset: a registry name, or a git repo
+    (`repo: https://github.com/OWNER/REPO.git@COMMIT`, `path: tasks`)."""
+    name = entry.get("name")
+    if isinstance(name, str) and name:
+        return (
+            name,
+            entry.get("ref") if isinstance(entry.get("ref"), str) else None,
+            bool(CANONICAL_DATASETS.match(name)),
+        )
+    repo = entry.get("repo")
+    if isinstance(repo, str):
+        m = GIT_REPO.match(repo.strip())
+        if m:
+            path = entry.get("path") if isinstance(entry.get("path"), str) else ""
+            label = m.group(1) + (f"/{path.strip('/')}" if path else "")
+            if not re.fullmatch(r"[\w.:@/-]{1,200}", label):
+                return None, None, None
+            return label, m.group(2), bool(CANONICAL_DATASETS.match(m.group(1)))
+    return None, None, None
+
+
 def overrides(config: object) -> list[str]:
     """Setting paths the leaderboard requires unset (a multiplier of 1.0 is allowed)."""
     found = []
@@ -129,6 +171,7 @@ def job_meta(config: bytes | None, result: bytes | None) -> dict | None:
     stats = res.get("stats") if isinstance(res.get("stats"), dict) else {}
     datasets = [d for d in cfg.get("datasets") or [] if isinstance(d, dict)]
     task_names = [n for d in datasets for n in (d.get("task_names") or [])]
+    sources = [dataset_source(d) for d in datasets]
     name = str(cfg.get("job_name") or "")
     completed = _count(stats.get("n_completed_trials"))
     return {
@@ -140,8 +183,15 @@ def job_meta(config: bytes | None, result: bytes | None) -> dict | None:
         "completed_trials": completed,
         "errored_trials": _count(stats.get("n_errored_trials")),
         "listed_trials": None,
-        "datasets": [str(d.get("name")) for d in datasets if d.get("name")],
-        "dataset_refs": [str(d.get("ref")) for d in datasets if d.get("ref")],
+        "datasets": [n for n, _, _ in sources if n],
+        "dataset_refs": [r for _, r, _ in sources if r],
+        # False when the tasks came from a fork or copy (e.g. a git repo other than the
+        # benchmark's own); None when unknown.
+        "canonical_dataset": (
+            None
+            if not sources or any(c is None for _, _, c in sources)
+            else all(c for _, _, c in sources)
+        ),
         "config_task_names": len(task_names) or None,
         "n_attempts": _count(cfg.get("n_attempts")),
         "cost_usd": _number(stats.get("cost_usd")),

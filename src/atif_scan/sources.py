@@ -64,6 +64,9 @@ class Source:
     fingerprint: Callable[[], str | None] = field(default=lambda: None, repr=False)
     # Recorded run facts read lazily from Harbor's trial result.json ({} when absent).
     details: Callable[[], dict] = field(default=dict, repr=False)
+    # The trajectory's local file, when there is one (never reported; used to point
+    # follow-up tooling such as the read-only trace tool at the same file).
+    local: Path | None = field(default=None, repr=False)
 
 
 def local_fingerprint(path: Path) -> Callable[[], str | None]:
@@ -492,7 +495,7 @@ def file_source(label: str, location: str, fs=None) -> Source:
     if location.startswith(HF_PREFIX):
         fs = fs or hf_filesystem()
         return Source(label, _remote_load(fs, location[len(HF_PREFIX) :], None))
-    return Source(label, lambda: load_trace(Path(location)))
+    return Source(label, lambda: load_trace(Path(location)), local=Path(location))
 
 
 def resolve(
@@ -524,8 +527,11 @@ def resolve(
                 else (lambda: None)
             )
             details = trial_details(listing, entry, value)
+            local = listing.local_path(entry) if listing.local_path is not None else None
             sources.append(
-                Source(label, listing.opener(entry), reward, hint, meta, fingerprint, details)
+                Source(
+                    label, listing.opener(entry), reward, hint, meta, fingerprint, details, local
+                )
             )
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")

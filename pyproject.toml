@@ -13,6 +13,7 @@ dependencies = ["huggingface_hub>=2.0.0", "rich>=15.0.0"]
 
 [project.scripts]
 atif-scan = "atif_scan.cli:main"
+atif-inspect = "atif_scan.extract:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.11"]

@@ -8,6 +8,7 @@ Harbor's schema validator checks timestamp syntax only, not ordering or smearing
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -119,6 +120,74 @@ def history_compacted(trace: Trace) -> Detection:
     """A harness notice that earlier history was compacted into a summary: steps before
     it are not recorded, so the trace is scanned as partial."""
     hits = [Locator(i, Channel.MESSAGE) for i in trace.compacted]
+    return _result(hits, complete=True)
+
+
+def tool_results_not_recorded(trace: Trace) -> Detection:
+    """Tool results are bare status words: the trace is scanned as partial."""
+    return _result([], complete=True, matched=trace.results_unrecorded)
+
+
+def actions_not_recorded(trace: Trace) -> Detection:
+    """The agent claims work but no tool calls were recorded: scanned as partial."""
+    return _result([], complete=True, matched=trace.actions_unrecorded)
+
+
+WEB_INPUT = {"web_search": Channel.QUERY, "web_fetch": Channel.URL}
+
+
+def web_results_not_recorded(trace: Trace) -> Detection:
+    """A web search/fetch was recorded without its result or without what it searched or
+    opened (Codex hosted web calls: `open_page` with no URL, no results at all). Checks on
+    what the agent found on the web can't be answered for those calls."""
+    hits = []
+    for step, call in trace.agent_calls():
+        wanted = WEB_INPUT.get(call.tool)
+        if wanted is None:
+            continue
+        unlinked = len(step.calls) == 1 and any(o.source_call_id is None for o in step.observations)
+        has_result = unlinked or any(
+            call.result_key and o.source_call_id == call.result_key for o in step.observations
+        )
+        has_input = any(ch == wanted and c.understood and c.text for ch, c in call.fields)
+        if not (has_result and has_input):
+            hits.append(_meta(step))
+    return _result(hits, complete=True)
+
+
+def redacted_values(trace: Trace) -> Detection:
+    """The file carried bare `[REDACTED]` values (invalid JSON, read as unknown): a
+    publisher redaction defect, e.g. token counts in TB4 trajectories on the Harbor Hub."""
+    return _result([], complete=True, matched=trace.redacted_values > 0)
+
+
+def trace_head_missing(trace: Trace) -> Detection:
+    """No prompt before the first agent step: the start wasn't exported (partial)."""
+    return _result([], complete=True, matched=trace.head_missing)
+
+
+# Subagent launchers whose work happens in another context.
+SUBAGENT_TOOLS = frozenset(
+    {"Agent", "Task", "explore", "run_subagent", "schedule_subagent", "spawn_agent", "subagent"}
+)
+SUBAGENT_STUB = re.compile(r"^\s*(?:success|ok|done|launched|async agent launched\b.*)?\s*$", re.I)
+
+
+def subagent_unrecorded(trace: Trace) -> Detection:
+    """A subagent was launched but its result is only a status stub: its tool calls (and
+    anything it fetched) aren't in this trace (ACE `explore`, async Claude Code agents)."""
+    hits = []
+    for step in trace.steps:
+        if step.source != "agent" or step.copied:
+            continue
+        results = {o.source_call_id: o for o in step.observations}
+        for call in step.calls:
+            if call.name not in SUBAGENT_TOOLS:
+                continue
+            obs = results.get(call.result_key)
+            text = obs.content.text if obs is not None else ""
+            if SUBAGENT_STUB.match(text or ""):
+                hits.append(Locator(step.index, Channel.MESSAGE))
     return _result(hits, complete=True)
 
 
@@ -255,6 +324,20 @@ def integrity_detectors() -> list[Detector]:
         TraceCheck(
             CheckSpec("integrity.reasoning_not_recorded", Severity.LOW), reasoning_not_recorded
         ),
+        TraceCheck(
+            CheckSpec("integrity.tool_results_not_recorded", Severity.MEDIUM),
+            tool_results_not_recorded,
+        ),
+        TraceCheck(
+            CheckSpec("integrity.actions_not_recorded", Severity.MEDIUM), actions_not_recorded
+        ),
+        TraceCheck(CheckSpec("integrity.trace_head_missing", Severity.INFO), trace_head_missing),
+        TraceCheck(CheckSpec("integrity.subagent_unrecorded", Severity.LOW), subagent_unrecorded),
+        TraceCheck(
+            CheckSpec("integrity.web_results_not_recorded", Severity.LOW),
+            web_results_not_recorded,
+        ),
+        TraceCheck(CheckSpec("integrity.redacted_values", Severity.LOW), redacted_values),
         TraceCheck(CheckSpec("integrity.cost_missing", Severity.LOW), cost_missing),
         TraceCheck(
             CheckSpec("integrity.tokens_exceed_recorded_calls", Severity.LOW),

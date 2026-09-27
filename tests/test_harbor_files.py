@@ -146,8 +146,7 @@ def test_local_job_folder_uses_recorded_facts(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "my-run · job 1d6abb23" in out and "3 trials · 2 tasks × 1–2" in out
     assert "3/4 planned trials have a trajectory" in out
-    assert "overrides set (leaderboards require defaults):" in out
-    assert "   agents[].override_timeout_sec" in out
+    assert "scoring overrides" in out and "agents[].override_timeout_sec" in out
     assert "no cost recorded for any trial" in out and "--price" in out
 
 
@@ -173,3 +172,45 @@ def test_unknown_tasks_are_reported_not_invented(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "tasks unknown (pass --task-from trial-dir or --task)" in out
     assert "RESULT     100.0% (3/3)" in out  # no per-task ± without tasks
+
+
+def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
+    # Regression (a private DeepSeek run): setup-time overrides for a sandbox provider and a
+    # fork of the task repo that only swaps images are infrastructure; the agent timeout
+    # override changes the score.
+    from atif_scan.brief import brief_text
+    from atif_scan.harbor_files import dataset_source, job_meta, override_kind
+
+    assert override_kind("agents[].override_setup_timeout_sec") == "infrastructure"
+    assert override_kind("agent_setup_timeout_multiplier") == "infrastructure"
+    assert override_kind("agents[].override_timeout_sec") == "scoring"
+    fork = {
+        "repo": "https://github.com/example/terminal-bench-2-1.git@75f5a2e66b2d",
+        "path": "tasks",
+    }
+    assert dataset_source(fork) == (
+        "github.com/example/terminal-bench-2-1/tasks",
+        "75f5a2e66b2d",
+        False,
+    )
+    upstream = {
+        "repo": "https://github.com/harbor-framework/terminal-bench-2-1.git",
+        "path": "tasks",
+    }
+    assert dataset_source(upstream)[2] is True
+    assert dataset_source({"name": "terminal-bench/terminal-bench-2-1", "ref": "6"})[2] is True
+    config = {
+        "n_attempts": 5,
+        "agent_setup_timeout_multiplier": 2.0,
+        "agents": [{"override_timeout_sec": 21600.0, "override_setup_timeout_sec": 1800.0}],
+        "datasets": [fork],
+    }
+    meta = job_meta(json.dumps(config).encode(), b"{}")
+    assert meta["canonical_dataset"] is False
+    doc = {"scanner_version": "dev", "inputs": [], "coverage": {}, "runs": [meta]}
+    from atif_scan.brief import brief
+
+    text = brief_text(brief(doc))
+    assert "scoring overrides" in text and "agents[].override_timeout_sec" in text
+    assert "infrastructure overrides (provisioning only)" in text
+    assert "non-canonical source: github.com/example/terminal-bench-2-1/tasks" in text
