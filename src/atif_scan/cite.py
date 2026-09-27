@@ -109,7 +109,12 @@ def _metadata(step: Step) -> str:
 def cite(trace: Trace, at: Locator) -> dict:
     """One citation: `text` split around the match, plus `before`/`after` context."""
     step = trace.steps[at.step]
-    result: dict = {"step": at.step, "channel": at.channel.value, "source": step.source}
+    result: dict = {
+        "step": at.step,
+        "step_id": trace.step_numbers[at.step],
+        "channel": at.channel.value,
+        "source": step.source,
+    }
     if at.channel == Channel.METADATA:
         result.update(before="", match=_metadata(step), after="")
         return result

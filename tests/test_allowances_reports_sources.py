@@ -199,7 +199,7 @@ def scanned_doc():
 def test_plain_text_report_lists_findings_without_trace_text():
     text = to_text(scanned_doc())
     assert "trial-1" in text and "score 75 (high)" in text
-    assert "net" in text and "step 0 message" in text
+    assert "net" in text and "step 1 message" in text
     assert SECRET not in text
 
 

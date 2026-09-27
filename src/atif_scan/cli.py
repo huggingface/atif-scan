@@ -482,7 +482,7 @@ def scan(args: argparse.Namespace) -> int:
             # Earlier history isn't recorded: negatives must not read as clean.
             context = Context(context.task, True, context.reward)
         assessments = engine.evaluate(trace, context)
-        item = report(assessments)
+        item = report(assessments, trace.step_numbers if trace is not None else None)
         item.update(
             input_id=source.label,
             input_status="available" if trace is not None else "unavailable_or_invalid",

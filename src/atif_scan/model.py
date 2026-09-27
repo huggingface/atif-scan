@@ -168,6 +168,15 @@ class Trace:
                 )
 
     @property
+    def step_numbers(self) -> tuple[int, ...]:
+        """The step number a reviewer looks up: the recorded ATIF `step_id` (1..n), or the
+        1-based position when it's absent/invalid. Locators keep 0-based positions."""
+        return tuple(
+            s.step_id if s.step_id is not None and s.step_id > 0 else s.index + 1
+            for s in self.steps
+        )
+
+    @property
     def agent_steps(self) -> int:
         return sum(s.source == "agent" and not s.copied for s in self.steps)
 

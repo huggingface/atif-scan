@@ -8,17 +8,26 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import IO
 
 from .checks import Severity, Status
 from .engine import Assessment
 
-SCHEMA_VERSION = 2
+# 3: evidence and citations carry `step_id` (the ATIF step number shown in text views).
+SCHEMA_VERSION = 3
 EVIDENCE_SHOWN = 3
 
 
-def report(assessments: tuple[Assessment, ...]) -> dict:
-    """Per-trace report. Never dataclasses.asdict(trace)."""
+def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | None = None) -> dict:
+    """Per-trace report. Never dataclasses.asdict(trace). `step_numbers` maps each 0-based
+    step position to its ATIF step number (`Trace.step_numbers`); integers only."""
+
+    def step_id(position: int) -> int | None:
+        if step_numbers is None or position >= len(step_numbers):
+            return None
+        return int(step_numbers[position])
+
     counted = [a for a in assessments if a.counts]
     severity = max((a.spec.severity for a in counted), default=Severity.INFO)
     return {
@@ -48,6 +57,7 @@ def report(assessments: tuple[Assessment, ...]) -> dict:
                 "evidence": [
                     {
                         "step": e.step,
+                        "step_id": step_id(e.step),
                         "channel": e.channel.value,
                         "call": e.call,
                         "observation": e.observation,
@@ -82,11 +92,17 @@ def to_json(doc: dict) -> str:
 # --- Text views -------------------------------------------------------------------------
 
 
+def step_label(e: dict) -> int:
+    """The ATIF step number (`step_id`); older items without it: 1-based position."""
+    return e["step_id"] if e.get("step_id") is not None else e["step"] + 1
+
+
 def where(evidence: list[dict]) -> str:
-    """`step 1 call 0 command`, using 0-based positions into steps / tool_calls / results."""
+    """`step 2 call 0 command`: the ATIF step number, then 0-based positions into the
+    step's tool_calls / observation results."""
     parts = []
     for e in evidence[:EVIDENCE_SHOWN]:
-        text = f"step {e['step']}"
+        text = f"step {step_label(e)}"
         if e["call"] is not None:
             text += f" call {e['call']}"
         if e["observation"] is not None:
@@ -311,7 +327,7 @@ def _flat(text: str) -> str:
 
 def citation_lines(c: dict) -> list[tuple[str, str]]:
     """(label, text) rows for one citation; the match row is `>`."""
-    where_ = f"step {c['step']} · {c['channel']}" + (f" · {c['tool']}" if c.get("tool") else "")
+    where_ = f"step {step_label(c)} · {c['channel']}" + (f" · {c['tool']}" if c.get("tool") else "")
     rows = [("@", where_)]
     if c.get("context_before"):
         rows.append(("before", _one_line(c["context_before"])))

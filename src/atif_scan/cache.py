@@ -12,6 +12,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from .report import SCHEMA_VERSION
+
 
 def checks_signature(engine) -> list:
     specs = [c.spec for c in engine.checks.values()] + [a.spec for a in engine.allowances]
@@ -21,7 +23,8 @@ def checks_signature(engine) -> list:
 class ResultCache:
     def __init__(self, directory: Path, scanner_version: str, signature: list):
         self.directory = directory
-        self.base = json.dumps([scanner_version, signature], sort_keys=True)
+        # The report schema too: an item cached under an older layout must not be reused.
+        self.base = json.dumps([scanner_version, SCHEMA_VERSION, signature], sort_keys=True)
 
     def key(self, fingerprint: str, context) -> str:
         material = json.dumps(
