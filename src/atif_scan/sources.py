@@ -363,19 +363,40 @@ def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], di
     return local
 
 
-def job_run(listing: Listing) -> dict | None:
-    """Harbor job facts when the listed root is a job folder (config.json + result.json)."""
+def job_runs(listing: Listing) -> list[dict]:
+    """Harbor job facts for every job folder in the listing, at any depth.
+
+    A job folder has config.json and at least one subfolder with a result.json (its
+    trials); trial folders' own agent/ and verifier/ subfolders never do, so trial
+    configs aren't read. job_meta then rejects anything that isn't a job config.
+    """
     if not listing.directory or listing.reader is None:
-        return None
+        return []
     present = {e.path for e in listing.entries}
-    if "config.json" not in present:
-        return None
-    try:
-        config = listing.reader("config.json", RESULT_BYTES)
-        result = listing.reader("result.json", RESULT_BYTES) if "result.json" in present else None
-    except Exception:
-        return None
-    return job_meta(config, result)
+    has_trial_child = {
+        str(PurePosixPath(p).parent.parent)
+        for p in present
+        if PurePosixPath(p).name == "result.json" and "/" in p
+    }
+    candidates = sorted(
+        d
+        for d in {
+            str(PurePosixPath(p).parent) for p in present if PurePosixPath(p).name == "config.json"
+        }
+        if d in has_trial_child
+    )
+    runs = []
+    for folder in candidates:
+        prefix = "" if folder == "." else folder + "/"
+        try:
+            config = listing.reader(prefix + "config.json", RESULT_BYTES)
+            result_path = prefix + "result.json"
+            result = listing.reader(result_path, RESULT_BYTES) if result_path in present else None
+        except Exception:
+            continue
+        if (run := job_meta(config, result)) is not None:
+            runs.append(run)
+    return runs
 
 
 def errored(listing: Listing, entry: Entry) -> bool:
@@ -487,8 +508,8 @@ def resolve(
     sources: list[Source] = []
     for value in values:
         listing = list_input(value, fs)
-        if runs is not None and (run := job_run(listing)) is not None:
-            runs.append(run)
+        if runs is not None:
+            runs.extend(job_runs(listing))
         entries = selected(listing, pattern)
         if not entries:
             raise SourceError("no_files_match_pattern")

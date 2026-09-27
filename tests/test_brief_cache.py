@@ -215,3 +215,28 @@ def test_trajectory_cost_gap_is_not_a_defect_when_the_source_has_cost():
 
     doc = {"scanner_version": "dev", "inputs": [item(1, 0.5), item(2, None)], "coverage": {}}
     assert brief(doc)["recording"] == {"integrity.cost_missing": 1}
+
+
+def test_brief_colour_only_on_terminals(tmp_path, capsys):
+    import io
+
+    from rich.console import Console
+
+    from atif_scan.brief import brief, brief_text, colourise, print_brief
+
+    root = write_run(tmp_path)
+    main([str(root), "--brief", "--format", "json"])
+    text = brief_text(json.loads(capsys.readouterr().out))
+    # Piped / non-terminal: byte-identical plain text, no escape codes.
+    buffer = io.StringIO()
+    print_brief(text, file=buffer)
+    assert buffer.getvalue() == text and "\x1b[" not in buffer.getvalue()
+    # Terminal: same characters, styled.
+    styled = colourise(text)
+    assert styled.plain == text
+    styles = {str(span.style) for span in styled.spans}
+    assert {"bold cyan", "bold yellow", "bold magenta"} <= styles
+    console = Console(file=io.StringIO(), force_terminal=True, color_system="standard")
+    console.print(styled, end="")
+    assert "\x1b[" in console.file.getvalue()
+    assert brief  # the JSON brief itself is uncoloured by construction

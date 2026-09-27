@@ -214,9 +214,9 @@ def brief_text(b: dict) -> str:
     tk = ce.get("tokens") or {}
     if ce["unpriced"] and ce["unpriced"] == n - ce["no_usage"] and ce["estimate_usd"] is None:
         line = (
-            f"COST       {WARN} no cost recorded for any trial (trajectories or run metadata)"
-            f" · tokens: {_m(tk.get('uncached_input', 0) + tk.get('cached_input', 0))} input"
-            f" ({_m(tk.get('cached_input', 0))} cached) · {_m(tk.get('output', 0))} output"
+            f"COST       {WARN} no cost recorded for any trial (trajectories or run metadata)\n"
+            f"{'':<10} {INFO} tokens: {_m(tk.get('uncached_input', 0) + tk.get('cached_input', 0))}"
+            f" input ({_m(tk.get('cached_input', 0))} cached) · {_m(tk.get('output', 0))} output"
             " · estimate with --price U,C,O ($/M)"
         )
     elif ce["unpriced"] and not c["total_usd"] and ce["method"] == "given --price":
@@ -255,10 +255,8 @@ def brief_text(b: dict) -> str:
 
     # SETTINGS
     if ov["overrides"]:
-        lines.append(
-            f"SETTINGS   {WARN} overrides set: {', '.join(ov['overrides'])}"
-            " (leaderboards require defaults)"
-        )
+        lines.append(f"SETTINGS   {WARN} overrides set (leaderboards require defaults):")
+        lines += [f"{'':<10}   {name}" for name in ov["overrides"]]
     elif b["runs"]:
         lines.append(f"SETTINGS   {OK} no leaderboard-forbidden overrides")
 
@@ -298,3 +296,66 @@ def brief_text(b: dict) -> str:
         " · --detail (per trace) · --format json",
     ]
     return "\n".join(lines) + "\n"
+
+
+# --- Colour (terminal only) --------------------------------------------------------------
+# Styles are applied to the plain text by pattern, so the coloured and plain views can
+# never say different things. rich honours NO_COLOR and disables colour when piped.
+
+SEVERITY_STYLE = {
+    "critical": "bold red",
+    "high": "red",
+    "medium": "yellow",
+    "low": "cyan",
+    "info": "dim",
+    "none": "dim",
+}
+PATTERNS = [
+    (r"^atif-scan .*$", "bold"),
+    (r"^(RESULT|COVERAGE|TRACES|COST|FINDINGS|SETTINGS|ADJUSTMENTS)\b", "bold cyan"),
+    (r"^agent\b", "dim"),
+    (r"✓", "bold green"),
+    (r"⚠", "bold yellow"),
+    (r"✗", "bold red"),
+    (r"→", "bold magenta"),
+    (r"^ {11}· .*$", "dim"),
+    (r"(?<=RESULT     )\d+\.\d+%( ± \d+\.\d+)?", "bold"),
+    (r"(?<=→  )\d+\.\d+%( ± \d+\.\d+)?", "bold magenta"),
+    (r"(?<=→ )\d+\.\d+%", "bold magenta"),
+    (r"est\. [^·(]*?\d[\d.,–%$]*", "magenta"),
+    (r"\b[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\b(?= ·)", "bold"),
+    (r"\((?:estimates for review, not verdicts)\)", "dim italic"),
+    (r"^more: .*$", "dim"),
+]
+
+
+def colourise(text: str):
+    """The brief as a rich Text with styles applied by pattern."""
+    import re
+
+    from rich.text import Text
+
+    out = Text()
+    for line in text.splitlines(keepends=True):
+        styled = Text(line)
+        for pattern, style in PATTERNS:
+            styled.highlight_regex(re.compile(pattern), style)
+        for word, style in SEVERITY_STYLE.items():
+            # Severity words where they are severities: "critical 38" and "✗ high  check".
+            styled.highlight_regex(re.compile(rf"(?<=[✗⚠] ){word}\b|\b{word}(?= \d)"), style)
+        out.append_text(styled)
+    return out
+
+
+def print_brief(text: str, file=None) -> None:
+    """Coloured on a terminal (rich), plain otherwise."""
+    try:
+        from rich.console import Console
+    except ImportError:
+        print(text, end="", file=file)
+        return
+    console = Console(file=file, highlight=False, soft_wrap=True)
+    if not console.is_terminal:
+        print(text, end="", file=file)
+        return
+    console.print(colourise(text), end="")

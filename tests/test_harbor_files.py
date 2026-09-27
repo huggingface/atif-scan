@@ -146,7 +146,8 @@ def test_local_job_folder_uses_recorded_facts(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "my-run · job 1d6abb23" in out and "3 trials · 2 tasks × 1–2" in out
     assert "3/4 planned trials have a trajectory" in out
-    assert "overrides set: agents[].override_timeout_sec" in out
+    assert "overrides set (leaderboards require defaults):" in out
+    assert "   agents[].override_timeout_sec" in out
     assert "no cost recorded for any trial" in out and "--price" in out
 
 

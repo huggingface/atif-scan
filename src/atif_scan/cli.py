@@ -11,7 +11,7 @@ import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
-from .brief import brief, brief_text
+from .brief import brief, brief_text, print_brief
 from .cache import ResultCache, checks_signature
 from .checks import Context, Severity, Status, identifier
 from .cite import citations
@@ -204,9 +204,10 @@ def emit(doc: dict, args: argparse.Namespace) -> None:
     default_brief = fmt == "text" and many and not (args.detail or args.summary or args.overview)
     if args.brief or default_brief:
         report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
-        print(to_json(report_) if fmt == "json" else brief_text(report_), end="")
         if fmt == "json":
-            print()
+            print(to_json(report_))
+        else:
+            print_brief(brief_text(report_))
         return
     if args.overview or args.summary:
         scorecard = overview(doc, args.dq_on, args.min_trials, expect_tasks=args.expect_tasks)
