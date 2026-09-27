@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+from . import credentials
 from .checks import Severity
 from .engine import Assessment
 from .model import Channel, Content, Locator, Step, Trace
@@ -46,29 +47,59 @@ SECRETS = [
 ]
 
 
-def mask(text: str) -> str:
+def mask(text: str, known: frozenset[str] = frozenset()) -> str:
+    """Mask credential shapes, secret-named values and any `known` secret value (the same
+    secret seen elsewhere in the trace, e.g. printed bare on its own line)."""
     for pattern, replacement in SECRETS:
         text = pattern.sub(replacement, text)
-    return text
+    return credentials.mask(text, known)
+
+
+def trace_secrets(trace: Trace) -> frozenset[str]:
+    """Every credential value anywhere in the trace, so each occurrence gets masked."""
+    texts = []
+    for step in trace.steps:
+        texts += [step.message.text or "", step.reasoning.text or ""]
+        texts += [c.text or "" for call in step.calls for _, c in call.fields]
+        texts += [o.content.text or "" for o in step.observations]
+    return credentials.values(texts)
+
+
+def _secret_spans(text: str, known: frozenset[str]) -> list[tuple[int, int]]:
+    spans = [m.span() for pattern, _ in SECRETS for m in pattern.finditer(text)]
+    spans += [f.value for f in credentials.find(text)]
+    for value in known:
+        start = text.find(value)
+        while start != -1:
+            spans.append((start, start + len(value)))
+            start = text.find(value, start + 1)
+    return spans
 
 
 # Mask the whole text *before* cutting windows, so a secret can't straddle a cut.
-def _head(text: str, limit: int = CONTEXT) -> str:
-    masked = mask(text)
+def _head(text: str, limit: int = CONTEXT, known: frozenset[str] = frozenset()) -> str:
+    masked = mask(text, known)
     return masked[:limit] + ("…" if len(masked) > limit else "")
 
 
-def _tail(text: str, limit: int = CONTEXT) -> str:
-    masked = mask(text)
+def _tail(text: str, limit: int = CONTEXT, known: frozenset[str] = frozenset()) -> str:
+    masked = mask(text, known)
     return ("…" if len(masked) > limit else "") + masked[-limit:]
 
 
 MARK = "\x00"
 
 
-def _window(text: str, start: int, end: int) -> tuple[str, str, str] | None:
-    """Mask with the match delimited by markers, then cut; None if masking ate a marker."""
-    marked = mask(text[:start] + MARK + text[start:end] + MARK + text[end:])
+def _window(
+    text: str, start: int, end: int, known: frozenset[str] = frozenset()
+) -> tuple[str, str, str] | None:
+    """Mask with the match delimited by markers, then cut. None if a match boundary falls
+    inside a secret (a marker would split it so no pattern matches either half) or if
+    masking ate a marker."""
+    for s, e in _secret_spans(text, known):
+        if s < start < e or s < end < e:
+            return None
+    marked = mask(text[:start] + MARK + text[start:end] + MARK + text[end:], known)
     parts = marked.split(MARK)
     if len(parts) != 3:
         return None  # a secret overlapped the match; show the masked head instead
@@ -106,8 +137,10 @@ def _metadata(step: Step) -> str:
     return " ".join(parts) or "no step metadata recorded"
 
 
-def cite(trace: Trace, at: Locator) -> dict:
+def cite(trace: Trace, at: Locator, known: frozenset[str] | None = None) -> dict:
     """One citation: `text` split around the match, plus `before`/`after` context."""
+    if known is None:
+        known = trace_secrets(trace)
     step = trace.steps[at.step]
     result: dict = {
         "step": at.step,
@@ -123,12 +156,14 @@ def cite(trace: Trace, at: Locator) -> dict:
         result["tool"] = tool
     text = content.text if content is not None else ""
     window = (
-        _window(text.replace(MARK, " "), *at.span) if at.span and at.span[1] <= len(text) else None
+        _window(text.replace(MARK, " "), *at.span, known)
+        if at.span and at.span[1] <= len(text)
+        else None
     )
     if window is not None:
         result.update(before=window[0], match=window[1], after=window[2])
     else:
-        result.update(before="", match=_head(text, 2 * WINDOW), after="")
+        result.update(before="", match=_head(text, 2 * WINDOW, known), after="")
     # Context: why the agent did it (same step's reasoning/message) and what came back.
     if at.call is not None:
         intent = step.reasoning.text or step.message.text
@@ -136,20 +171,24 @@ def cite(trace: Trace, at: Locator) -> dict:
         output = next(
             (o.content.text for o in step.observations if o.source_call_id == call.result_key), None
         )
-        result["context_before"] = _tail(intent) if intent else ""
-        result["context_after"] = _head(output) if output else ""
+        result["context_before"] = _tail(intent, known=known) if intent else ""
+        result["context_after"] = _head(output, known=known) if output else ""
     elif at.channel == Channel.OBSERVATION and at.observation is not None:
         source = step.observations[at.observation].source_call_id
         call = next((c for c in step.calls if c.id == source), None)
         result["context_before"] = (
-            _head("\n".join(c.text for _, c in call.fields)) if call is not None else ""
+            _head("\n".join(c.text for _, c in call.fields), known=known)
+            if call is not None
+            else ""
         )
         result["context_after"] = ""
     else:
         first = step.calls[0] if step.calls else None
         result["context_before"] = ""
         result["context_after"] = (
-            _head("\n".join(c.text for _, c in first.fields)) if first is not None else ""
+            _head("\n".join(c.text for _, c in first.fields), known=known)
+            if first is not None
+            else ""
         )
     return result
 
@@ -159,7 +198,8 @@ def citations(
 ) -> dict[str, list[dict]]:
     """Citations for unexcused findings at/above `minimum`, keyed by check ID."""
     out: dict[str, list[dict]] = {}
+    known = trace_secrets(trace)
     for a in assessments:
         if a.counts and a.spec.severity >= minimum and a.result.evidence:
-            out[a.spec.id] = [cite(trace, at) for at in a.result.evidence[:PER_FINDING]]
+            out[a.spec.id] = [cite(trace, at, known) for at in a.result.evidence[:PER_FINDING]]
     return out

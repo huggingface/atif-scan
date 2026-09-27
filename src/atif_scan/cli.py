@@ -16,6 +16,7 @@ from .cache import ResultCache, checks_signature
 from .checks import Context, Severity, Status, identifier
 from .cite import citations
 from .detectors import builtin_detectors
+from .detectors.integrity import output_ratio
 from .engine import Engine
 from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
@@ -86,7 +87,12 @@ def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
         found = resolve(local, args.pattern, runs=args.runs) if local else []
         for value in (v for v in args.paths if is_harbor(v)):
             hub, run = harbor_sources(
-                value, args.download_dir, full=args.full, workers=args.jobs, refresh=args.refresh
+                value,
+                args.download_dir,
+                full=args.full,
+                workers=args.jobs,
+                refresh=args.refresh,
+                progress=status_line if sys.stderr.isatty() else lambda message: None,
             )
             args.runs.append(run)
             found += hub
@@ -96,15 +102,22 @@ def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
     return result
 
 
+def status_line(message: str) -> None:
+    """One rewritten stderr line (terminals only): fixed text and counts, no names."""
+    print(f"\r\033[Katif-scan: {message}", end="", file=sys.stderr, flush=True)
+
+
 def sync_if_remote(value: str, args: argparse.Namespace) -> str:
     """With --sync (default), mirror an hf:// input locally and scan the copy."""
     if not args.sync or not normalize(value).startswith(HF_PREFIX):
         return value
     dest = sync_target(value, args.sync_root)
     tty = sys.stderr.isatty()
+    if tty:
+        status_line("listing remote files")
 
     def progress(done: int, total: int) -> None:
-        print(f"\ratif-scan: syncing {done}/{total}", end="", file=sys.stderr)
+        status_line(f"syncing {done}/{total}")
 
     path, counts = sync_remote(
         value,
@@ -174,6 +187,12 @@ def run_facts(meta: dict, trace) -> dict:
         "model_name": trace.agent[2] if trace is not None else None,
         "llm_calls": (trace.llm_calls or trace.agent_steps) if trace is not None else None,
     }
+    ratio = output_ratio(trace) if trace is not None else None
+    # A number and a fixed code only: authored characters per reported completion token.
+    facts["chars_per_output_token"] = round(ratio.value, 2) if ratio else None
+    facts["output_ratio_basis"] = (
+        None if ratio is None else "answer_only" if ratio.answer_only else "all_text"
+    )
     if meta.get("input_tokens") is None and usage is not None:
         facts.update(
             cost_usd=usage.cost_usd,
@@ -201,7 +220,9 @@ def emit(doc: dict, args: argparse.Namespace) -> None:
     if fmt == "auto":
         fmt = "text" if sys.stdout.isatty() else "json"
     many = len(doc["inputs"]) > 1
-    default_brief = fmt == "text" and many and not (args.detail or args.summary or args.overview)
+    default_brief = (
+        fmt == "text" and many and not (args.detail or args.summary or args.overview or args.cite)
+    )
     if args.brief or default_brief:
         report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
         if fmt == "json":
@@ -405,6 +426,8 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 for an unexcused finding at/above this review severity",
     )
     args = parser.parse_args(argv)
+    if args.cite and (args.brief or args.overview or args.inspect):
+        parser.error("--cite requires detail or summary output, not brief/overview/inspect")
     args.price_rates = price(args.price)  # validate early, whatever the output format
     if args.inspect:
         return inspect(args)
@@ -441,7 +464,7 @@ def scan(args: argparse.Namespace) -> int:
     progress = sys.stderr.isatty() and len(records) > 1
     for number, (source, context) in enumerate(records, 1):
         if progress:
-            print(f"\ratif-scan: scanning {number}/{len(records)}", end="", file=sys.stderr)
+            status_line(f"scanning {number}/{len(records)}")
         # Recorded run facts (Hub listing, Harbor result.json) beat folder-name inference.
         meta = {**source.meta, **source.details()}
         task = context.task if args.task else (meta.get("task") or context.task)

@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -50,6 +51,13 @@ ACCEPTED = (
 )
 PAGE_SIZE = 100
 MAX_JOB_LOOKUPS = 50
+
+# Progress callbacks receive fixed text plus counts only: never IDs, names or URLs.
+Progress = Callable[[str], None]
+
+
+def _quiet(message: str) -> None:
+    pass
 
 
 def is_harbor(value: str) -> bool:
@@ -165,7 +173,10 @@ def run_meta(job: str, show: Mapping, rows: list[Mapping]) -> dict:
     }
 
 
-def listing(cli: HarborCLI, job: str) -> tuple[dict, list[dict]]:
+def listing(
+    cli: HarborCLI, job: str, progress: Progress = _quiet, label: str = "job"
+) -> tuple[dict, list[dict]]:
+    progress(f"listing {label}")
     show = cli.json("hub", "job", "show", job)
     if not isinstance(show, Mapping):
         raise SourceError("harbor_returned_invalid_json")
@@ -178,7 +189,9 @@ def listing(cli: HarborCLI, job: str) -> tuple[dict, list[dict]]:
         for row in data.get("items") or []:
             if isinstance(row, Mapping) and row.get("id"):
                 rows[str(row["id"])] = dict(row)
-        if page >= int(data.get("total_pages") or 1):
+        pages = int(data.get("total_pages") or 1)
+        progress(f"listing {label} trials · page {page}/{pages} · {len(rows)} trials")
+        if page >= pages:
             break
         page += 1
     ordered = sorted(rows.values(), key=lambda r: str(r.get("name") or r["id"]))
@@ -209,6 +222,7 @@ def fetch(
     full: bool,
     workers: int = 8,
     refresh: bool = False,
+    progress: Progress = _quiet,
 ) -> dict[str, Path]:
     """Download trajectories into `dest`; returns trial id -> expected trajectory path.
 
@@ -221,6 +235,7 @@ def fetch(
         if refresh and target.exists():
             shutil.rmtree(target)
         if not target.exists():
+            progress(f"downloading job archive ({len(rows)} trials)")
             try:
                 cli.run("hub", "job", "download", job, "-o", str(target))
             except SourceError:
@@ -229,16 +244,32 @@ def fetch(
         return {str(r["id"]): found.get(_label(r), target / "missing") for r in rows}
 
     paths = {str(r["id"]): dest / _label(r) / "trajectory.json" for r in rows}
+    todo = [r for r in rows if refresh or not paths[str(r["id"])].is_file()]
+    local, done, failed = len(rows) - len(todo), 0, 0
+    lock = threading.Lock()
+
+    def report() -> None:
+        progress(
+            f"downloading trajectories {done}/{len(todo)}"
+            + (f" · {local} already local" if local else "")
+            + (f" · {failed} failed" if failed else "")
+        )
 
     def one(row: Mapping) -> None:
+        nonlocal done, failed
+        ok = fetch_one(row)
+        with lock:
+            done += 1
+            failed += not ok
+            report()
+
+    def fetch_one(row: Mapping) -> bool:
         path = paths[str(row["id"])]
-        if path.is_file() and not refresh:
-            return
         path.unlink(missing_ok=True)
         try:
             cli.run("hub", "trial", "download", str(row["id"]), "--trajectory", "-o", str(dest))
         except SourceError:
-            return
+            return False
         # Harbor names the folder after the trial; move it if it differs from our label.
         if not path.is_file():
             name = str(row.get("name") or "")
@@ -246,9 +277,12 @@ def fetch(
             if candidate is not None and candidate.is_file() and candidate != path:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 candidate.replace(path)
+        return path.is_file()
 
-    with ThreadPoolExecutor(max(1, workers)) as pool:
-        list(pool.map(one, rows))
+    if todo:
+        report()
+        with ThreadPoolExecutor(max(1, workers)) as pool:
+            list(pool.map(one, todo))
     return paths
 
 
@@ -276,16 +310,20 @@ def row_trials(cli: HarborCLI, row: str) -> list[str]:
         page += 1
 
 
-def row_listing(cli: HarborCLI, row: str) -> tuple[dict, list[tuple[str, list[dict]]]]:
+def row_listing(
+    cli: HarborCLI, row: str, progress: Progress = _quiet
+) -> tuple[dict, list[tuple[str, list[dict]]]]:
     """A leaderboard row's facts and its trials grouped by job.
 
     The row lists trial IDs only; one `trial show` per job finds each job, whose listing
     then covers the rest of the row's trials in it (a row may hold a subset of a job,
     or trials from several jobs)."""
+    progress("listing leaderboard row")
     show = cli.json("hub", "leaderboard", "row", "show", row)
     if not isinstance(show, Mapping):
         raise SourceError("harbor_returned_invalid_json")
     wanted = set(row_trials(cli, row))
+    progress(f"leaderboard row lists {len(wanted)} trials · finding their jobs")
     remaining, jobs, job_runs, unresolved = set(wanted), [], [], set()
     lookups = 0
     while remaining and lookups < MAX_JOB_LOOKUPS:
@@ -297,7 +335,7 @@ def row_listing(cli: HarborCLI, row: str) -> tuple[dict, list[tuple[str, list[di
             remaining.discard(trial)
             unresolved.add(trial)
             continue
-        run, rows = listing(cli, job)
+        run, rows = listing(cli, job, progress, f"job {len(jobs) + 1}")
         mine = [r for r in rows if str(r["id"]) in wanted]
         remaining -= {str(r["id"]) for r in mine}
         if trial in remaining:  # listed job didn't contain it
@@ -350,8 +388,8 @@ def row_listing(cli: HarborCLI, row: str) -> tuple[dict, list[tuple[str, list[di
     return run, jobs
 
 
-def _trial_sources(cli, job, rows, dest, full, workers, refresh) -> list[Source]:
-    paths = fetch(cli, job, rows, dest / job, full, workers, refresh)
+def _trial_sources(cli, job, rows, dest, full, workers, refresh, progress=_quiet) -> list[Source]:
+    paths = fetch(cli, job, rows, dest / job, full, workers, refresh, progress)
     sources = []
     for row in rows:
         meta = trial_meta(row)
@@ -374,19 +412,20 @@ def harbor_sources(
     workers: int = 8,
     cli: HarborCLI | None = None,
     refresh: bool = False,
+    progress: Progress = _quiet,
 ) -> tuple[list[Source], dict]:
     cli = cli or HarborCLI.find()
     if (row := row_id(value)) is not None:
-        run, jobs = row_listing(cli, row)
+        run, jobs = row_listing(cli, row, progress)
         sources = [
             s
             for job, rows in jobs
-            for s in _trial_sources(cli, job, rows, dest, full, workers, refresh)
+            for s in _trial_sources(cli, job, rows, dest, full, workers, refresh, progress)
         ]
         return sources, run
     job = job_id(value)
-    run, rows = listing(cli, job)
-    return _trial_sources(cli, job, rows, dest, full, workers, refresh), run
+    run, rows = listing(cli, job, progress)
+    return _trial_sources(cli, job, rows, dest, full, workers, refresh, progress), run
 
 
 def inspect_job(value: str, cli: HarborCLI | None = None) -> dict:

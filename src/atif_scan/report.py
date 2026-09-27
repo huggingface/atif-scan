@@ -415,9 +415,14 @@ def summary_text(s: dict) -> str:
     if s.get("overview"):
         lines += [*overview_text(s["overview"]), ""]
     lines.append(
-        "highest severity per trace: "
+        "highest severity per trace (including recording integrity; brief excludes it): "
         + " · ".join(f"{k} {v}" for k, v in s["highest_severity"].items())
     )
+    if "integrity.cost_missing" in s["checks"]:
+        lines.append(
+            "integrity.cost_missing: absent from trajectory telemetry; "
+            "run totals may use separately recorded trial costs."
+        )
     low = [(k, v) for k, v in s["checks"].items() if v["severity"] not in DETAIL]
     if low:
         lines += ["", "info/low findings (traces)"]

@@ -217,3 +217,28 @@ def test_items_without_step_id_render_one_based():
 
     old = [{"step": 0, "call": 1, "observation": None, "channel": "command"}]
     assert where(old) == "step 1 call 1 command"
+
+
+def test_cite_many_inputs_does_not_disappear_into_default_brief(tmp_path, capsys):
+    paths = [write(tmp_path, f"t{i}.json", HACKY) for i in range(2)]
+    main([*paths, "--format", "text", "--cite", "high"])
+    out = capsys.readouterr().out
+    assert "reward.txt" in out
+    assert SECRET not in out
+
+
+@pytest.mark.parametrize("flag", ["--brief", "--overview", "--inspect"])
+def test_cite_rejects_views_without_citations(flag):
+    with pytest.raises(SystemExit) as error:
+        main(["unused.json", "--cite", "high", flag])
+    assert error.value.code == 2
+
+
+def test_summary_explains_recording_integrity_scope(tmp_path, capsys):
+    raw = trace(step())
+    raw["final_metrics"] = {"total_prompt_tokens": 100}
+    path = write(tmp_path, "t.json", raw)
+    main([path, "--summary", "--format", "text"])
+    out = capsys.readouterr().out
+    assert "including recording integrity" in out
+    assert "run totals may use separately recorded trial costs" in out

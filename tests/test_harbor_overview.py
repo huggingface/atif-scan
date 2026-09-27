@@ -385,3 +385,44 @@ def test_inspect_leaderboard_row(row_harbor, capsys):
     assert main(["--inspect", f"harbor://rows/{ROW}", "--format", "json"]) == 0
     card = json.loads(capsys.readouterr().out)["harbor_jobs"][0]
     assert card["trials"]["present"] == 4 and not calls(row_harbor, "download")
+
+
+def test_leaderboard_row_reports_progress_without_identifiers(row_harbor, tmp_path):
+    from atif_scan.harbor_hub import harbor_sources
+
+    messages = []
+    harbor_sources(f"harbor://rows/{ROW}", tmp_path / "dl", progress=messages.append)
+    assert messages[0] == "listing leaderboard row"
+    assert "leaderboard row lists 5 trials · finding their jobs" in messages
+    assert "listing job 1 trials · page 1/1 · 3 trials" in messages
+    downloads = [m for m in messages if m.startswith("downloading")]
+    assert downloads[-1].startswith("downloading trajectories 2/2")  # per job
+    joined = "\n".join(messages)
+    assert (
+        ROW not in joined and JOB not in joined and "alpha" not in joined and "0000" not in joined
+    )
+
+    # A resumed run downloads nothing and says nothing about downloading.
+    again = []
+    harbor_sources(f"harbor://rows/{ROW}", tmp_path / "dl", progress=again.append)
+    assert not [m for m in again if m.startswith("downloading")]
+
+
+def test_harbor_download_progress_counts_failures(harbor, tmp_path):
+    from atif_scan.harbor_hub import harbor_sources
+
+    messages = []
+    harbor_sources(f"harbor://jobs/{JOB}", tmp_path / "dl", workers=1, progress=messages.append)
+    assert "listing job trials · page 2/2 · 6 trials" in messages
+    assert messages[-1] == "downloading trajectories 6/6 · 1 failed"  # trial 6 has none
+
+
+def test_harbor_status_line_only_on_terminals(harbor, capsys, monkeypatch):
+    main([f"harbor://jobs/{JOB}", "--format", "json", "--no-cache"])
+    assert capsys.readouterr().err == ""  # piped: silent
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    main([f"harbor://jobs/{JOB}", "--format", "json", "--no-cache", "--refresh"])
+    err = capsys.readouterr().err
+    assert "\r\033[Katif-scan: listing job" in err
+    assert "atif-scan: downloading trajectories 6/6" in err and "scanning 6/6" in err
+    assert JOB not in err

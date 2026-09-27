@@ -20,6 +20,28 @@ def _counted(item: dict) -> list[dict]:
     return [a for a in item["assessments"] if a.get("score") is not None]
 
 
+def output_ratios(items: list[dict]) -> dict | None:
+    """Run-level spread of authored characters per completion token, per basis."""
+    by_basis: dict[str, list[float]] = {}
+    for item in items:
+        value, basis = item.get("chars_per_output_token"), item.get("output_ratio_basis")
+        if isinstance(value, (int, float)) and basis in ("answer_only", "all_text"):
+            by_basis.setdefault(basis, []).append(float(value))
+    if not by_basis:
+        return None
+    result = {}
+    for basis, values in sorted(by_basis.items()):
+        values.sort()
+        n = len(values)
+        result[basis] = {
+            "traces": n,
+            "median": values[n // 2],
+            "p5": values[int(0.05 * (n - 1))],
+            "p95": values[int(0.95 * (n - 1))],
+        }
+    return result
+
+
 def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price=None) -> dict:
     items = doc["inputs"]
     ov = overview(doc, dq, min_trials, expect_tasks=expect_tasks)
@@ -57,6 +79,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "cost_estimate": cost_estimate(items, price),
         "tasks_known": sum(1 for i in items if i.get("task")),
         "missing_activity": missing_activity(items),
+        "output_ratio": output_ratios(items),
         "recording": {
             check: integrity[check]
             for check in sorted(integrity, key=lambda c: (-RANK[severity_of[c]], -integrity[c]))
@@ -91,6 +114,11 @@ RECORDING_LABELS = {
     "integrity.timestamp_regression": "timestamps going backwards",
     "integrity.orphan_observation": "tool results without a matching call",
     "integrity.agent_only_fields": "agent-only fields on system/user steps",
+    "integrity.output_token_ratio": "recorded text doesn't fit reported output tokens",
+}
+RATIO_BASIS = {
+    "answer_only": "excl. reasoning",
+    "all_text": "incl. reasoning; hidden reasoning lowers it",
 }
 
 
@@ -228,7 +256,11 @@ def brief_text(b: dict) -> str:
         mark = (
             WARN
             if check
-            in ("integrity.reasoning_not_recorded", "integrity.tokens_exceed_recorded_calls")
+            in (
+                "integrity.reasoning_not_recorded",
+                "integrity.tokens_exceed_recorded_calls",
+                "integrity.output_token_ratio",
+            )
             else INFO
         )
         label = RECORDING_LABELS.get(check, check)
@@ -236,6 +268,12 @@ def brief_text(b: dict) -> str:
         first = False
     if first:
         lines.append(f"TRACES     {OK} no recording defects detected")
+    for basis, r in (b.get("output_ratio") or {}).items():
+        lines.append(
+            f"{'':<10} {INFO} chars/output token: median {r['median']:.2f}"
+            f" (p5–p95 {r['p5']:.2f}–{r['p95']:.2f}) over {r['traces']} traces,"
+            f" {RATIO_BASIS[basis]}"
+        )
     if d and d["rewarded_not_cleared"]:
         lines.append(
             f"{'':<10} → {d['rewarded_not_cleared']} rewarded trial(s) can't be cleared"

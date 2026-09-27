@@ -249,7 +249,9 @@ def integrity_detectors() -> list[Detector]:
         TraceCheck(
             CheckSpec("integrity.tool_token_telemetry", Severity.INFO), tool_token_telemetry
         ),
-        TraceCheck(CheckSpec("integrity.history_compacted", Severity.MEDIUM), history_compacted),
+        TraceCheck(
+            CheckSpec("integrity.history_compacted", Severity.MEDIUM, "2"), history_compacted
+        ),
         TraceCheck(
             CheckSpec("integrity.reasoning_not_recorded", Severity.LOW), reasoning_not_recorded
         ),

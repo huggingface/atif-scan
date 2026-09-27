@@ -517,6 +517,10 @@ def agent_info(value: object) -> tuple[str | None, str | None, str | None]:
 # Harness notices that earlier conversation history was replaced by a summary.
 COMPACTED = re.compile(
     r"session is being continued from a previous conversation|\[COMPACTED HISTORY\]|"
+    # Devin CLI: "You are continuing work from a previous conversation thread. Below is a
+    # summary of the previous conversation thread".
+    r"continuing work from a previous conversation thread|"
+    r"summary of the previous conversation thread|"
     r"conversation history (?:was|has been) (?:compacted|summari[sz]ed)|"
     r"(?:ran|run) out of context\b[^.\n]{0,80}summary",
     re.I,
