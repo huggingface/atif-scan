@@ -134,7 +134,7 @@ def cite(trace: Trace, at: Locator) -> dict:
         intent = step.reasoning.text or step.message.text
         call = step.calls[at.call]
         output = next(
-            (o.content.text for o in step.observations if o.source_call_id == call.id), None
+            (o.content.text for o in step.observations if o.source_call_id == call.result_key), None
         )
         result["context_before"] = _tail(intent) if intent else ""
         result["context_after"] = _head(output) if output else ""

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 
+from . import jslit
 from .model import Channel, Content, Observation, Step, ToolCall, Trace, Usage
 
 MAX_BYTES = 64 * 1024 * 1024
@@ -104,6 +105,27 @@ HARNESS_ALIASES = {
     "verify_and_record": "inert",
     "task_acceptance_review": "inert",
     "schedule_subagent": "inert",
+    "skill": "inert",  # Devin CLI skill invocation (generic skills, name + subcommand)
+    # Codex CLI.
+    "exec_command": "shell",
+    "write_stdin": "shell",
+    "apply_patch": "write",
+    "update_plan": "inert",
+    "wait": "inert",
+    # Terminus 2.
+    "bash_command": "shell",
+    "mark_task_complete": "inert",
+    # fast-agent.
+    "process": "inert",
+    "attach_media": "read",
+    # Linghun.
+    "ReadSnippets": "read",
+    "MultiEdit": "write",
+    "SourcePack": "search_files",
+    "Diff": "read",
+    "Todo": "inert",
+    "GitStatusInspect": "inert",
+    "RunVerification": "inert",
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 ALIASES.update(HARNESS_ALIASES)
@@ -126,7 +148,17 @@ def _keys(*names: str) -> frozenset[str]:
 
 # Argument key conventions (compared lowercased, without `_`/`-`), not tool names.
 COMMAND_KEYS = _keys(
-    "command", "cmd", "commands", "script", "shellcommand", "bash", "code", "textinput"
+    "command",
+    "cmd",
+    "commands",
+    "script",
+    "shellcommand",
+    "bash",
+    "code",
+    # Text typed into a terminal: Devin text_input, Terminus keystrokes, Codex write_stdin.
+    "textinput",
+    "keystrokes",
+    "chars",
 )
 QUERY_KEYS = _keys("query", "q", "searchquery", "searchterm", "queries")
 URL_KEYS = _keys("url", "urls", "uri", "href", "link", "endpoint")
@@ -155,6 +187,7 @@ PATH_KEYS = _keys(
 )
 PAYLOAD_KEYS = _keys(
     "bytesinput",
+    "input",  # Codex apply_patch
     "globpattern",
     "streamcontent",
     "content",
@@ -194,7 +227,42 @@ URL_VALUE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
 PATH_VALUE = re.compile(r"(?:/|~/|\./|\.\./|[A-Za-z]:[\\/])[^\n]{0,4095}")
 
 
-def normalize_tool(name: str) -> str:
+# Codex CLI records its hosted web tool as one name whose `action_type` says what it did.
+ACTION_TOOLS = {
+    "web_search_call": {
+        "search": "web_search",
+        "open_page": "web_fetch",
+        "find_in_page": "web_fetch",
+    }
+}
+
+
+def program_calls(name: str, args: object) -> list[tuple[str, object]] | None:
+    """Tool calls inside a Codex code-mode program (`exec` with a JavaScript `input`), or
+    None when this isn't one. Read statically; see `jslit`."""
+    if name != "exec" or not isinstance(args, dict) or set(args) - {"input", "timeout_ms"}:
+        return None
+    program = args.get("input")
+    if not isinstance(program, str) or not jslit.CALL.search(program):
+        return None
+    return jslit.tool_calls(program)
+
+
+def program_tool(name: str, args: object) -> str:
+    # Codex's hosted web tool inside code mode: `{search_query: [{q}]}` or `{open: [...]}`.
+    if name == "web__run":
+        keys = set(args) if isinstance(args, dict) else set()
+        if "search_query" in keys:
+            return "web_search"
+        return "web_fetch" if keys & {"open", "click", "find"} else "other"
+    return normalize_tool(name, args if isinstance(args, dict) else None)
+
+
+def normalize_tool(name: str, args: object = None) -> str:
+    actions = ACTION_TOOLS.get(name)
+    if actions is not None:
+        action = args.get("action_type") if isinstance(args, dict) else None
+        return actions.get(action, "other") if isinstance(action, str) else "other"
     return ALIASES.get(name, "other")
 
 
@@ -253,7 +321,10 @@ def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
     for key, value in leaves(args):
         if _norm(key) in QUOTED_KEYS:
             continue
-        if isinstance(value, str):
+        if value is jslit.UNREAD:
+            # Present in a tool program but not a literal (a variable, `${}`): unknown.
+            fields.append((classify(key, "")[0], Content(understood=False)))
+        elif isinstance(value, str):
             channel, text = classify(key, value)
             fields.append((channel, content(text)))
         elif isinstance(value, list) and _norm(key) in COMMAND_KEYS:
@@ -295,8 +366,11 @@ def parse_trace(value: object) -> Trace:
     ):
         raise TraceError("unsupported_schema_version")
     steps = []
-    call_ids: set[str] = set()
     for index, raw in enumerate(value["steps"]):
+        # Observations link to calls within their step, so ids must be unique per step.
+        # Reuse across steps (Linghun's WriteReport re-dispatching as Write) is reported
+        # by integrity.call_id_reused rather than rejecting the trace.
+        call_ids: set[str] = set()
         if not isinstance(raw, dict) or raw.get("source") not in ("system", "user", "agent"):
             raise TraceError("invalid_step")
         copied = raw.get("is_copied_context", False)
@@ -308,13 +382,15 @@ def parse_trace(value: object) -> Trace:
         if not isinstance(raw_calls, list):
             raise TraceError("invalid_calls")
         calls = []
+        program: list[tuple[str, str, str, object]] = []
         for call_index, call in enumerate(raw_calls):
             if not isinstance(call, dict) or not isinstance(call.get("function_name"), str):
                 raise TraceError("invalid_call")
             call_id = call.get("tool_call_id")
             if not isinstance(call_id, str):
                 raise TraceError("invalid_call_id")
-            if not copied:
+            # An empty id (Codex's hosted web tool) links nothing, so it can't collide.
+            if not copied and call_id:
                 if call_id in call_ids:
                     raise TraceError("duplicate_call_id")
                 call_ids.add(call_id)
@@ -324,7 +400,8 @@ def parse_trace(value: object) -> Trace:
                     args = json.loads(args)
                 except ValueError:
                     args = None
-            tool = normalize_tool(call["function_name"])
+            inner = program_calls(call["function_name"], args)
+            tool = "inert" if inner is not None else normalize_tool(call["function_name"], args)
             fields = call_fields(tool, args)
             calls.append(
                 ToolCall(
@@ -334,6 +411,21 @@ def parse_trace(value: object) -> Trace:
                     call_id,
                     call["function_name"],
                     freeze(args) if isinstance(args, dict) else None,
+                )
+            )
+            program.extend((call_id, call["function_name"], name, a) for name, a in inner or ())
+        # Calls read from tool programs follow the recorded calls (positions stay stable).
+        for k, (parent, outer, name, inner_args) in enumerate(program):
+            tool = program_tool(name, inner_args)
+            calls.append(
+                ToolCall(
+                    len(calls),
+                    tool,
+                    call_fields(tool, inner_args if isinstance(inner_args, dict) else None),
+                    f"{parent}#{k}",
+                    f"{outer}>{name}",
+                    None,
+                    result_id=parent,
                 )
             )
         observation = raw.get("observation")
@@ -348,6 +440,8 @@ def parse_trace(value: object) -> Trace:
             if not isinstance(item, dict):
                 raise TraceError("invalid_observation_result")
             source_call_id = item.get("source_call_id")
+            if source_call_id == "":
+                source_call_id = None
             if source_call_id is not None and not isinstance(source_call_id, str):
                 raise TraceError("invalid_observation_call_id")
             observations.append(Observation(source_call_id, content(item.get("content"))))
@@ -367,6 +461,7 @@ def parse_trace(value: object) -> Trace:
                 timestamp_recorded=raw.get("timestamp") is not None,
                 agent_only_fields=raw["source"] != "agent"
                 and any(raw.get(k) for k in ("tool_calls", "reasoning_content", "metrics")),
+                completion_tokens=step_completion_tokens(raw.get("metrics")),
             )
         )
     metrics = value.get("final_metrics")
@@ -391,6 +486,11 @@ def parse_trace(value: object) -> Trace:
         llm_calls=sum(counted) if counted else None,
         agent=agent_info(value.get("agent")),
     )
+
+
+def step_completion_tokens(metrics: object) -> int | None:
+    value = metrics.get("completion_tokens") if isinstance(metrics, dict) else None
+    return value if type(value) is int and value >= 0 else None
 
 
 def agent_info(value: object) -> tuple[str | None, str | None, str | None]:

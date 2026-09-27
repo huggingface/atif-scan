@@ -8,7 +8,7 @@ Harbor's schema validator checks timestamp syntax only, not ordering or smearing
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from itertools import pairwise
 
@@ -86,6 +86,21 @@ def orphan_observation(trace: Trace) -> Detection:
     return _result(hits, complete=True)
 
 
+def call_id_reused(trace: Trace) -> Detection:
+    """A tool_call_id already used by an earlier (non-copied) step: an exporter defect.
+    Harmless for linking (observations link within their step), but IDs aren't unique."""
+    seen: set[str] = set()
+    hits = []
+    for step in trace.steps:
+        if step.copied:
+            continue
+        ids = {call.id for call in step.calls if call.id}
+        if ids & seen:
+            hits.append(_meta(step))
+        seen |= ids
+    return _result(hits, complete=True)
+
+
 def agent_only_fields(trace: Trace) -> Detection:
     """System/user steps carrying tool calls, reasoning or metrics (ATIF forbids this)."""
     return _result([_meta(s) for s in trace.steps if s.agent_only_fields], complete=True)
@@ -137,6 +152,81 @@ def tokens_exceed_recorded_calls(trace: Trace) -> Detection:
     return _result([], complete=True, matched=usage.prompt_tokens / calls > TOKENS_PER_CALL)
 
 
+# Output text vs output tokens. Tokenizers encode ~2-4.5 characters of English/code per
+# token. Calibrated on ~6k leaderboard traces (13 agent/model pairs), where the
+# answer-only ratio ran p1 >= 1.48 and p99 <= 4.4 and the all-text ratio p99 <= 6.3.
+# Outside these bounds the declared completion tokens and the recorded text disagree.
+MIN_CHARS_PER_TOKEN = 1.0
+MAX_CHARS_PER_TOKEN = 8.0
+
+
+@dataclass(frozen=True)
+class OutputRatio:
+    """Agent-authored characters per completion token.
+
+    Unrecorded output (hidden reasoning, compacted history, dropped steps) only *lowers*
+    the ratio, so a high ratio is always meaningful: more text than the reported tokens
+    could encode. A low ratio is only meaningful when reasoning is accounted for.
+    `answer_only`: reasoning tokens were reported, so they and the reasoning text are
+    both excluded (reasoning summaries then can't skew it)."""
+
+    chars: int
+    tokens: int
+    answer_only: bool
+    low_verifiable: bool
+
+    @property
+    def value(self) -> float:
+        return self.chars / self.tokens
+
+
+def _string_chars(value: object) -> int:
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, Mapping):
+        return sum(_string_chars(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return sum(_string_chars(v) for v in value)
+    return 0
+
+
+def output_ratio(trace: Trace) -> OutputRatio | None:
+    """None when no completion tokens are reported (or none remain after reasoning)."""
+    agent = [s for s in trace.steps if _agent(s)]
+    usage = trace.usage
+    if usage is not None and usage.completion_tokens is not None:
+        steps, tokens, whole = agent, usage.completion_tokens, True
+    else:  # per-step metrics: compare only the steps that report tokens
+        steps = [s for s in agent if s.completion_tokens is not None]
+        tokens, whole = sum(s.completion_tokens for s in steps), False
+    reasoning = usage.reasoning_tokens if usage is not None and whole else None
+    chars = sum(
+        len(s.message.text) + sum(_string_chars(c.arguments) for c in s.calls) for s in steps
+    )
+    if reasoning is not None:
+        tokens -= reasoning
+    else:
+        chars += sum(len(s.reasoning.text) for s in steps)
+    if tokens <= 0:
+        return None
+    # Compacted final totals include calls the recorded steps don't show.
+    low = reasoning is not None and not (whole and trace.compacted)
+    return OutputRatio(chars, tokens, reasoning is not None, low)
+
+
+def output_token_ratio(trace: Trace) -> Detection:
+    """Recorded agent text doesn't fit the reported completion tokens (an ATIF inspection
+    issue: tokens under/over-reported, or text added/dropped after the fact)."""
+    ratio = output_ratio(trace)
+    if ratio is None:
+        return Detection(Status.UNKNOWN, complete=False)
+    if ratio.value > MAX_CHARS_PER_TOKEN:
+        return _result([], complete=True, matched=True)
+    if not ratio.low_verifiable:  # upper bound passed; lower bound can't be checked
+        return Detection(Status.UNKNOWN, complete=False)
+    return _result([], complete=True, matched=ratio.value < MIN_CHARS_PER_TOKEN)
+
+
 @dataclass(frozen=True)
 class TraceCheck:
     spec: CheckSpec
@@ -155,6 +245,7 @@ def integrity_detectors() -> list[Detector]:
         TraceCheck(CheckSpec("integrity.step_sequence", Severity.INFO), step_sequence),
         TraceCheck(CheckSpec("integrity.orphan_observation", Severity.LOW), orphan_observation),
         TraceCheck(CheckSpec("integrity.agent_only_fields", Severity.LOW), agent_only_fields),
+        TraceCheck(CheckSpec("integrity.call_id_reused", Severity.INFO), call_id_reused),
         TraceCheck(
             CheckSpec("integrity.tool_token_telemetry", Severity.INFO), tool_token_telemetry
         ),
@@ -167,4 +258,5 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec("integrity.tokens_exceed_recorded_calls", Severity.LOW),
             tokens_exceed_recorded_calls,
         ),
+        TraceCheck(CheckSpec("integrity.output_token_ratio", Severity.LOW), output_token_ratio),
     ]

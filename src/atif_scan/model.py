@@ -79,6 +79,13 @@ class ToolCall:
     id: str = field(repr=False)
     name: str = field(repr=False)
     arguments: Mapping[str, object] | None = field(repr=False)
+    # The call whose observation holds this call's result: itself, or for a call read
+    # from inside a tool program (Codex code mode), the program call.
+    result_id: str | None = field(default=None, repr=False)
+
+    @property
+    def result_key(self) -> str:
+        return self.result_id if self.result_id is not None else self.id
 
 
 @dataclass(frozen=True)
@@ -103,6 +110,8 @@ class Step:
     timestamp_recorded: bool = False
     # A non-agent step carrying agent-only fields (tool_calls, reasoning, metrics, model).
     agent_only_fields: bool = False
+    # metrics.completion_tokens when recorded as a non-negative integer.
+    completion_tokens: int | None = None
 
 
 @dataclass(frozen=True)
