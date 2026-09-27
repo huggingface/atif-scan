@@ -158,7 +158,8 @@ def test_job_references(value):
 
 def test_invalid_job_reference(capsys):
     assert main(["harbor://jobs/not-a-uuid"]) == 2
-    assert "invalid_harbor_job_reference" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "invalid_harbor_reference" in err and "harbor://rows/<uuid>" in err
 
 
 def test_overrides_follow_leaderboard_rules():
@@ -273,3 +274,114 @@ def test_local_traces_use_final_metrics_and_exception_marker(tmp_path, capsys):
     ov = json.loads(capsys.readouterr().out)
     assert ov["cost"]["total_usd"] == 9.99 and ov["trials"]["errored"] == 1
     assert ov["trials"]["error_types"] == {"exception": 1}
+
+
+# --- leaderboard rows ---------------------------------------------------------------------
+
+ROW = "1fe87c62-99ed-477b-9f6c-23ffbabc49f6"
+JOB2 = "2c89a14f-d14a-4ea8-ad8a-d08d90c67a5d"
+
+ROW_FAKE = textwrap.dedent(
+    """
+    import json, os, sys, pathlib
+    data = json.loads(pathlib.Path(os.environ["FAKE_HARBOR_DATA"]).read_text())
+    with open(os.environ["FAKE_HARBOR_LOG"], "a") as log:
+        log.write(" ".join(sys.argv[1:]) + "\\n")
+    args = sys.argv[1:]
+    def job_of(tid):
+        return next((j for j, ts in data["jobs"].items() if any(t["id"] == tid for t in ts)), None)
+    if args[:4] == ["hub", "leaderboard", "row", "show"]:
+        print(json.dumps(data["row"]))
+    elif args[:5] == ["hub", "leaderboard", "row", "trial", "list"]:
+        items = [{"trial_id": t} for t in data["row_trials"]]
+        print(json.dumps({"items": items, "total_pages": 1}))
+    elif args[:3] == ["hub", "trial", "show"]:
+        print(json.dumps({"id": args[3], "job_id": job_of(args[3])}))
+    elif args[:3] == ["hub", "job", "show"]:
+        print(json.dumps({"name": "job-" + args[3][:4], "config": {"n_attempts": 2}}))
+    elif args[:3] == ["hub", "job", "trials"]:
+        print(json.dumps({"items": data["jobs"][args[3]], "total_pages": 1}))
+    elif args[:3] == ["hub", "trial", "download"]:
+        row = next(t for ts in data["jobs"].values() for t in ts if t["id"] == args[3])
+        out = pathlib.Path(args[args.index("-o") + 1]) / row["name"]
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "trajectory.json").write_text(json.dumps(data["trajectory"]))
+    else:
+        sys.exit(2)
+    """
+)
+
+
+@pytest.fixture
+def row_harbor(tmp_path, monkeypatch):
+    job1 = [trial(i, "alpha", 1) for i in range(1, 4)]  # the row uses trials 1-2 only
+    job2 = [trial(10, "beta", 0), trial(11, "beta", 1)]
+    data = {
+        "row": {
+            "rank": 9,
+            "metadata": {
+                "agent_display": {"label": "Demo CLI"},
+                "model_display": {"label": "Model X"},
+                "reasoning_effort": "high",
+            },
+            "metrics": {
+                "accuracy": 50.0,
+                "n_trials": 5,
+                "total_cost_usd": 2.5,
+                "reward_hacks": 20.0,
+            },
+        },
+        "row_trials": [t["id"] for t in job1[:2]]
+        + [t["id"] for t in job2]
+        + ["00000000-0000-4000-8000-999999999999"],
+        "jobs": {JOB: job1, JOB2: job2},
+        "trajectory": json.loads(json.dumps(trajectory("ls"))),
+    }
+    (tmp_path / "data.json").write_text(json.dumps(data))
+    script = tmp_path / "harbor"
+    script.write_text(f"#!{sys.executable}\n{ROW_FAKE}")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    log = tmp_path / "calls.log"
+    monkeypatch.setenv("ATIF_SCAN_HARBOR", str(script))
+    monkeypatch.setenv("FAKE_HARBOR_DATA", str(tmp_path / "data.json"))
+    monkeypatch.setenv("FAKE_HARBOR_LOG", str(log))
+    return log
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        f"https://hub.harborframework.com/datasets/terminal-bench/terminal-bench-2-1/latest/leaderboards/main/rows/{ROW}",
+        f"harbor://rows/{ROW}",
+    ],
+)
+def test_leaderboard_row_scans_exactly_its_trials(row_harbor, capsys, value):
+    assert main([value, "--format", "json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    ids = sorted(i["input_id"] for i in doc["inputs"])
+    assert ids == ["alpha__T1", "alpha__T2", "beta__T10", "beta__T11"]  # T3 isn't in the row
+    run = doc["runs"][0]
+    assert run["source"] == "harbor_leaderboard_row" and run["planned_trials"] == 5
+    assert run["unresolved_trials"] == 1  # listed by the row, in no job
+    assert run["leaderboard"]["jobs"] == sorted([JOB, JOB2]) or set(run["leaderboard"]["jobs"]) == {
+        JOB,
+        JOB2,
+    }
+    # One `trial show` per job, not per trial (plus the unresolved one).
+    assert len(calls(row_harbor, "trial show")) == 3
+
+
+def test_leaderboard_row_brief_compares_with_reported(row_harbor, capsys):
+    main([f"harbor://rows/{ROW}", "--format", "text"])
+    out = capsys.readouterr().out
+    assert "leaderboard row #9 · row 1fe87c62" in out
+    assert "leaderboard  Demo CLI / Model X (high)" in out
+    assert "REPORTED   50.0% after the leaderboard's reward-hack DQs (20.0% of trials)" in out
+    assert "⚠ 5 trials" in out  # the row reports 5, the scan found 4
+    assert "1 row trial(s) not found in any job" in out
+
+
+def test_inspect_leaderboard_row(row_harbor, capsys):
+    assert main(["--inspect", f"harbor://rows/{ROW}", "--format", "json"]) == 0
+    card = json.loads(capsys.readouterr().out)["harbor_jobs"][0]
+    assert card["trials"]["present"] == 4 and not calls(row_harbor, "download")

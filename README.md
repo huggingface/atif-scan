@@ -375,7 +375,12 @@ input/config/plugin.
 
 ### Harbor Hub jobs
 
-Point at a Hub job by URL or `harbor://jobs/<id>`. This uses your installed, logged-in
+Point at a Hub job by URL or `harbor://jobs/<id>`, or at a **leaderboard row** by its URL
+(`…/leaderboards/<lb>/rows/<id>`) or `harbor://rows/<id>`. A row is resolved to its
+job(s) with one trial lookup per job, and exactly the row's trials are scanned (a row
+may hold part of a job, or several jobs). The brief then adds a `REPORTED` line: the
+leaderboard's accuracy (after its reward-hack disqualifications), trial count and cost,
+compared with the scan's own result and DQ-adjusted result. This uses your installed, logged-in
 `harbor` CLI (no extra dependency): the job and trial listings supply each trial's
 task, reward, error, cost and tokens. Then each trial's `trajectory.json` is fetched in
 parallel (`--jobs 8`), or the whole archive with `--full`:

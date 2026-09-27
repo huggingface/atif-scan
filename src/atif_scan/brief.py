@@ -101,13 +101,20 @@ def brief_text(b: dict) -> str:
     lines = [f"atif-scan {b['scanner_version']} · run integrity", ""]
     for r in b["runs"]:
         ref = (r.get("dataset_refs") or [""])[0][:15]
-        kind = "harbor" if r.get("source") == "harbor_hub" else "job"
+        kind = {"harbor_hub": "harbor", "harbor_leaderboard_row": "row"}.get(r.get("source"), "job")
         where = f"{kind} {r['job_id'][:8]}" if r.get("job_id") else "Harbor job folder"
         name = r.get("job_name")
         lines.append(
             (f"{name} · {where}" if name and name != "job" else where)
             + (f" · {', '.join(r['datasets'])}@{ref}" if r.get("datasets") else "")
         )
+    for r in b["runs"]:
+        lb = r.get("leaderboard")
+        if lb:
+            who = " / ".join(x for x in (lb.get("agent"), lb.get("model")) if x)
+            effort = f" ({lb['reasoning_effort']})" if lb.get("reasoning_effort") else ""
+            jobs = ", ".join(j[:8] for j in lb.get("jobs") or [])
+            lines.append(f"leaderboard  {who}{effort} · jobs {jobs or '?'}")
     if b["agents"]:
         lines.append(
             "agent  "
@@ -144,6 +151,32 @@ def brief_text(b: dict) -> str:
         lines.append(line)
     else:
         lines.append("RESULT     rewards unknown (no verifier output or Hub record)")
+
+    for r in b["runs"]:
+        lb = r.get("leaderboard")
+        if not lb or lb.get("reported_accuracy") is None:
+            continue
+        rep = f"REPORTED   {lb['reported_accuracy']:.1f}%"
+        if lb.get("reported_reward_hacks_pct"):
+            rep += (
+                f" after the leaderboard's reward-hack DQs"
+                f" ({lb['reported_reward_hacks_pct']:.1f}% of trials)"
+            )
+        if lb.get("reported_n_trials") is not None:
+            same = lb["reported_n_trials"] == n
+            rep += f" · {OK if same else WARN} {lb['reported_n_trials']} trials"
+        if lb.get("reported_cost_usd") is not None:
+            rep += f" · ${lb['reported_cost_usd']:,.2f}"
+        if lb.get("display_cost") and "partial" in lb["display_cost"]:
+            rep += f" ({lb['display_cost']})"
+        if d and d["accuracy_if_disqualified"]:
+            ours = d["accuracy_if_disqualified"][0]
+            rep += f" · scan-adjusted {ours:.1f}% ({ours - lb['reported_accuracy']:+.1f} pts)"
+        lines.append(rep)
+        if r.get("unresolved_trials"):
+            lines.append(
+                f"{'':<10} {WARN} {r['unresolved_trials']} row trial(s) not found in any job"
+            )
 
     # COVERAGE
     cov = []
@@ -312,8 +345,9 @@ SEVERITY_STYLE = {
 }
 PATTERNS = [
     (r"^atif-scan .*$", "bold"),
-    (r"^(RESULT|COVERAGE|TRACES|COST|FINDINGS|SETTINGS|ADJUSTMENTS)\b", "bold cyan"),
+    (r"^(RESULT|REPORTED|COVERAGE|TRACES|COST|FINDINGS|SETTINGS|ADJUSTMENTS)\b", "bold cyan"),
     (r"^agent\b", "dim"),
+    (r"^leaderboard\b", "dim"),
     (r"✓", "bold green"),
     (r"⚠", "bold yellow"),
     (r"✗", "bold red"),

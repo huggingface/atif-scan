@@ -38,7 +38,18 @@ JOB = re.compile(
     r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
     r"(?:[/?#].*)?$"
 )
+UUID = r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+# Leaderboard rows: harbor://rows/<uuid> or any hub URL ending in .../rows/<uuid>.
+ROW = re.compile(
+    r"^(?:harbor://rows/|https?://hub\.harborframework\.com/\S*?/rows/)" + UUID + r"(?:[/?#].*)?$"
+)
+ACCEPTED = (
+    "harbor://jobs/<uuid>, harbor://rows/<uuid>, "
+    "https://hub.harborframework.com/jobs/<uuid>, "
+    "https://hub.harborframework.com/datasets/.../leaderboards/<lb>/rows/<uuid>"
+)
 PAGE_SIZE = 100
+MAX_JOB_LOOKUPS = 50
 
 
 def is_harbor(value: str) -> bool:
@@ -48,8 +59,13 @@ def is_harbor(value: str) -> bool:
 def job_id(value: str) -> str:
     match = JOB.match(value)
     if match is None:
-        raise SourceError("invalid_harbor_job_reference")
+        raise SourceError("invalid_harbor_reference: expected " + ACCEPTED)
     return match.group(1).lower()
+
+
+def row_id(value: str) -> str | None:
+    match = ROW.match(value)
+    return match.group(1).lower() if match else None
 
 
 @dataclass(frozen=True)
@@ -236,17 +252,105 @@ def fetch(
     return paths
 
 
-def harbor_sources(
-    value: str,
-    dest: Path,
-    full: bool = False,
-    workers: int = 8,
-    cli: HarborCLI | None = None,
-    refresh: bool = False,
-) -> tuple[list[Source], dict]:
-    cli = cli or HarborCLI.find()
-    job = job_id(value)
-    run, rows = listing(cli, job)
+def row_trials(cli: HarborCLI, row: str) -> list[str]:
+    ids: list[str] = []
+    page = 1
+    while True:
+        data = cli.json(
+            "hub",
+            "leaderboard",
+            "row",
+            "trial",
+            "list",
+            row,
+            "--limit",
+            "1000",
+            "--page",
+            str(page),
+        )
+        if not isinstance(data, Mapping):
+            raise SourceError("harbor_returned_invalid_json")
+        ids += [str(t["trial_id"]) for t in data.get("items") or [] if isinstance(t, Mapping)]
+        if page >= int(data.get("total_pages") or 1):
+            return ids
+        page += 1
+
+
+def row_listing(cli: HarborCLI, row: str) -> tuple[dict, list[tuple[str, list[dict]]]]:
+    """A leaderboard row's facts and its trials grouped by job.
+
+    The row lists trial IDs only; one `trial show` per job finds each job, whose listing
+    then covers the rest of the row's trials in it (a row may hold a subset of a job,
+    or trials from several jobs)."""
+    show = cli.json("hub", "leaderboard", "row", "show", row)
+    if not isinstance(show, Mapping):
+        raise SourceError("harbor_returned_invalid_json")
+    wanted = set(row_trials(cli, row))
+    remaining, jobs, job_runs, unresolved = set(wanted), [], [], set()
+    lookups = 0
+    while remaining and lookups < MAX_JOB_LOOKUPS:
+        trial = min(remaining)
+        lookups += 1
+        detail = cli.json("hub", "trial", "show", trial)
+        job = str(detail.get("job_id") or "") if isinstance(detail, Mapping) else ""
+        if not JOB.match(f"harbor://jobs/{job}") or any(j == job for j, _ in jobs):
+            remaining.discard(trial)
+            unresolved.add(trial)
+            continue
+        run, rows = listing(cli, job)
+        mine = [r for r in rows if str(r["id"]) in wanted]
+        remaining -= {str(r["id"]) for r in mine}
+        if trial in remaining:  # listed job didn't contain it
+            remaining.discard(trial)
+            unresolved.add(trial)
+        jobs.append((job, mine))
+        job_runs.append(run)
+    unresolved |= remaining
+    meta = show.get("metadata") if isinstance(show.get("metadata"), Mapping) else {}
+    metrics = show.get("metrics") if isinstance(show.get("metrics"), Mapping) else {}
+
+    def label(key: str) -> str | None:
+        v = meta.get(key)
+        v = v.get("label") if isinstance(v, Mapping) else v
+        return str(v)[:80] if isinstance(v, str) and v else None
+
+    run = {
+        "source": "harbor_leaderboard_row",
+        "job_id": row,
+        "job_name": f"leaderboard row #{show.get('rank')}"
+        if show.get("rank")
+        else "leaderboard row",
+        "planned_trials": len(wanted),
+        "total_trials": len(wanted),
+        "completed_trials": None,
+        "errored_trials": None,
+        "listed_trials": len(wanted) - len(unresolved),
+        "datasets": sorted({d for r in job_runs for d in r.get("datasets") or []}),
+        "dataset_refs": sorted({d for r in job_runs for d in r.get("dataset_refs") or []}),
+        "config_task_names": None,
+        "n_attempts": max((r.get("n_attempts") or 0 for r in job_runs), default=0) or None,
+        "cost_usd": _number(metrics.get("total_cost_usd")),
+        "overrides": sorted({o for r in job_runs for o in r.get("overrides") or []}),
+        "unresolved_trials": len(unresolved),
+        "leaderboard": {
+            "rank": _count(show.get("rank")),
+            "agent": label("agent_display"),
+            "model": label("model_display"),
+            "reasoning_effort": label("reasoning_effort"),
+            "reported_accuracy": _number(metrics.get("accuracy")),
+            "reported_n_trials": _count(metrics.get("n_trials")),
+            "reported_cost_usd": _number(metrics.get("total_cost_usd")),
+            "reported_reward_hacks_pct": _number(metrics.get("reward_hacks")),
+            "display_cost": str(metrics.get("display_cost"))[:60]
+            if metrics.get("display_cost")
+            else None,
+            "jobs": [j for j, _ in jobs],
+        },
+    }
+    return run, jobs
+
+
+def _trial_sources(cli, job, rows, dest, full, workers, refresh) -> list[Source]:
     paths = fetch(cli, job, rows, dest / job, full, workers, refresh)
     sources = []
     for row in rows:
@@ -260,11 +364,37 @@ def harbor_sources(
                 fingerprint=local_fingerprint(paths[str(row["id"])]),
             )
         )
-    return sources, run
+    return sources
+
+
+def harbor_sources(
+    value: str,
+    dest: Path,
+    full: bool = False,
+    workers: int = 8,
+    cli: HarborCLI | None = None,
+    refresh: bool = False,
+) -> tuple[list[Source], dict]:
+    cli = cli or HarborCLI.find()
+    if (row := row_id(value)) is not None:
+        run, jobs = row_listing(cli, row)
+        sources = [
+            s
+            for job, rows in jobs
+            for s in _trial_sources(cli, job, rows, dest, full, workers, refresh)
+        ]
+        return sources, run
+    job = job_id(value)
+    run, rows = listing(cli, job)
+    return _trial_sources(cli, job, rows, dest, full, workers, refresh), run
 
 
 def inspect_job(value: str, cli: HarborCLI | None = None) -> dict:
     """Listing only (no downloads): run facts plus per-trial metadata records."""
     cli = cli or HarborCLI.find()
-    run, rows = listing(cli, job_id(value))
+    if (row := row_id(value)) is not None:
+        run, jobs = row_listing(cli, row)
+        rows = [r for _, job_rows in jobs for r in job_rows]
+    else:
+        run, rows = listing(cli, job_id(value))
     return {"run": run, "trials": [dict(trial_meta(r), input_id=_label(r)) for r in rows]}
