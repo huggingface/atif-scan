@@ -100,6 +100,43 @@ def tool_token_telemetry(trace: Trace) -> Detection:
     return _result([], complete=True, matched=matched)
 
 
+def history_compacted(trace: Trace) -> Detection:
+    """A harness notice that earlier history was compacted into a summary: steps before
+    it are not recorded, so the trace is scanned as partial."""
+    hits = [Locator(i, Channel.MESSAGE) for i in trace.compacted]
+    return _result(hits, complete=True)
+
+
+def reasoning_not_recorded(trace: Trace) -> Detection:
+    """Reasoning tokens reported but no reasoning text recorded: checks that read reasoning
+    can't be complete."""
+    return _result([], complete=True, matched=trace.reasoning_hidden)
+
+
+def cost_missing(trace: Trace) -> Detection:
+    """final_metrics reports token totals but no cost (leaderboards then count $0)."""
+    usage = trace.usage
+    if usage is None:
+        return Detection(Status.UNKNOWN, complete=False)
+    tokens = (usage.prompt_tokens or 0) + (usage.completion_tokens or 0)
+    return _result([], complete=True, matched=usage.cost_usd is None and tokens > 0)
+
+
+# No single model call consumes more prompt tokens than this; more per recorded call means
+# the totals include activity the recorded steps don't show (e.g. compacted history).
+TOKENS_PER_CALL = 2_000_000
+
+
+def tokens_exceed_recorded_calls(trace: Trace) -> Detection:
+    usage = trace.usage
+    if usage is None or usage.prompt_tokens is None:
+        return Detection(Status.UNKNOWN, complete=False)
+    calls = trace.llm_calls or trace.agent_steps
+    if not calls:
+        return Detection(Status.UNKNOWN, complete=False)
+    return _result([], complete=True, matched=usage.prompt_tokens / calls > TOKENS_PER_CALL)
+
+
 @dataclass(frozen=True)
 class TraceCheck:
     spec: CheckSpec
@@ -120,5 +157,14 @@ def integrity_detectors() -> list[Detector]:
         TraceCheck(CheckSpec("integrity.agent_only_fields", Severity.LOW), agent_only_fields),
         TraceCheck(
             CheckSpec("integrity.tool_token_telemetry", Severity.INFO), tool_token_telemetry
+        ),
+        TraceCheck(CheckSpec("integrity.history_compacted", Severity.MEDIUM), history_compacted),
+        TraceCheck(
+            CheckSpec("integrity.reasoning_not_recorded", Severity.LOW), reasoning_not_recorded
+        ),
+        TraceCheck(CheckSpec("integrity.cost_missing", Severity.LOW), cost_missing),
+        TraceCheck(
+            CheckSpec("integrity.tokens_exceed_recorded_calls", Severity.LOW),
+            tokens_exceed_recorded_calls,
         ),
     ]

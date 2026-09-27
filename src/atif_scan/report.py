@@ -524,6 +524,7 @@ def overview(
             "error_types": dict(sorted(errors.items(), key=lambda kv: -kv[1])),
             "without_trajectory": sum(i["input_status"] == "unavailable_or_invalid" for i in items),
             "incomplete_scans": sum(bool(i["incomplete"]) for i in items),
+            "compacted": sum(bool(i.get("compacted")) for i in items),
             "reward_unknown": len(items) - len(scored),
         },
         "tasks": {
@@ -608,6 +609,8 @@ def overview_text(ov: dict) -> list[str]:
     if ov["disqualification"] is not None:  # scanned
         parts.append(f"{t['without_trajectory']} without trajectory")
         parts.append(f"{t['incomplete_scans']} incomplete scans")
+        if t.get("compacted"):
+            parts.append(f"{t['compacted']} with compacted history (scanned as partial)")
     if t["reward_unknown"]:
         parts.append(f"{t['reward_unknown']} reward unknown")
     lines.append("  trials     " + " · ".join(parts))

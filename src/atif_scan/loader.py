@@ -336,7 +336,33 @@ def parse_trace(value: object) -> Trace:
     metrics = value.get("final_metrics")
     extra = metrics.get("extra") if isinstance(metrics, dict) else None
     tokens = extra.get("total_tool_use_tokens") if isinstance(extra, dict) else None
-    return Trace(version, tuple(steps), tokens if type(tokens) is int else None, usage(metrics))
+    calls = [
+        raw.get("llm_call_count")
+        for raw in value["steps"]
+        if isinstance(raw, dict) and raw.get("source") == "agent"
+    ]
+    counted = [c for c in calls if type(c) is int and c >= 0]
+    return Trace(
+        version,
+        tuple(steps),
+        tokens if type(tokens) is int else None,
+        usage(metrics),
+        compacted=tuple(
+            s.index
+            for s in steps
+            if s.source in ("system", "user") and not s.copied and COMPACTED.search(s.message.text)
+        ),
+        llm_calls=sum(counted) if counted else None,
+    )
+
+
+# Harness notices that earlier conversation history was replaced by a summary.
+COMPACTED = re.compile(
+    r"session is being continued from a previous conversation|\[COMPACTED HISTORY\]|"
+    r"conversation history (?:was|has been) (?:compacted|summari[sz]ed)|"
+    r"(?:ran|run) out of context\b[^.\n]{0,80}summary",
+    re.I,
+)
 
 
 def usage(metrics: object) -> Usage | None:
@@ -347,6 +373,8 @@ def usage(metrics: object) -> Usage | None:
         value = metrics.get(key)
         return value if type(value) is int and value >= 0 else None
 
+    extra = metrics.get("extra") if isinstance(metrics.get("extra"), dict) else {}
+    reasoning = extra.get("total_reasoning_tokens")
     cost = metrics.get("total_cost_usd")
     cost = float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
     found = Usage(
@@ -354,6 +382,7 @@ def usage(metrics: object) -> Usage | None:
         count("total_prompt_tokens"),
         count("total_completion_tokens"),
         count("total_cached_tokens"),
+        reasoning if type(reasoning) is int and reasoning >= 0 else None,
     )
     return None if found == Usage() else found
 

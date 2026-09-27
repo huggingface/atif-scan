@@ -113,6 +113,7 @@ class Usage:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     cached_tokens: int | None = None
+    reasoning_tokens: int | None = None  # final_metrics.extra.total_reasoning_tokens
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,18 @@ class Trace:
     tool_use_tokens: int | None = None
     # final_metrics totals as recorded by the harness (None when absent/invalid).
     usage: Usage | None = None
+    # Steps whose system/user message says earlier history was compacted/summarized away:
+    # the recorded steps then cover only part of the session.
+    compacted: tuple[int, ...] = ()
+    # Sum of agent steps' `llm_call_count` when recorded (None when never recorded).
+    llm_calls: int | None = None
+
+    @property
+    def reasoning_hidden(self) -> bool:
+        """Reasoning tokens were reported but no reasoning text was recorded."""
+        return bool(self.usage and self.usage.reasoning_tokens) and not any(
+            s.reasoning.text for s in self.steps if s.source == "agent" and not s.copied
+        )
 
     def agent_surfaces(self) -> Iterator[Surface]:
         """Never recursively walks a step: observations and prompt text stay separate."""

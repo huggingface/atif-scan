@@ -349,12 +349,16 @@ def scan(args: argparse.Namespace) -> int:
             # A Hub trial without a trajectory (e.g. it errored first) is a reported run
             # fact, not bad input; unreadable local/hf files still exit 2.
             invalid = invalid or error != "no_trajectory_downloaded"
+        if trace is not None and trace.compacted and not context.partial:
+            # Earlier history isn't recorded: negatives must not read as clean.
+            context = Context(context.task, True, context.reward)
         assessments = engine.evaluate(trace, context)
         item = report(assessments)
         item.update(
             input_id=source.label,
             input_status="available" if trace is not None else "unavailable_or_invalid",
             input_error=error,
+            compacted=bool(trace is not None and trace.compacted),
             task=context.task,
             reward=context.reward,
             **run_facts(source, trace),
