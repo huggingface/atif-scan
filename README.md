@@ -25,6 +25,30 @@ PYTHONPATH=examples uv run atif-scan examples/synthetic.json \
   --task demo-pytest --plugin demo_pack:checks --rules examples/policy.json
 ```
 
+### Local copies (sync)
+
+Remote inputs (`hf://`, huggingface.co URLs, `harbor://jobs/…`) are **synced by default**.
+Only the files the scan needs are downloaded (matching trajectories plus `result.json`,
+`config.json`, reward files and `exception.txt`), in parallel, and the local copy is
+scanned. Later runs fetch only files that are new or changed size, and per-trace results
+are cached, so a rescan takes seconds:
+
+```bash
+atif-scan https://huggingface.co/buckets/org/runs/tree/job     # 1st run: ~2-3 min for 441 traces
+atif-scan https://huggingface.co/buckets/org/runs/tree/job     # later: ~2 s
+atif-scan ~/.cache/atif-scan/hf/buckets/org/runs/job           # or scan the copy directly
+```
+
+| Flag | Effect |
+|---|---|
+| `--no-sync` | stream remote files without keeping them (slow for large runs) |
+| `--sync-dir DIR` | where copies live (default `$ATIF_SCAN_SYNC_DIR`, else `$XDG_CACHE_HOME/atif-scan`, else `~/.cache/atif-scan`), laid out as `hf/<path>/` and `harbor/<job id>/` |
+| `--refresh` | re-download synced files even if present |
+| `--jobs N` | parallel downloads (default 16) |
+| `--no-cache` / `--cache DIR` | disable or relocate the per-trace result cache (default `<sync dir>/results`) |
+
+The copies are real traces: delete the sync directory when you're done with a run.
+
 ### Run integrity at a glance
 
 For several traces, the default text view is a one-screen integrity report:
@@ -65,10 +89,9 @@ ADJUSTMENTS (estimates for review, not verdicts)
 - **Detail** stays behind flags: `--summary` (per check), `--cite high` (evidence),
   `--detail` (per trace), `--brief --format json`.
 - **Result cache:** per-trace results are cached (same allowlisted data as the JSON, no
-  trace text), keyed by file fingerprint, scanner version, check set and trace context.
-  It's on by default under `--sync-to` (`DIR/.atif-scan-cache`), otherwise enable it with
-  `--cache DIR`. `--no-cache` disables it, and `--cite` never uses it. A rescan of 330
-  cached traces takes seconds, mostly listing.
+  trace text), keyed by file fingerprint, scanner version, check set and trace context,
+  under `<sync dir>/results` by default. `--no-cache` disables it, and `--cite` never
+  uses it.
 
 ### Inputs
 

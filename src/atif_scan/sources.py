@@ -22,6 +22,7 @@ import math
 import os
 import re
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
@@ -109,7 +110,9 @@ def reward_candidates(path: str) -> list[str]:
 
 def hf_filesystem():
     from huggingface_hub import HfFileSystem
+    from huggingface_hub.utils import disable_progress_bars
 
+    disable_progress_bars()  # one atif-scan progress line, not a bar per file
     return HfFileSystem()
 
 
@@ -172,6 +175,8 @@ class Listing:
     reader: Callable[..., bytes] | None = field(default=None, repr=False)
     # Local listings: the file path of an entry (for cache fingerprints).
     local_path: Callable[[Entry], Path] | None = field(default=None, repr=False)
+    # Remote listings: download an entry to a local path (for --sync).
+    fetch: Callable[[Entry, Path], None] | None = field(default=None, repr=False)
 
 
 def _list_local(value: str) -> Listing:
@@ -217,7 +222,13 @@ def _list_remote(value: str, fs) -> Listing:
         raise SourceError("hf_request_failed") from None
     if info.get("type") != "directory":
         entry = Entry("", info.get("size"))
-        return Listing(True, False, (entry,), lambda e: _remote_load(fs, root, e.size))
+        return Listing(
+            True,
+            False,
+            (entry,),
+            lambda e: _remote_load(fs, root, e.size),
+            fetch=lambda e, path: fs.get_file(root, str(path)),
+        )
     try:
         found = fs.find(root, detail=True)
     except Exception:
@@ -241,7 +252,10 @@ def _list_remote(value: str, fs) -> Listing:
         with fs.open(full[relative], "rb") as handle:
             return handle.read(limit)
 
-    return Listing(True, True, tuple(entries), opener, read)
+    def fetch(entry: Entry, path: Path) -> None:
+        fs.get_file(full[entry.path], str(path))
+
+    return Listing(True, True, tuple(entries), opener, read, fetch=fetch)
 
 
 def list_input(value: str, fs=None) -> Listing:
@@ -372,6 +386,83 @@ def errored(listing: Listing, entry: Entry) -> bool:
     parent = PurePosixPath(entry.path).parent
     folders = [parent] + ([parent.parent] if parent != parent.parent else [])
     return any((f / "exception.txt").as_posix().removeprefix("./") in present for f in folders)
+
+
+# Besides matching trajectories, the small files the scan reads next to them.
+SYNC_NAMES = frozenset({"result.json", "config.json", "reward.txt", "reward.json", "exception.txt"})
+
+
+def default_sync_root() -> Path:
+    """Where remote inputs are synced: $ATIF_SCAN_SYNC_DIR, $XDG_CACHE_HOME/atif-scan, or
+    ~/.cache/atif-scan. Contents are real traces: documented, and safe to delete."""
+    if os.environ.get("ATIF_SCAN_SYNC_DIR"):
+        return Path(os.environ["ATIF_SCAN_SYNC_DIR"])
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "atif-scan"
+
+
+def sync_target(value: str, root: Path) -> Path:
+    """Local mirror folder for an hf:// input: <root>/hf/<path>, no traversal."""
+    parts = [p for p in normalize(value)[len(HF_PREFIX) :].split("/") if p]
+    if not parts or any(p in (".", "..") for p in parts):
+        raise SourceError("invalid_hf_path")
+    return root.joinpath("hf", *parts)
+
+
+def sync_remote(
+    value: str,
+    dest: Path,
+    pattern: str = DEFAULT_PATTERN,
+    fs=None,
+    workers: int = 16,
+    refresh: bool = False,
+    progress: Callable[[int, int], None] | None = None,
+) -> tuple[Path, dict]:
+    """Mirror what a scan needs from an hf:// input into `dest` (parallel, resumable:
+    files already present with the listed size are kept unless `refresh`). Returns the
+    local path to scan and download counts."""
+    listing = list_input(value, fs)
+    if listing.fetch is None:
+        raise SourceError("not_a_remote_input")
+    if not listing.directory:
+        name = PurePosixPath(normalize(value)).name
+        wanted = [(listing.entries[0], dest / name)]
+        scan_path = dest / name
+    else:
+        wanted = [
+            (e, dest / e.path)
+            for e in listing.entries
+            if fnmatchcase(PurePosixPath(e.path).name, pattern)
+            or PurePosixPath(e.path).name in SYNC_NAMES
+        ]
+        scan_path = dest
+    counts = {"files": len(wanted), "downloaded": 0, "up_to_date": 0, "failed": 0}
+
+    def one(item: tuple[Entry, Path]) -> str:
+        entry, path = item
+        if (
+            not refresh
+            and path.is_file()
+            and (entry.size is None or path.stat().st_size == entry.size)
+        ):
+            return "up_to_date"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        partial = path.with_name(path.name + ".part")
+        try:
+            listing.fetch(entry, partial)
+            partial.replace(path)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            return "failed"  # the scan then reports it as unreadable
+        return "downloaded"
+
+    dest.mkdir(parents=True, exist_ok=True)
+    with ThreadPoolExecutor(max(1, workers)) as pool:
+        for done, outcome in enumerate(pool.map(one, wanted), 1):
+            counts[outcome] += 1
+            if progress is not None:
+                progress(done, len(wanted))
+    return scan_path, counts
 
 
 def file_source(label: str, location: str, fs=None) -> Source:

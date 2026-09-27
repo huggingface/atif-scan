@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -267,6 +268,11 @@ class FakeHubFS:
             for p, data in self.files.items()
             if p.startswith(path + "/")
         }
+
+    def get_file(self, path, local):
+        if self.fail_open or path not in self.files:
+            raise OSError(f"401 for https://huggingface.co/{path}?token={SECRET}")
+        Path(local).write_bytes(self.files[path])
 
     def open(self, path, mode):
         if self.fail_open or path not in self.files:

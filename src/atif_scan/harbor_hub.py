@@ -186,7 +186,13 @@ def _loader(path: Path) -> Callable:
 
 
 def fetch(
-    cli: HarborCLI, job: str, rows: list[Mapping], dest: Path, full: bool, workers: int = 8
+    cli: HarborCLI,
+    job: str,
+    rows: list[Mapping],
+    dest: Path,
+    full: bool,
+    workers: int = 8,
+    refresh: bool = False,
 ) -> dict[str, Path]:
     """Download trajectories into `dest`; returns trial id -> expected trajectory path.
 
@@ -196,6 +202,8 @@ def fetch(
     dest.mkdir(parents=True, exist_ok=True)
     if full:
         target = dest / "job"
+        if refresh and target.exists():
+            shutil.rmtree(target)
         if not target.exists():
             try:
                 cli.run("hub", "job", "download", job, "-o", str(target))
@@ -208,8 +216,9 @@ def fetch(
 
     def one(row: Mapping) -> None:
         path = paths[str(row["id"])]
-        if path.is_file():
+        if path.is_file() and not refresh:
             return
+        path.unlink(missing_ok=True)
         try:
             cli.run("hub", "trial", "download", str(row["id"]), "--trajectory", "-o", str(dest))
         except SourceError:
@@ -228,12 +237,17 @@ def fetch(
 
 
 def harbor_sources(
-    value: str, dest: Path, full: bool = False, workers: int = 8, cli: HarborCLI | None = None
+    value: str,
+    dest: Path,
+    full: bool = False,
+    workers: int = 8,
+    cli: HarborCLI | None = None,
+    refresh: bool = False,
 ) -> tuple[list[Source], dict]:
     cli = cli or HarborCLI.find()
     job = job_id(value)
     run, rows = listing(cli, job)
-    paths = fetch(cli, job, rows, dest / job, full, workers)
+    paths = fetch(cli, job, rows, dest / job, full, workers, refresh)
     sources = []
     for row in rows:
         meta = trial_meta(row)

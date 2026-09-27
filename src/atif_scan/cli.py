@@ -35,11 +35,16 @@ from .report import (
 )
 from .sources import (
     DEFAULT_PATTERN,
+    HF_PREFIX,
     Source,
     SourceError,
+    default_sync_root,
     file_source,
     list_input,
+    normalize,
     resolve,
+    sync_remote,
+    sync_target,
 )
 
 
@@ -77,16 +82,46 @@ def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
         result = manifest_inputs(args.manifest)
     else:
         # Local/hf:// inputs resolve together so positional labels stay unique.
-        local = [v for v in args.paths if not is_harbor(v)]
+        local = [sync_if_remote(v, args) for v in args.paths if not is_harbor(v)]
         found = resolve(local, args.pattern, runs=args.runs) if local else []
         for value in (v for v in args.paths if is_harbor(v)):
-            hub, run = harbor_sources(value, args.download_dir, full=args.full, workers=args.jobs)
+            hub, run = harbor_sources(
+                value, args.download_dir, full=args.full, workers=args.jobs, refresh=args.refresh
+            )
             args.runs.append(run)
             found += hub
         result = [(s, Context(task_for(s, args), args.partial)) for s in found]
     if not result or len({s.label for s, _ in result}) != len(result):
         raise ValueError("empty_or_duplicate_inputs")
     return result
+
+
+def sync_if_remote(value: str, args: argparse.Namespace) -> str:
+    """With --sync (default), mirror an hf:// input locally and scan the copy."""
+    if not args.sync or not normalize(value).startswith(HF_PREFIX):
+        return value
+    dest = sync_target(value, args.sync_root)
+    tty = sys.stderr.isatty()
+
+    def progress(done: int, total: int) -> None:
+        print(f"\ratif-scan: syncing {done}/{total}", end="", file=sys.stderr)
+
+    path, counts = sync_remote(
+        value,
+        dest,
+        args.pattern,
+        workers=args.jobs,
+        refresh=args.refresh,
+        progress=progress if tty else None,
+    )
+    if tty:
+        print(
+            f"\r\033[Katif-scan: local copy {dest} · {counts['downloaded']} downloaded,"
+            f" {counts['up_to_date']} up to date"
+            + (f", {counts['failed']} failed" if counts["failed"] else ""),
+            file=sys.stderr,
+        )
+    return str(path)
 
 
 def task_for(source: Source, args: argparse.Namespace) -> str | None:
@@ -254,15 +289,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, help="explicit input manifest (JSON)")
     harbor = parser.add_argument_group("Harbor Hub jobs (harbor://jobs/<id> or a hub URL)")
     harbor.add_argument(
+        "--sync",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="mirror remote (hf://, harbor://) inputs locally and scan the copy; re-runs only "
+        "fetch what changed (default: on; --no-sync streams without keeping files)",
+    )
+    harbor.add_argument(
+        "--sync-dir",
         "--sync-to",
+        dest="sync_dir",
         type=Path,
         metavar="DIR",
-        help="keep downloaded trajectories in DIR (reused on the next run); default: temp dir",
+        help="where local copies live (default: $ATIF_SCAN_SYNC_DIR, $XDG_CACHE_HOME/atif-scan "
+        "or ~/.cache/atif-scan)",
+    )
+    harbor.add_argument(
+        "--refresh", action="store_true", help="re-download synced files even if present"
     )
     harbor.add_argument(
         "--full", action="store_true", help="download the full job archive, not only trajectories"
     )
-    harbor.add_argument("--jobs", type=int, default=8, help="parallel downloads (default 8)")
+    harbor.add_argument("--jobs", type=int, default=16, help="parallel downloads (default 16)")
     tasks = parser.add_mutually_exclusive_group()
     tasks.add_argument("--task", help="task identity for task-scoped checks")
     tasks.add_argument(
@@ -312,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
         "--cache",
         type=Path,
         metavar="DIR",
-        help="reuse per-trace results across runs (default with --sync-to: DIR/.atif-scan-cache)",
+        help="per-trace result cache (default: <sync dir>/results; --no-cache disables)",
     )
     parser.add_argument("--no-cache", action="store_true", help="disable the result cache")
     parser.add_argument(
@@ -359,8 +407,10 @@ def main(argv: list[str] | None = None) -> int:
     args.price_rates = price(args.price)  # validate early, whatever the output format
     if args.inspect:
         return inspect(args)
+    args.sync_root = args.sync_dir or default_sync_root()
     with tempfile.TemporaryDirectory(prefix="atif-scan-") as scratch:
-        args.download_dir = args.sync_to or Path(scratch)
+        # Harbor downloads: kept under the sync root with --sync, else a temp dir.
+        args.download_dir = args.sync_root / "harbor" if args.sync else Path(scratch)
         args.runs = []
         return scan(args)
 
@@ -384,7 +434,7 @@ def scan(args: argparse.Namespace) -> int:
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     cache = None
     if not args.no_cache and not args.cite:  # citations carry trace text: never cached
-        directory = args.cache or (args.sync_to / ".atif-scan-cache" if args.sync_to else None)
+        directory = args.cache or args.sync_root / "results"
         if directory is not None:
             cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
     progress = sys.stderr.isatty() and len(records) > 1

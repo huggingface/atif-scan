@@ -228,7 +228,7 @@ def test_sync_to_reuses_downloads(harbor, tmp_path, capsys):
     capsys.readouterr()
     # Only the trial without a trajectory is retried.
     assert len(calls(harbor, "trial download")) - first == 1
-    assert (keep / JOB / "alpha__T1" / "trajectory.json").is_file()
+    assert (keep / "harbor" / JOB / "alpha__T1" / "trajectory.json").is_file()
 
 
 def test_full_archive_mode(harbor, capsys):
