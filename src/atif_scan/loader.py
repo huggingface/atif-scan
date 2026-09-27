@@ -310,6 +310,13 @@ def classify(key: str | None, value: str) -> tuple[Channel, str]:
     return Channel.ARGUMENTS, value
 
 
+# Codex apply_patch envelope: the file paths live inside the patch text.
+PATCH_ENVELOPE = re.compile(r"^\*\*\* Begin Patch\b", re.M)
+PATCH_PATHS = re.compile(
+    r"^\*\*\* (?:Add File|Update File|Delete File|Move to): *(\S.*?)\s*$", re.M
+)
+
+
 def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
     if tool == "inert":
         return ()
@@ -327,6 +334,8 @@ def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
         elif isinstance(value, str):
             channel, text = classify(key, value)
             fields.append((channel, content(text)))
+            if channel == Channel.PAYLOAD and PATCH_ENVELOPE.search(value):
+                fields.extend((Channel.PATH, content(m)) for m in PATCH_PATHS.findall(value))
         elif isinstance(value, list) and _norm(key) in COMMAND_KEYS:
             fields.append((Channel.COMMAND, Content(understood=False)))  # e.g. ["bash", 1]
     required = REQUIRED.get(tool)
