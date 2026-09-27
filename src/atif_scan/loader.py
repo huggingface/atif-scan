@@ -90,6 +90,20 @@ HARNESS_ALIASES = {
     "webSearchToolCall": "web_search",
     "awaitToolCall": "inert",
     "updateTodosToolCall": "inert",
+    # Devin CLI, seen on the TB2.1 leaderboard: text typed into an interactive shell.
+    "write_to_process": "shell",
+    # Ouroboros, seen on the TB2.1 leaderboard.
+    "start_service": "shell",
+    "search_code": "search_files",
+    "query_code": "search_files",
+    "view_image": "read",
+    "ocr_pdf": "read",
+    "stop_service": "inert",
+    "service_logs": "inert",
+    "wait_tasks": "inert",
+    "verify_and_record": "inert",
+    "task_acceptance_review": "inert",
+    "schedule_subagent": "inert",
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 ALIASES.update(HARNESS_ALIASES)
@@ -111,7 +125,9 @@ def _keys(*names: str) -> frozenset[str]:
 
 
 # Argument key conventions (compared lowercased, without `_`/`-`), not tool names.
-COMMAND_KEYS = _keys("command", "cmd", "commands", "script", "shellcommand", "bash", "code")
+COMMAND_KEYS = _keys(
+    "command", "cmd", "commands", "script", "shellcommand", "bash", "code", "textinput"
+)
 QUERY_KEYS = _keys("query", "q", "searchquery", "searchterm", "queries")
 URL_KEYS = _keys("url", "urls", "uri", "href", "link", "endpoint")
 PATH_KEYS = _keys(
@@ -138,6 +154,7 @@ PATH_KEYS = _keys(
     "notebookpath",
 )
 PAYLOAD_KEYS = _keys(
+    "bytesinput",
     "globpattern",
     "streamcontent",
     "content",
