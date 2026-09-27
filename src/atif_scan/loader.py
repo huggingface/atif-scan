@@ -76,7 +76,23 @@ TOOLS = {
         "ToolSearch",
     },
 }
+# Harness-specific names, one table per harness (extend with a regression test).
+HARNESS_ALIASES = {
+    # Cursor CLI (cursor-cli), seen on the TB2.1 leaderboard.
+    "shellToolCall": "shell",
+    "readToolCall": "read",
+    "editToolCall": "write",
+    "writeToolCall": "write",
+    "deleteToolCall": "write",
+    "grepToolCall": "search_files",
+    "globToolCall": "search_files",
+    "webFetchToolCall": "web_fetch",
+    "webSearchToolCall": "web_search",
+    "awaitToolCall": "inert",
+    "updateTodosToolCall": "inert",
+}
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
+ALIASES.update(HARNESS_ALIASES)
 
 # Tool categories are *hints*: they name what a tool does (so e.g. only a known web-search
 # tool counts as a web search) and which evidence must be present. Evidence extraction
@@ -99,6 +115,7 @@ COMMAND_KEYS = _keys("command", "cmd", "commands", "script", "shellcommand", "ba
 QUERY_KEYS = _keys("query", "q", "searchquery", "searchterm", "queries")
 URL_KEYS = _keys("url", "urls", "uri", "href", "link", "endpoint")
 PATH_KEYS = _keys(
+    "targetdirectory",
     "path",
     "paths",
     "filepath",
@@ -121,6 +138,8 @@ PATH_KEYS = _keys(
     "notebookpath",
 )
 PAYLOAD_KEYS = _keys(
+    "globpattern",
+    "streamcontent",
     "content",
     "contents",
     "text",
