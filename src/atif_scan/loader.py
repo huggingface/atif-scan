@@ -353,7 +353,20 @@ def parse_trace(value: object) -> Trace:
             if s.source in ("system", "user") and not s.copied and COMPACTED.search(s.message.text)
         ),
         llm_calls=sum(counted) if counted else None,
+        agent=agent_info(value.get("agent")),
     )
+
+
+def agent_info(value: object) -> tuple[str | None, str | None, str | None]:
+    """(name, version, model_name) from the ATIF root `agent` block, label-safe only."""
+    if not isinstance(value, dict):
+        return (None, None, None)
+
+    def label(key: str) -> str | None:
+        v = value.get(key)
+        return v if isinstance(v, str) and re.fullmatch(r"[\w.:@/+-]{1,100}", v) else None
+
+    return (label("name"), label("version"), label("model_name"))
 
 
 # Harness notices that earlier conversation history was replaced by a summary.

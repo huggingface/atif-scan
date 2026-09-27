@@ -25,6 +25,43 @@ PYTHONPATH=examples uv run atif-scan examples/synthetic.json \
   --task demo-pytest --plugin demo_pack:checks --rules examples/policy.json
 ```
 
+### Run integrity at a glance
+
+For several traces, the default text view is a one-screen integrity report:
+
+```text
+tb4-grok-4.7-xhigh · harbor 30225ce2 · terminal-bench/terminal-bench@sha256:39d9f44b
+agent  grok-build / 1.0.34 / xai/grok-4.7
+330 trials · 66 tasks × 5
+
+RESULT     37.6% ± 1.8 (124/330)  ·  no DQ candidates
+COVERAGE   ✓ 330/330 planned trials present · ✓ 66/66 tasks · ⚠ 18 errored (5.5%)
+TRACES     ⚠ 209 (63.3%) compacted history — est. 67–74% of the run's LLM calls are not in its trajectories
+           ⚠ reasoning produced but not recorded: 330 (100.0%)
+           → 86 rewarded trial(s) can't be cleared (partial or missing traces)
+COST       $3,683.29 reported · ⚠ 6 unpriced trial(s) (1.8%) → est. +$91.03 (≈ $3,774.32, +2.4%)
+FINDINGS   traces by highest severity: medium 39 · low 127 · info 65 · none 99
+SETTINGS   ✓ no leaderboard-forbidden overrides
+
+ADJUSTMENTS (estimates for review, not verdicts)
+  · cost +$91.03 for 6 unpriced trials (per-token fit on 324 priced trials, median error $0.326)
+  · traces: ~67–74% of LLM calls unrecorded; findings on 209 compacted trials are partial
+```
+
+- **Missing cost** is estimated from the run's own prices: a least-squares fit of cost
+  against uncached, cached and output tokens over its priced trials.
+- **Missing activity** is estimated for trials with compacted history: token totals ÷
+  the typical prompt tokens per call of uncompacted trials, as a median–p90 range. On
+  three sessions whose full history was later recovered, the estimate matched to within
+  an order of magnitude (true 26.5%/1.6%/1.3% recorded; estimated 21–27%/0.7–0.9%/0.7–0.9%).
+- **Detail** stays behind flags: `--summary` (per check), `--cite high` (evidence),
+  `--detail` (per trace), `--brief --format json`.
+- **Result cache:** per-trace results are cached (same allowlisted data as the JSON, no
+  trace text), keyed by file fingerprint, scanner version, check set and trace context.
+  It's on by default under `--sync-to` (`DIR/.atif-scan-cache`), otherwise enable it with
+  `--cache DIR`. `--no-cache` disables it, and `--cite` never uses it. A rescan of 330
+  cached traces takes seconds, mostly listing.
+
 ### Inputs
 
 Each positional argument is one of:

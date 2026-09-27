@@ -16,6 +16,8 @@ detector or changing the engine.
 | `rules`, `policy` | Three-valued rule expressions, `Allowance`, and the JSON rule/allow format |
 | `engine` | Dependency ordering, task scope, error isolation, applying allowances |
 | `report` | The JSON allowlist, summary rollup, and text/rich views rendered only from it |
+| `brief`, `estimates` | One-screen run integrity report; missing-cost and missing-activity estimates fitted on the run's own data |
+| `cache` | Per-trace result cache keyed by file fingerprint + scanner version + check set + context |
 | `cite` | Opt-in (`--cite`) masked excerpts with before/after context: the only trace-text output |
 | `cli` | Picks inputs, loads trusted plugins, prints JSON or text |
 

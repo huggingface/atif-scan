@@ -30,7 +30,7 @@ from pathlib import Path
 
 from .checks import identifier
 from .loader import TraceError, load_trace
-from .sources import Source, SourceError
+from .sources import Source, SourceError, local_fingerprint
 
 JOB = re.compile(
     r"^(?:harbor://jobs/|https?://hub\.harborframework\.com/jobs/)"
@@ -270,6 +270,7 @@ def harbor_sources(
                 _loader(paths[str(row["id"])]),
                 lambda reward=meta["reward"]: reward,
                 meta=meta,
+                fingerprint=local_fingerprint(paths[str(row["id"])]),
             )
         )
     return sources, run

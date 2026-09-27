@@ -58,6 +58,19 @@ class Source:
     # Allowlisted run facts about this trial (task, reward, error_type, cost, tokens, ...)
     # from its source, e.g. the Harbor Hub listing or Harbor's exception.txt marker.
     meta: Mapping[str, object] = field(default_factory=dict, repr=False)
+    # Cheap identity of the trajectory file for the result cache (None: don't cache).
+    fingerprint: Callable[[], str | None] = field(default=lambda: None, repr=False)
+
+
+def local_fingerprint(path: Path) -> Callable[[], str | None]:
+    def fingerprint() -> str | None:
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return f"{path.resolve()}:{st.st_size}:{st.st_mtime_ns}"
+
+    return fingerprint
 
 
 REWARD_FILES = ("reward.json", "reward.txt")  # Harbor reads reward.json first
@@ -153,13 +166,17 @@ class Listing:
     opener: Callable[[Entry], Callable[[], Trace]] = field(repr=False)
     # Read up to REWARD_BYTES of a small listed metadata file by relative path.
     reader: Callable[[str], bytes] | None = field(default=None, repr=False)
+    # Local listings: the file path of an entry (for cache fingerprints).
+    local_path: Callable[[Entry], Path] | None = field(default=None, repr=False)
 
 
 def _list_local(value: str) -> Listing:
     root = Path(value)
     if root.is_file():
         entry = Entry("", root.stat().st_size)
-        return Listing(False, False, (entry,), lambda e: lambda: load_trace(root))
+        return Listing(
+            False, False, (entry,), lambda e: lambda: load_trace(root), local_path=lambda e: root
+        )
     if not root.is_dir():
         raise SourceError("path_not_found")
     entries = []
@@ -176,7 +193,14 @@ def _list_local(value: str) -> Listing:
         with open(root / relative, "rb") as handle:
             return handle.read(REWARD_BYTES)
 
-    return Listing(False, True, tuple(entries), lambda e: lambda: load_trace(root / e.path), read)
+    return Listing(
+        False,
+        True,
+        tuple(entries),
+        lambda e: lambda: load_trace(root / e.path),
+        read,
+        local_path=lambda e: root / e.path,
+    )
 
 
 def _list_remote(value: str, fs) -> Listing:
@@ -316,7 +340,12 @@ def resolve(values: list[str], pattern: str = DEFAULT_PATTERN, fs=None) -> list[
             reward = reward_lookup(listing, entry, value)
             hint = "/".join(p for p in (normalize(value).rstrip("/"), entry.path) if p)
             meta = {"error_type": "exception"} if errored(listing, entry) else {}
-            sources.append(Source(label, listing.opener(entry), reward, hint, meta))
+            fingerprint = (
+                local_fingerprint(listing.local_path(entry))
+                if listing.local_path is not None
+                else (lambda: None)
+            )
+            sources.append(Source(label, listing.opener(entry), reward, hint, meta, fingerprint))
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

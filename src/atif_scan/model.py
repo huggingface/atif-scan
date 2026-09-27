@@ -129,6 +129,8 @@ class Trace:
     compacted: tuple[int, ...] = ()
     # Sum of agent steps' `llm_call_count` when recorded (None when never recorded).
     llm_calls: int | None = None
+    # ATIF root `agent` block: (name, version, model_name), each None when absent.
+    agent: tuple[str | None, str | None, str | None] = (None, None, None)
 
     @property
     def reasoning_hidden(self) -> bool:

@@ -11,6 +11,8 @@ import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
+from .brief import brief, brief_text
+from .cache import ResultCache, checks_signature
 from .checks import Context, Severity, Status, identifier
 from .cite import citations
 from .detectors import builtin_detectors
@@ -121,6 +123,10 @@ def run_facts(source: Source, trace) -> dict:
         "input_tokens": meta.get("input_tokens"),
         "cache_tokens": meta.get("cache_tokens"),
         "output_tokens": meta.get("output_tokens"),
+        "agent_name": trace.agent[0] if trace is not None else None,
+        "agent_version": trace.agent[1] if trace is not None else None,
+        "model_name": trace.agent[2] if trace is not None else None,
+        "llm_calls": (trace.llm_calls or trace.agent_steps) if trace is not None else None,
     }
     if "cost_usd" not in meta and usage is not None:
         facts.update(
@@ -148,6 +154,14 @@ def emit(doc: dict, args: argparse.Namespace) -> None:
     fmt = args.format
     if fmt == "auto":
         fmt = "text" if sys.stdout.isatty() else "json"
+    many = len(doc["inputs"]) > 1
+    default_brief = fmt == "text" and many and not (args.detail or args.summary or args.overview)
+    if args.brief or default_brief:
+        report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks)
+        print(to_json(report_) if fmt == "json" else brief_text(report_), end="")
+        if fmt == "json":
+            print()
+        return
     if args.overview or args.summary:
         scorecard = overview(doc, args.dq_on, args.min_trials, expect_tasks=args.expect_tasks)
         if args.overview:
@@ -274,6 +288,23 @@ def main(argv: list[str] | None = None) -> int:
         help="one rollup across inputs: counts for info/low, per-trace details for medium+",
     )
     parser.add_argument(
+        "--brief",
+        action="store_true",
+        help="one-screen run integrity report (default text view for several inputs)",
+    )
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="per-trace listing (default text view for a single input)",
+    )
+    parser.add_argument(
+        "--cache",
+        type=Path,
+        metavar="DIR",
+        help="reuse per-trace results across runs (default with --sync-to: DIR/.atif-scan-cache)",
+    )
+    parser.add_argument("--no-cache", action="store_true", help="disable the result cache")
+    parser.add_argument(
         "--overview",
         action="store_true",
         help="only the run scorecard: coverage, accuracy, DQ candidates, cost",
@@ -334,11 +365,35 @@ def scan(args: argparse.Namespace) -> int:
     output = []
     invalid = failed = False
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
+    cache = None
+    if not args.no_cache and not args.cite:  # citations carry trace text: never cached
+        directory = args.cache or (args.sync_to / ".atif-scan-cache" if args.sync_to else None)
+        if directory is not None:
+            cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
     progress = sys.stderr.isatty() and len(records) > 1
     for number, (source, context) in enumerate(records, 1):
         if progress:
             print(f"\ratif-scan: scanning {number}/{len(records)}", end="", file=sys.stderr)
         context = Context(context.task, context.partial, source.reward())
+        fingerprint = source.fingerprint() if cache is not None else None
+        key = cache.key(fingerprint, context) if fingerprint else None
+        cached = cache.get(key) if key else None
+        if cached is not None and cached.get("input_id") == source.label:
+            output.append(cached)
+            rows = cached["assessments"]
+            invalid = (
+                invalid
+                or any(a["status"] == "error" for a in rows)
+                or (
+                    cached["input_status"] != "available"
+                    and cached.get("input_error") != "no_trajectory_downloaded"
+                )
+            )
+            failed = failed or (
+                threshold is not None
+                and any(a.get("score") is not None and a["score"] >= int(threshold) for a in rows)
+            )
+            continue
         error = None
         try:
             trace = source.load()
@@ -368,6 +423,8 @@ def scan(args: argparse.Namespace) -> int:
             tool_calls=trace.tool_calls if trace is not None else None,
             unrecognized_tool_calls=trace.unrecognized_tool_calls if trace is not None else None,
         )
+        if key is not None:
+            cache.put(key, item)
         if args.cite and trace is not None:
             # Opt-in trace text; the only report field that isn't allowlisted metadata.
             item["citations"] = citations(trace, assessments, Severity[args.cite.upper()])
