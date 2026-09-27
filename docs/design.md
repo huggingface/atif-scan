@@ -8,6 +8,7 @@ detector or changing the engine.
 | Module | Role |
 |---|---|
 | `sources` | Resolves files, directories, `hf://` paths and Hub URLs to loadable inputs (the only input I/O) |
+| `harbor_files` | Harbor's own run files (trial `result.json`, job `config.json`/`result.json`) as recorded facts for local/hf:// job folders |
 | `harbor_hub` | `harbor://jobs/<id>`: Hub listing (task/reward/cost) and trajectory downloads via the `harbor` CLI |
 | `layout` | `--inspect`: classifies a listing (Harbor markers, roles, anomalies) without reading traces |
 | `model`, `loader` | Immutable `Trace → Step → ToolCall / Observation` view of ATIF v1 |

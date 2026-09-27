@@ -46,7 +46,7 @@ def _median(values: list[float]) -> float:
     return ordered[len(ordered) // 2] if ordered else 0.0
 
 
-def cost_estimate(items: list[dict]) -> dict:
+def cost_estimate(items: list[dict], price: tuple[float, float, float] | None = None) -> dict:
     has_tokens = [i for i in items if i.get("input_tokens") or i.get("output_tokens")]
     unpriced = [i for i in has_tokens if not i.get("cost_usd")]
     priced = [i for i in has_tokens if i.get("cost_usd")]
@@ -59,7 +59,26 @@ def cost_estimate(items: list[dict]) -> dict:
         "median_abs_error_usd": None,
         "rates_per_mtok": None,
     }
+    tokens = [_features(i) for i in has_tokens]
+    result["tokens"] = {
+        "uncached_input": int(sum(t[0] for t in tokens)),
+        "cached_input": int(sum(t[1] for t in tokens)),
+        "output": int(sum(t[2] for t in tokens)),
+    }
     if not unpriced:
+        return result
+    if price is not None:
+        rates = list(price)
+        result["method"] = "given --price"
+        result["rates_per_mtok"] = dict(
+            zip(("uncached_input", "cached_input", "output"), rates, strict=True)
+        )
+        result["estimate_usd"] = round(
+            sum(
+                sum(r * v / 1e6 for r, v in zip(rates, _features(i), strict=True)) for i in unpriced
+            ),
+            2,
+        )
         return result
     if len(priced) < MIN_PRICED:
         result["method"] = f"not estimated: fewer than {MIN_PRICED} priced trials"

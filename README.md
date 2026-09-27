@@ -48,8 +48,16 @@ ADJUSTMENTS (estimates for review, not verdicts)
   · traces: ~67–74% of LLM calls unrecorded; findings on 209 compacted trials are partial
 ```
 
+- **Recorded run facts come first.** For Harbor job folders (local or `hf://`), each
+  trial's `result.json` supplies its task, reward, error type, tokens and cost. The
+  job's `config.json`/`result.json` supply the job name, dataset digest, planned trials,
+  `n_attempts` and any forbidden overrides. The Hub supplies the same for `harbor://`.
+  Trajectory `final_metrics` are the fallback. Tasks that can't be determined are
+  reported as unknown (no per-task SE), never invented.
 - **Missing cost** is estimated from the run's own prices: a least-squares fit of cost
-  against uncached, cached and output tokens over its priced trials.
+  against uncached, cached and output tokens over its priced trials. If no trial
+  recorded a cost at all, the brief says so and shows the token totals; `--price U,C,O`
+  ($ per million uncached-input, cached-input, output tokens) then gives an estimate.
 - **Missing activity** is estimated for trials with compacted history: token totals ÷
   the typical prompt tokens per call of uncompacted trials, as a median–p90 range. On
   three sessions whose full history was later recovered, the estimate matched to within

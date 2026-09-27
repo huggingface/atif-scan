@@ -78,7 +78,7 @@ def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
     else:
         # Local/hf:// inputs resolve together so positional labels stay unique.
         local = [v for v in args.paths if not is_harbor(v)]
-        found = resolve(local, args.pattern) if local else []
+        found = resolve(local, args.pattern, runs=args.runs) if local else []
         for value in (v for v in args.paths if is_harbor(v)):
             hub, run = harbor_sources(value, args.download_dir, full=args.full, workers=args.jobs)
             args.runs.append(run)
@@ -109,9 +109,20 @@ def task_for(source: Source, args: argparse.Namespace) -> str | None:
     return None
 
 
-def run_facts(source: Source, trace) -> dict:
-    """Per-trial run facts for the overview: Hub metadata, else the trace's final_metrics."""
-    meta = dict(source.meta)
+def price(value: str | None) -> tuple[float, float, float] | None:
+    if not value:
+        return None
+    try:
+        parts = tuple(float(p) for p in value.split(","))
+    except ValueError:
+        raise SystemExit("atif-scan: --price takes three numbers: U,C,O ($/M tokens)") from None
+    if len(parts) != 3 or any(p < 0 for p in parts):
+        raise SystemExit("atif-scan: --price takes three numbers: U,C,O ($/M tokens)")
+    return parts
+
+
+def run_facts(meta: dict, trace) -> dict:
+    """Per-trial run facts: recorded metadata (Hub, Harbor result.json), else final_metrics."""
     usage = trace.usage if trace is not None else None
     facts = {
         "error_type": meta.get("error_type"),
@@ -128,7 +139,7 @@ def run_facts(source: Source, trace) -> dict:
         "model_name": trace.agent[2] if trace is not None else None,
         "llm_calls": (trace.llm_calls or trace.agent_steps) if trace is not None else None,
     }
-    if "cost_usd" not in meta and usage is not None:
+    if meta.get("input_tokens") is None and usage is not None:
         facts.update(
             cost_usd=usage.cost_usd,
             input_tokens=usage.prompt_tokens,
@@ -157,7 +168,7 @@ def emit(doc: dict, args: argparse.Namespace) -> None:
     many = len(doc["inputs"]) > 1
     default_brief = fmt == "text" and many and not (args.detail or args.summary or args.overview)
     if args.brief or default_brief:
-        report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks)
+        report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
         print(to_json(report_) if fmt == "json" else brief_text(report_), end="")
         if fmt == "json":
             print()
@@ -321,6 +332,11 @@ def main(argv: list[str] | None = None) -> int:
         help="expected trials per task (default: the job's n_attempts when known)",
     )
     parser.add_argument(
+        "--price",
+        metavar="U,C,O",
+        help="$ per million uncached-input,cached-input,output tokens: estimate unpriced trials",
+    )
+    parser.add_argument(
         "--expect-tasks",
         type=int,
         help="tasks the dataset should cover (e.g. 89 for Terminal-Bench 2.1)",
@@ -340,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 for an unexcused finding at/above this review severity",
     )
     args = parser.parse_args(argv)
+    args.price_rates = price(args.price)  # validate early, whatever the output format
     if args.inspect:
         return inspect(args)
     with tempfile.TemporaryDirectory(prefix="atif-scan-") as scratch:
@@ -374,7 +391,13 @@ def scan(args: argparse.Namespace) -> int:
     for number, (source, context) in enumerate(records, 1):
         if progress:
             print(f"\ratif-scan: scanning {number}/{len(records)}", end="", file=sys.stderr)
-        context = Context(context.task, context.partial, source.reward())
+        # Recorded run facts (Hub listing, Harbor result.json) beat folder-name inference.
+        meta = {**source.meta, **source.details()}
+        task = context.task if args.task else (meta.get("task") or context.task)
+        reward = source.reward()
+        context = Context(
+            task, context.partial, reward if reward is not None else meta.get("reward")
+        )
         fingerprint = source.fingerprint() if cache is not None else None
         key = cache.key(fingerprint, context) if fingerprint else None
         cached = cache.get(key) if key else None
@@ -416,7 +439,7 @@ def scan(args: argparse.Namespace) -> int:
             compacted=bool(trace is not None and trace.compacted),
             task=context.task,
             reward=context.reward,
-            **run_facts(source, trace),
+            **run_facts(meta, trace),
             partial=context.partial,
             agent_steps=trace.agent_steps if trace is not None else None,
             # Counts only: tool names and arguments never enter the report.

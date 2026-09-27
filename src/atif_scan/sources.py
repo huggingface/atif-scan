@@ -28,6 +28,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 from .checks import identifier
+from .harbor_files import job_meta, trial_result
 from .loader import MAX_BYTES, TraceError, load_bytes, load_trace
 from .model import Trace
 
@@ -60,6 +61,8 @@ class Source:
     meta: Mapping[str, object] = field(default_factory=dict, repr=False)
     # Cheap identity of the trajectory file for the result cache (None: don't cache).
     fingerprint: Callable[[], str | None] = field(default=lambda: None, repr=False)
+    # Recorded run facts read lazily from Harbor's trial result.json ({} when absent).
+    details: Callable[[], dict] = field(default=dict, repr=False)
 
 
 def local_fingerprint(path: Path) -> Callable[[], str | None]:
@@ -75,6 +78,7 @@ def local_fingerprint(path: Path) -> Callable[[], str | None]:
 
 REWARD_FILES = ("reward.json", "reward.txt")  # Harbor reads reward.json first
 REWARD_BYTES = 4096
+RESULT_BYTES = 1024 * 1024  # Harbor result.json / config.json
 
 
 def parse_reward(data: bytes, name: str) -> float | None:
@@ -164,8 +168,8 @@ class Listing:
     directory: bool
     entries: tuple[Entry, ...]  # sorted; a single file is one entry with path ""
     opener: Callable[[Entry], Callable[[], Trace]] = field(repr=False)
-    # Read up to REWARD_BYTES of a small listed metadata file by relative path.
-    reader: Callable[[str], bytes] | None = field(default=None, repr=False)
+    # Read (up to `limit` bytes of) a small listed metadata file by relative path.
+    reader: Callable[..., bytes] | None = field(default=None, repr=False)
     # Local listings: the file path of an entry (for cache fingerprints).
     local_path: Callable[[Entry], Path] | None = field(default=None, repr=False)
 
@@ -189,9 +193,9 @@ def _list_local(value: str) -> Listing:
                 entries.append(Entry(path.relative_to(root).as_posix(), path.stat().st_size))
     entries.sort(key=lambda e: e.path)
 
-    def read(relative: str) -> bytes:
+    def read(relative: str, limit: int = REWARD_BYTES) -> bytes:
         with open(root / relative, "rb") as handle:
-            return handle.read(REWARD_BYTES)
+            return handle.read(limit)
 
     return Listing(
         False,
@@ -233,9 +237,9 @@ def _list_remote(value: str, fs) -> Listing:
     def opener(entry: Entry) -> Callable[[], Trace]:
         return _remote_load(fs, full[entry.path], entry.size)
 
-    def read(relative: str) -> bytes:
+    def read(relative: str, limit: int = REWARD_BYTES) -> bytes:
         with fs.open(full[relative], "rb") as handle:
-            return handle.read(REWARD_BYTES)
+            return handle.read(limit)
 
     return Listing(True, True, tuple(entries), opener, read)
 
@@ -302,6 +306,64 @@ def reward_lookup(listing: Listing, entry: Entry, value: str) -> Callable[[], fl
     return listed
 
 
+def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], dict]:
+    """Lazy reader for the trial's Harbor result.json (trajectory folder or one up)."""
+    if listing.directory:
+        present = {e.path for e in listing.entries}
+        parent = PurePosixPath(entry.path).parent
+        folders = [parent] + ([parent.parent] if parent != parent.parent else [])
+        found = [
+            p
+            for p in ((f / "result.json").as_posix().removeprefix("./") for f in folders)
+            if p in present
+        ]
+        reader = listing.reader
+        if not found or reader is None:
+            return dict
+
+        def listed() -> dict:
+            for path in found:
+                try:
+                    facts = trial_result(reader(path, RESULT_BYTES))
+                except Exception:
+                    continue
+                if facts:
+                    return facts
+            return {}
+
+        return listed
+    if listing.remote:
+        return dict
+    path = Path(normalize(value))
+
+    def local() -> dict:
+        for folder in (path.parent, path.parent.parent):
+            candidate = folder / "result.json"
+            if candidate.is_file():
+                with open(candidate, "rb") as handle:
+                    facts = trial_result(handle.read(RESULT_BYTES))
+                if facts:
+                    return facts
+        return {}
+
+    return local
+
+
+def job_run(listing: Listing) -> dict | None:
+    """Harbor job facts when the listed root is a job folder (config.json + result.json)."""
+    if not listing.directory or listing.reader is None:
+        return None
+    present = {e.path for e in listing.entries}
+    if "config.json" not in present:
+        return None
+    try:
+        config = listing.reader("config.json", RESULT_BYTES)
+        result = listing.reader("result.json", RESULT_BYTES) if "result.json" in present else None
+    except Exception:
+        return None
+    return job_meta(config, result)
+
+
 def errored(listing: Listing, entry: Entry) -> bool:
     """Harbor writes `<trial>/exception.txt` when a trial raised; seen in the listing."""
     if not listing.directory:
@@ -321,7 +383,9 @@ def file_source(label: str, location: str, fs=None) -> Source:
     return Source(label, lambda: load_trace(Path(location)))
 
 
-def resolve(values: list[str], pattern: str = DEFAULT_PATTERN, fs=None) -> list[Source]:
+def resolve(
+    values: list[str], pattern: str = DEFAULT_PATTERN, fs=None, runs: list | None = None
+) -> list[Source]:
     """Expand each value in order (see module docstring).
 
     Expanded files are labelled by their path relative to the given root (the part the
@@ -332,6 +396,8 @@ def resolve(values: list[str], pattern: str = DEFAULT_PATTERN, fs=None) -> list[
     sources: list[Source] = []
     for value in values:
         listing = list_input(value, fs)
+        if runs is not None and (run := job_run(listing)) is not None:
+            runs.append(run)
         entries = selected(listing, pattern)
         if not entries:
             raise SourceError("no_files_match_pattern")
@@ -345,7 +411,10 @@ def resolve(values: list[str], pattern: str = DEFAULT_PATTERN, fs=None) -> list[
                 if listing.local_path is not None
                 else (lambda: None)
             )
-            sources.append(Source(label, listing.opener(entry), reward, hint, meta, fingerprint))
+            details = trial_details(listing, entry, value)
+            sources.append(
+                Source(label, listing.opener(entry), reward, hint, meta, fingerprint, details)
+            )
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

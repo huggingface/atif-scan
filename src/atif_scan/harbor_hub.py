@@ -22,13 +22,14 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from .checks import identifier
+from .harbor_files import overrides
 from .loader import TraceError, load_trace
 from .sources import Source, SourceError, local_fingerprint
 
@@ -38,11 +39,6 @@ JOB = re.compile(
     r"(?:[/?#].*)?$"
 )
 PAGE_SIZE = 100
-# Leaderboard static rules: these settings must be unset (multipliers may be 1.0).
-OVERRIDE = re.compile(
-    r"(?:^|[._])(?:\w*timeout_multiplier|override_timeout_sec|override_setup_timeout_sec|"
-    r"max_timeout_sec|override_(?:cpus|gpus|memory_mb|storage_mb))$"
-)
 
 
 def is_harbor(value: str) -> bool:
@@ -102,29 +98,6 @@ def _duration(row: Mapping) -> float | None:
     except (KeyError, TypeError, ValueError):
         return None
     return max((end - start).total_seconds(), 0.0)
-
-
-def _flatten(value: object, prefix: str = "") -> Iterator[tuple[str, object]]:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            yield from _flatten(child, f"{prefix}.{key}" if prefix else str(key))
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            yield from _flatten(child, f"{prefix}[{index}]")
-    else:
-        yield prefix, value
-
-
-def overrides(config: object) -> list[str]:
-    """Setting paths the leaderboard requires unset (a multiplier of 1.0 is allowed)."""
-    found = []
-    for path, value in _flatten(config):
-        if not OVERRIDE.search(path) or value is None:
-            continue
-        if path.endswith("multiplier") and value in (1, 1.0):
-            continue
-        found.append(re.sub(r"\[\d+\]", "[]", path))
-    return sorted(set(found))
 
 
 def trial_meta(row: Mapping) -> dict:

@@ -572,6 +572,8 @@ def overview(
 
 
 def _m(value: int) -> str:
+    if value >= 1e9:
+        return f"{value / 1e9:.2f}B"
     return (
         f"{value / 1e6:.1f}M"
         if value >= 1e6

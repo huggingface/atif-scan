@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import Counter
 
 from .estimates import cost_estimate, missing_activity
-from .report import RANK, overview
+from .report import RANK, _m, overview
 
 OK, WARN, BAD, INFO = "✓", "⚠", "✗", "·"
 
@@ -20,7 +20,7 @@ def _counted(item: dict) -> list[dict]:
     return [a for a in item["assessments"] if a.get("score") is not None]
 
 
-def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None) -> dict:
+def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price=None) -> dict:
     items = doc["inputs"]
     ov = overview(doc, dq, min_trials, expect_tasks=expect_tasks)
     agents = Counter(
@@ -54,7 +54,8 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None) -> di
         "runs": ov["runs"],
         "agents": dict(agents.most_common()),
         "overview": ov,
-        "cost_estimate": cost_estimate(items),
+        "cost_estimate": cost_estimate(items, price),
+        "tasks_known": sum(1 for i in items if i.get("task")),
         "missing_activity": missing_activity(items),
         "recording": {
             check: integrity[check]
@@ -85,7 +86,7 @@ RECORDING_LABELS = {
     "integrity.reasoning_not_recorded": "reasoning produced but not recorded",
     "integrity.timestamp_missing": "steps without timestamps",
     "integrity.tokens_exceed_recorded_calls": "token totals exceed what recorded calls could use",
-    "integrity.cost_missing": "trajectory reports tokens but no cost",
+    "integrity.cost_missing": "tokens recorded but no cost (anywhere)",
     "integrity.timestamp_smearing": "timestamps stamped at export",
     "integrity.timestamp_regression": "timestamps going backwards",
     "integrity.orphan_observation": "tool results without a matching call",
@@ -100,8 +101,11 @@ def brief_text(b: dict) -> str:
     lines = [f"atif-scan {b['scanner_version']} · run integrity", ""]
     for r in b["runs"]:
         ref = (r.get("dataset_refs") or [""])[0][:15]
+        kind = "harbor" if r.get("source") == "harbor_hub" else "job"
+        where = f"{kind} {r['job_id'][:8]}" if r.get("job_id") else "Harbor job folder"
+        name = r.get("job_name")
         lines.append(
-            f"{r.get('job_name') or 'job'} · harbor {r['job_id'][:8]}"
+            (f"{name} · {where}" if name and name != "job" else where)
             + (f" · {', '.join(r['datasets'])}@{ref}" if r.get("datasets") else "")
         )
     if b["agents"]:
@@ -112,7 +116,9 @@ def brief_text(b: dict) -> str:
             )
         )
     shape = f"{n} trials"
-    if k["count"]:
+    if not b["tasks_known"]:
+        shape += " · tasks unknown (pass --task-from trial-dir or --task)"
+    elif k["count"]:
         per = (
             f"{k['min_trials']}"
             if k["min_trials"] == k["max_trials"]
@@ -125,12 +131,13 @@ def brief_text(b: dict) -> str:
     if ov["accuracy"]:
         acc, se = ov["accuracy"]
         succ = round(acc * (n - t["reward_unknown"]) / 100)
-        line = f"RESULT     {acc:.1f}% ± {se:.1f} ({succ}/{n - t['reward_unknown']})"
+        spread = f" ± {se:.1f}" if b["tasks_known"] else ""  # per-task SE needs tasks
+        line = f"RESULT     {acc:.1f}%{spread} ({succ}/{n - t['reward_unknown']})"
         if d and d["candidates"]:
             adj, adj_se = d["accuracy_if_disqualified"]
+            adj_spread = f" ± {adj_se:.1f}" if b["tasks_known"] else ""
             line += (
-                f"  →  {adj:.1f}% ± {adj_se:.1f}"
-                f" if {d['candidates']} DQ candidate(s) are disqualified"
+                f"  →  {adj:.1f}%{adj_spread} if {d['candidates']} DQ candidate(s) are disqualified"
             )
         elif d is not None:
             line += "  ·  no DQ candidates"
@@ -141,10 +148,9 @@ def brief_text(b: dict) -> str:
     # COVERAGE
     cov = []
     if t["planned"] is not None:
-        cov.append(
-            f"{OK if not t['missing'] else WARN} "
-            f"{t['present']}/{t['planned']} planned trials present"
-        )
+        folder = any(r.get("source") == "harbor_job_folder" for r in b["runs"])
+        what = "planned trials have a trajectory" if folder else "planned trials present"
+        cov.append(f"{OK if not t['missing'] else WARN} {t['present']}/{t['planned']} {what}")
     if k["expected_tasks"]:
         cov.append(
             f"{OK if not k['missing_tasks'] else WARN} {k['count']}/{k['expected_tasks']} tasks"
@@ -168,7 +174,16 @@ def brief_text(b: dict) -> str:
         est = ""
         if ma["missing_calls_pct"]:
             lo, hi = ma["missing_calls_pct"]
-            est = f" — est. {lo:.0f}–{hi:.0f}% of the run's LLM calls are not in its trajectories"
+            if hi >= 1:
+                est = (
+                    f" — est. {lo:.0f}–{hi:.0f}% of the run's LLM calls are not in its trajectories"
+                )
+            else:
+                r_lo, r_hi = ma["compacted_recorded_pct"]
+                est = (
+                    f" — those trials recorded est. {r_lo:.0f}–{r_hi:.0f}% of their calls"
+                    " (<1% of the run)"
+                )
         lines.append(
             f"TRACES     {WARN} {ma['compacted']} ({_pct(ma['compacted'], n)})"
             f" compacted history{est}"
@@ -196,7 +211,22 @@ def brief_text(b: dict) -> str:
 
     # COST
     line = f"COST       ${c['total_usd']:,.2f} reported"
-    if ce["unpriced"]:
+    tk = ce.get("tokens") or {}
+    if ce["unpriced"] and ce["unpriced"] == n - ce["no_usage"] and ce["estimate_usd"] is None:
+        line = (
+            f"COST       {WARN} no cost recorded for any trial (trajectories or run metadata)"
+            f" · tokens: {_m(tk.get('uncached_input', 0) + tk.get('cached_input', 0))} input"
+            f" ({_m(tk.get('cached_input', 0))} cached) · {_m(tk.get('output', 0))} output"
+            " · estimate with --price U,C,O ($/M)"
+        )
+    elif ce["unpriced"] and not c["total_usd"] and ce["method"] == "given --price":
+        r = ce["rates_per_mtok"]
+        line = (
+            f"COST       {WARN} no cost recorded · est. ${ce['estimate_usd']:,.2f} at the given"
+            f" --price ${r['uncached_input']:g}/${r['cached_input']:g}/${r['output']:g} per M"
+            " (uncached/cached/output)"
+        )
+    elif ce["unpriced"]:
         line += f" · {WARN} {ce['unpriced']} unpriced trial(s) ({_pct(ce['unpriced'], n)})"
         if ce["estimate_usd"] is not None:
             corrected = c["total_usd"] + ce["estimate_usd"]
@@ -243,9 +273,14 @@ def brief_text(b: dict) -> str:
     if ce["estimate_usd"]:
         adj.append(
             f"cost +${ce['estimate_usd']:,.2f} for {ce['unpriced']} unpriced trials"
-            f" ({ce['method']}, median error ${ce['median_abs_error_usd']})"
+            f" ({ce['method']}"
+            + (
+                f", median error ${ce['median_abs_error_usd']})"
+                if ce["median_abs_error_usd"] is not None
+                else ")"
+            )
         )
-    if ma["missing_calls_pct"]:
+    if ma["missing_calls_pct"] and ma["missing_calls_pct"][1] >= 1:
         lo, hi = ma["missing_calls_pct"]
         adj.append(
             f"traces: ~{lo:.0f}–{hi:.0f}% of LLM calls unrecorded;"
