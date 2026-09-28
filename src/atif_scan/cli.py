@@ -27,6 +27,7 @@ from .packs import recognise, tasks_needed
 from .packs.reference import ENV as PACK_ENV
 from .policy import load_rules
 from .questions import BY_ID, Answers, Writer
+from .questions import tally as answer_tally
 from .report import (
     document,
     inspection_text,
@@ -39,6 +40,7 @@ from .report import (
     to_json,
     to_text,
 )
+from .review import SCOPES, write_review
 from .sources import (
     DEFAULT_PATTERN,
     HF_PREFIX,
@@ -86,6 +88,7 @@ def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
 
 
 def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
+    args.sync_failures = []
     if args.manifest:
         if args.paths or args.task or args.task_from or args.partial:
             raise ValueError("manifest_cannot_be_combined_with_direct_inputs")
@@ -93,7 +96,11 @@ def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
     else:
         # Local/hf:// inputs resolve together so positional labels stay unique.
         local = [sync_if_remote(v, args) for v in args.paths if not is_harbor(v)]
-        found = resolve(local, args.pattern, runs=args.runs) if local else []
+        found = (
+            resolve(local, args.pattern, runs=args.runs, sync_failures=args.sync_failures)
+            if local
+            else []
+        )
         for value in (v for v in args.paths if is_harbor(v)):
             hub, run = harbor_sources(
                 value,
@@ -138,7 +145,7 @@ def sync_if_remote(value: str, args: argparse.Namespace) -> str:
     )
     if tty:
         print(
-            f"\r\033[Katif-scan: local copy {dest} · {counts['downloaded']} downloaded,"
+            f"\r\033[Katif-scan: local copy · {counts['downloaded']} downloaded,"
             f" {counts['up_to_date']} up to date"
             + (f", {counts['failed']} failed" if counts["failed"] else ""),
             file=sys.stderr,
@@ -312,7 +319,12 @@ def _overview(doc: dict, args: argparse.Namespace, fmt: str) -> None:
 
 
 def _summary(doc: dict, args: argparse.Namespace, fmt: str) -> None:
-    rolled = dict(summary(doc), overview=_scorecard(doc, args))
+    rolled = dict(
+        summary(doc),
+        overview=_scorecard(doc, args),
+        dq_threshold=args.dq_on,
+        answers=answer_tally(doc["inputs"]),
+    )
     print(to_json(rolled) if fmt == "json" else summary_text(rolled), end="")
     if fmt == "json":
         print()
@@ -339,7 +351,11 @@ def emit(doc: dict, args: argparse.Namespace) -> None:
     if view is None:
         # Default: the brief for a run's text view (unless citing), else the detail.
         many = len(doc["inputs"]) > 1
-        view = "brief" if fmt == "text" and many and not args.cite else "detail"
+        view = (
+            "brief"
+            if fmt == "text" and (many or args.judge_prompts) and not args.cite
+            else "detail"
+        )
     VIEWS[view](doc, args, fmt)
 
 
@@ -500,6 +516,20 @@ def main(argv: list[str] | None = None) -> int:
         help="tasks the dataset should cover (e.g. 89 for Terminal-Bench 2.1)",
     )
     parser.add_argument(
+        "--judge-prompts",
+        "--judge",
+        dest="judge_prompts",
+        type=Path,
+        metavar="DIR",
+        help="write a private, MCP-ready review bundle to a new/empty DIR; defaults to "
+        "DQ candidates and hack_hunt; never calls a model",
+    )
+    parser.add_argument(
+        "--judge-scope",
+        choices=SCOPES,
+        help="review selection: dq-candidates (default, uses --dq-on) or all rewarded trials",
+    )
+    parser.add_argument(
         "--questions",
         type=Path,
         metavar="DIR",
@@ -511,7 +541,8 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         choices=list(BY_ID),
-        help="only these questions (repeatable; default: all except opt-in hack_hunt)",
+        help="only these questions (repeatable; default: hack_hunt with --judge-prompts, "
+        "otherwise all except opt-in hack_hunt)",
     )
     parser.add_argument(
         "--answers",
@@ -535,6 +566,23 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 for an unexcused finding at/above this review severity",
     )
     args = parser.parse_args(argv)
+    if args.judge_scope and not args.judge_prompts:
+        parser.error("--judge-scope requires --judge-prompts DIR")
+    if args.judge_prompts:
+        if args.questions or args.answers or args.inspect:
+            parser.error(
+                "--judge-prompts cannot be combined with --questions, --answers or --inspect"
+            )
+        if not args.sync:
+            parser.error("--judge-prompts requires durable local traces; omit --no-sync")
+        try:
+            if args.judge_prompts.is_symlink() or (
+                args.judge_prompts.exists()
+                and (not args.judge_prompts.is_dir() or any(args.judge_prompts.iterdir()))
+            ):
+                parser.error("--judge-prompts requires a new or empty directory")
+        except OSError:
+            parser.error("review directory unavailable (details withheld)")
     if args.cite and (args.view in ("brief", "overview") or args.inspect):
         parser.error("--cite requires detail or summary output, not brief/overview/inspect")
     args.price_rates = price(args.price)  # validate early, whatever the output format
@@ -563,13 +611,25 @@ def scan(args: argparse.Namespace) -> int:
         )
         return 2
     output = []
-    invalid = failed = False
+    sync_failed = sum(getattr(args, "sync_failures", []))
+    if sync_failed:
+        print(
+            f"atif-scan: {sync_failed} sync file(s) unavailable; report incomplete",
+            file=sys.stderr,
+        )
+    invalid, failed = bool(sync_failed), False
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     cache = None
     writer = Writer(args.questions, args.question) if args.questions else None
     answers = Answers.load(args.answers) if args.answers else None
     # Citations and questions carry trace text, and answers need the trace: never cached.
-    if not args.no_cache and not args.cite and writer is None and answers is None:
+    if (
+        not args.no_cache
+        and not args.cite
+        and not args.judge_prompts
+        and writer is None
+        and answers is None
+    ):
         directory = args.cache or args.sync_root / "results"
         cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
     progress = sys.stderr.isatty() and len(records) > 1
@@ -641,10 +701,26 @@ def scan(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     doc = document(output, version("atif-scan"))
+    if sync_failed:
+        doc["coverage"]["sync_failed_files"] = sync_failed
     if args.runs:
         doc["runs"] = args.runs
     if args.packs_loaded:
         doc["packs"] = args.packs_loaded
+    if args.judge_prompts:
+        try:
+            doc["review"] = write_review(
+                args.judge_prompts,
+                doc,
+                records,
+                engine,
+                args.dq_on,
+                args.judge_scope or "dq-candidates",
+                args.question,
+            )
+        except (OSError, ValueError):
+            print("atif-scan: review bundle failed (details withheld)", file=sys.stderr)
+            return 2
     emit(doc, args)
     return 2 if invalid else 1 if failed else 0
 

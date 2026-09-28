@@ -158,7 +158,9 @@ def test_overview_is_linear_in_items(linear):
     ov = run(5000)
     d = ov["disqualification"]
     assert d["candidates"] == 2500 + 1200 and len(set(d["candidate_ids"])) == d["candidates"]
-    assert d["rewarded_not_cleared"] == 2500
+    # The 1200 unknown trials on the other model are already DQ candidates.
+    assert d["rewarded_not_cleared"] == 1300
+    assert set(d["candidate_ids"]).isdisjoint(d["rewarded_not_cleared_ids"])
 
 
 def test_token_units_are_picked_after_rounding():

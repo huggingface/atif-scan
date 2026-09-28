@@ -40,7 +40,7 @@ from .harbor_files import (
     text_label,
 )
 from .loader import TraceError, load_trace
-from .sources import Source, SourceError, local_fingerprint
+from .sources import Source, SourceError, local_fingerprint, private_directory, private_tree
 
 UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 JOB = re.compile(
@@ -296,7 +296,7 @@ def save_listing(dest: Path, job: str, show: Mapping | None, rows: list[Mapping]
     leaderboard rows can share one job, and each row sync lists only its own trials.
     """
     try:
-        dest.mkdir(parents=True, exist_ok=True)
+        private_directory(dest)
         ids = {str(r.get("id")) for r in rows}
         try:
             old = json.loads((dest / SAVED_LISTING).read_text())
@@ -312,6 +312,7 @@ def save_listing(dest: Path, job: str, show: Mapping | None, rows: list[Mapping]
             kept = []
         tmp = dest / f".{SAVED_LISTING}.{os.getpid()}.tmp"
         tmp.write_text(json.dumps({"version": 1, "job": job, **_reduced(show or {}, kept + rows)}))
+        tmp.chmod(0o600)
         tmp.replace(dest / SAVED_LISTING)
     except (OSError, TypeError, ValueError):
         pass  # a missing sidecar only means a later local rescan lacks Hub facts
@@ -362,7 +363,7 @@ def fetch(
     Trajectory mode resumes: files already present are not downloaded again. A failed
     download leaves the trial unavailable (reported), never aborts the scan.
     """
-    dest.mkdir(parents=True, exist_ok=True)
+    private_tree(dest)
     if full:
         target = dest / "job"
         if refresh and target.exists():
@@ -373,6 +374,7 @@ def fetch(
                 cli.run("hub", "job", "download", job, "-o", str(target))
             except SourceError:
                 pass  # every trial then reports as unavailable
+        private_tree(dest)
         found = {p.parent.parent.name: p for p in target.rglob("agent/trajectory.json")}
         return {str(r["id"]): found.get(_label(r), target / "missing") for r in rows}
 
@@ -402,6 +404,7 @@ def fetch(
         try:
             cli.run("hub", "trial", "download", str(row["id"]), "--trajectory", "-o", str(dest))
         except SourceError:
+            path.unlink(missing_ok=True)
             return False
         # Harbor names the folder after the trial; move it if it differs from our label.
         if not path.is_file():
@@ -416,6 +419,7 @@ def fetch(
         report()
         with ThreadPoolExecutor(max(1, workers)) as pool:
             list(pool.map(one, todo))
+    private_tree(dest)
     return paths
 
 
@@ -537,6 +541,7 @@ def harbor_sources(
 ) -> tuple[list[Source], dict]:
     kind, ref = reference(value)
     cli = cli or HarborCLI.find()
+    private_directory(dest)
     if kind == "row":
         run, jobs = row_listing(cli, ref, progress)
         sources = [

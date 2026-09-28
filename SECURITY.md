@@ -9,11 +9,15 @@
   secret-masked excerpts of the trace. Masking is best-effort, so treat cited output
   like the trace itself and keep it out of Git and issues. Text reports render only that allowlisted document. Manifest IDs
   and check IDs must be non-sensitive labels.
-- `--questions DIR` and `atif-inspect` also write trace text: bounded, masked excerpts in
+- `--judge-prompts DIR` (alias `--judge DIR`), `--questions DIR` and `atif-inspect` also write trace text: bounded, masked excerpts in
   prompt files, and masked step dumps. Treat both like the trace itself. atif-scan never
   sends prompts anywhere. Whoever answers them (e.g. `tools/ask-fast-agent.sh`) sends them
   to a model provider, and that's the user's decision. Prompts frame trace text as
-  untrusted data, and the answering script gives the model no tools. `--answers` keeps
+  untrusted data. The answering script disables shell/subagents; optional `--inspect-tool`
+  grants read-only MCP tools bound to one local trajectory, never arbitrary paths or execution.
+  Review bundles contain local paths as well as masked excerpts; keep them private and outside Git.
+  Generating prompts never sends data to a provider. Fresh judge directories prevent mixing
+  stale questions into a new selection. `--answers` keeps
   only the validated answer, confidence and steps, never the free-text reason.
 - When a directory or `hf://` prefix is expanded, each input is labelled by its path
   *relative to the root you passed* (e.g. `trial-1/agent/trajectory.json`). The root
@@ -22,7 +26,12 @@
   `$XDG_CACHE_HOME/atif-scan`, `--sync-dir`). Those copies are real, possibly
   credential-bearing traces: keep the directory private, never inside a repository, and
   delete it when done (`--no-sync` streams without keeping files). The sync layout is
-  confined to that directory (path traversal is rejected).
+  confined to that directory (path traversal and symlink destinations are rejected).
+  Owned download directories are made `0700` and files `0600`, including existing copies.
+  Hugging Face mirrors retain a private `.atif-sync.json` inventory (relative paths and
+  content identities, no trace text). Keep it with the copy: it preserves missing inputs
+  on offline rescans. Failed sync files are reported, never silently dropped or replaced
+  with an old copy; any sync failure returns exit 2.
 - The result cache (`--cache`, default `<sync dir>/results`) stores a subset of the
   allowlisted JSON report (the trace-derived results; run facts are re-read each scan),
   never citations or trace text.

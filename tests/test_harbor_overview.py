@@ -541,3 +541,19 @@ def test_row_syncs_sharing_a_job_keep_each_others_listing_rows(tmp_path):
     save_listing(folder, other, {}, [row(5, "task-e")])
     _, trials = saved_listing((folder / SAVED_LISTING).read_bytes())
     assert list(trials) == ["task-e__t5"]
+
+
+def test_harbor_sync_permissions_are_private(harbor, tmp_path):
+    from atif_scan.harbor_hub import harbor_sources
+
+    dest = tmp_path / "copy"
+    dest.mkdir(mode=0o755)
+    harbor_sources(f"harbor://jobs/{JOB}", dest)
+    for path in (dest, *dest.rglob("*")):
+        assert path.stat().st_mode & 0o777 == (0o700 if path.is_dir() else 0o600)
+    # Existing mirrors are tightened too, including trajectories reused without download.
+    for path in dest.rglob("*"):
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    harbor_sources(f"harbor://jobs/{JOB}", dest)
+    for path in (dest, *dest.rglob("*")):
+        assert path.stat().st_mode & 0o777 == (0o700 if path.is_dir() else 0o600)

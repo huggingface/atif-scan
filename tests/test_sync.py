@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -44,14 +45,18 @@ class FS:
 
     def info(self, path):
         if path in self.files:
-            return {"type": "file", "size": len(self.files[path])}
+            return {
+                "type": "file",
+                "size": len(self.files[path]),
+                "xet_hash": hashlib.sha256(self.files[path]).hexdigest(),
+            }
         if any(p.startswith(path + "/") for p in self.files):
             return {"type": "directory"}
         raise FileNotFoundError(path)
 
     def find(self, path, detail=False):
         return {
-            p: {"type": "file", "size": len(d)}
+            p: {"type": "file", "size": len(d), "xet_hash": hashlib.sha256(d).hexdigest()}
             for p, d in self.files.items()
             if p.startswith(path + "/")
         }

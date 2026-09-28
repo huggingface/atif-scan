@@ -15,7 +15,7 @@ from .estimates import cost_estimate, missing_activity, unmetered_work
 from .harbor_files import override_kind
 from .packs import BUNDLED
 from .questions import tally
-from .report import RANK, STYLE, _m, is_counted, overview
+from .report import RANK, STYLE, _m, is_counted, overview, review_metadata, review_text
 
 OK, WARN, BAD, INFO = "✓", "⚠", "✗", "·"
 
@@ -80,6 +80,10 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
             if check == "integrity.cost_missing" and item.get("cost_usd") is not None:
                 continue  # the trajectory lacks cost, but the source (e.g. Hub) has it
             (integrity if check.startswith("integrity.") else behaviour)[check] += 1
+        if item.get("input_status") != "available":
+            # Never scanned (no trajectory, unreadable): unknown, not "none".
+            by_severity["unavailable"] += 1
+            continue
         by_severity[
             max(
                 (a["severity"] for a in counted if not a["id"].startswith("integrity.")),
@@ -101,6 +105,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
     return {
         "schema_version": 1,
         "kind": "integrity_brief",
+        "review": review_metadata(doc),
         "packs": doc.get("packs") or [],
         "suggested_packs": suggested,
         # Reviewer answers to --questions prompts (annotations only; never DQ math).
@@ -109,6 +114,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "runs": ov["runs"],
         "agents": dict(agents.most_common()),
         "overview": ov,
+        "dq_threshold": dq,
         "cost_estimate": cost_estimate(items, price, other_model),
         "unmetered_work": unmetered_work(items, other_model),
         "tasks_known": sum(1 for i in items if i.get("task")),
@@ -122,7 +128,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "findings": {
             "traces_by_highest_severity": {
                 k: by_severity[k]
-                for k in ("critical", "high", "medium", "low", "info", "none")
+                for k in ("critical", "high", "medium", "low", "info", "none", "unavailable")
                 if by_severity[k]
             },
             "checks": {
@@ -169,6 +175,10 @@ def brief_text(b: dict) -> str:
     t, k, d, c = ov["trials"], ov["tasks"], ov["disqualification"], ov["cost"]
     n = t["present"]
     lines = [f"atif-scan {b['scanner_version']} · run integrity", ""]
+    if ov.get("sync_failed_files"):
+        lines.append(
+            f"SYNC       ⚠ {ov['sync_failed_files']} file(s) unavailable; report incomplete"
+        )
     for r in b["runs"]:
         ref = (r.get("dataset_refs") or [""])[0][:15]
         kind = {"harbor_hub": "harbor", "harbor_leaderboard_row": "row"}.get(r.get("source"), "job")
@@ -204,7 +214,7 @@ def brief_text(b: dict) -> str:
         shape += f" · {k['count']} tasks × {per}"
     lines += [shape, ""]
 
-    # RESULT and its adjustment
+    # RESULT is recorded; SCENARIO is hypothetical.
     if ov["accuracy"]:
         acc, se = ov["accuracy"]
         succ = round(acc * (n - t["reward_unknown"]) / 100)
@@ -213,15 +223,15 @@ def brief_text(b: dict) -> str:
         has_se = b["tasks_known"] and (k.get("max_trials") or 0) >= 2
         spread = f" ± {se:.1f}" if has_se else ""
         line = f"RESULT     {acc:.1f}%{spread} ({succ}/{n - t['reward_unknown']})"
+        lines.append(line)
         if d and d["candidates"]:
             adj, adj_se = d["accuracy_if_disqualified"]
             adj_spread = f" ± {adj_se:.1f}" if has_se else ""
-            line += (
-                f"  →  {adj:.1f}%{adj_spread} if {d['candidates']} DQ candidate(s) are disqualified"
+            noun = "success is" if d["candidates"] == 1 else "successes are"
+            lines.append(
+                f"SCENARIO   {adj:.1f}%{adj_spread} if {d['candidates']} flagged {noun}"
+                " zeroed (not a verdict)"
             )
-        elif d is not None:
-            line += "  ·  no DQ candidates"
-        lines.append(line)
     else:
         lines.append("RESULT     rewards unknown (no verifier output or Hub record)")
 
@@ -242,14 +252,13 @@ def brief_text(b: dict) -> str:
             rep += f" · ${lb['reported_cost_usd']:,.2f}"
         if lb.get("display_cost") and "partial" in lb["display_cost"]:
             rep += f" ({lb['display_cost']})"
-        if d and d["accuracy_if_disqualified"]:
-            ours = d["accuracy_if_disqualified"][0]
-            rep += f" · scan-adjusted {ours:.1f}% ({ours - lb['reported_accuracy']:+.1f} pts)"
         lines.append(rep)
         if r.get("unresolved_trials"):
             lines.append(
                 f"{'':<10} {WARN} {r['unresolved_trials']} row trial(s) not found in any job"
             )
+
+    lines += review_text(ov, b.get("review"), b.get("dq_threshold", "high"))
 
     # COVERAGE
     cov = []
@@ -437,13 +446,12 @@ def brief_text(b: dict) -> str:
     # FINDINGS
     f = b["findings"]
     sev = " · ".join(f"{s} {v}" for s, v in f["traces_by_highest_severity"].items())
-    lines.append(f"FINDINGS   traces by highest severity: {sev or 'none'}")
+    lines.append(
+        f"FINDINGS   traces by highest review priority: {sev or 'none'}; check counts overlap"
+    )
     top = [(cid, v) for cid, v in f["checks"].items() if RANK[v["severity"]] >= RANK["medium"]]
     for cid, v in top[:6]:
-        lines.append(
-            f"{'':<10} {BAD if RANK[v['severity']] >= RANK['high'] else WARN}"
-            f" {v['severity']:<8} {cid} · {v['traces']} trace(s)"
-        )
+        lines.append(f"{'':<10} {WARN} {v['severity']:<8} {cid} · {v['traces']} trace(s)")
     if len(top) > 6:
         lines.append(f"{'':<10}   +{len(top) - 6} more medium+ checks (see --summary)")
 
@@ -468,7 +476,7 @@ def brief_text(b: dict) -> str:
     if mm:
         others = ", ".join(f"{m} {k}" for m, k in mm["other_models"].items())
         lines.append(
-            f"MODEL      {BAD} critical  {len(mm['trial_ids'])} trial(s)"
+            f"MODEL      {WARN} critical  {len(mm['trial_ids'])} trial(s)"
             f" ({_pct(len(mm['trial_ids']), n)}) ran another model than {mm['expected']}:"
             f" {others} · {len(mm['rewarded_ids'])} rewarded · ${mm['cost_usd']:,.2f}"
             + (f" · {len(mm['switched_ids'])} switched mid-trial" if mm.get("switched_ids") else "")
@@ -488,6 +496,8 @@ def brief_text(b: dict) -> str:
     for i, (question, counts) in enumerate(sorted((b.get("answers") or {}).items())):
         shown = " · ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1]))
         lines.append(f"{'ANSWERS' if i == 0 else '':<10} {question}: {shown}")
+    if b.get("answers"):
+        lines.append(f"{'':<10} reviewer annotations only; DQ candidates unchanged")
     for pack in b.get("packs") or []:
         lines.append(f"PACKS      {OK} {pack['pack']} loaded (recognised by {pack['reason']})")
     for pack in b.get("suggested_packs") or []:
@@ -495,16 +505,6 @@ def brief_text(b: dict) -> str:
 
     # ADJUSTMENTS summary
     adj = []
-    if d and d["candidates"]:
-        acc, _ = ov["accuracy"]
-        other = set((ov.get("model_mismatch") or {}).get("rewarded_ids") or [])
-        on_findings = [x for x in d["candidate_ids"] if x not in other]
-        parts = [f"{len(on_findings)} on findings, review with --cite high"] if on_findings else []
-        parts += [f"{len(other)} ran another model"] if other else []
-        adj.append(
-            f"accuracy {acc:.1f}% → {d['accuracy_if_disqualified'][0]:.1f}%"
-            f" ({d['candidates']} DQ candidates: {'; '.join(parts)})"
-        )
     if ce["estimate_usd"]:
         adj.append(
             f"cost +${ce['estimate_usd']:,.2f} for {ce['unpriced']} unpriced trials"
@@ -554,11 +554,11 @@ def brief_text(b: dict) -> str:
 # Styles are applied to the plain text by pattern, so the coloured and plain views can
 # never say different things. rich honours NO_COLOR and disables colour when piped.
 
-SEVERITY_STYLE = {**STYLE, "none": "dim"}
+SEVERITY_STYLE = {**STYLE, "none": "dim", "unavailable": "yellow"}
 PATTERNS = [
     (r"^atif-scan .*$", "bold"),
     (
-        r"^(RESULT|REPORTED|COVERAGE|TRACES|COST|FINDINGS|SETTINGS|MODEL|PACKS|ANSWERS|ADJUSTMENTS)\b",
+        r"^(RESULT|SCENARIO|REVIEW|REPORTED|COVERAGE|TRACES|COST|FINDINGS|SETTINGS|MODEL|PACKS|ANSWERS|ADJUSTMENTS)\b",
         "bold cyan",
     ),
     (r"^agent\b", "dim"),

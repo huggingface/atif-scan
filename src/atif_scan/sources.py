@@ -21,6 +21,7 @@ import json
 import os
 import re
 import stat
+import tempfile
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -193,6 +194,8 @@ def _remote_load(fs, path: str, size: int | None) -> Callable[[], Trace]:
 class Entry:
     path: str  # POSIX path relative to the listed root
     size: int | None
+    revision: str | None = None  # provider content identity, never report text
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -210,6 +213,8 @@ class Listing:
     # Remote listings: download an entry to a local path (for --sync).
     fetch: Callable[[Entry, Path], None] | None = field(default=None, repr=False)
 
+    sync_failed: int = 0
+
     @cached_property
     def paths(self) -> frozenset[str]:
         """Every listed path, for O(1) "is this file present" lookups."""
@@ -218,6 +223,12 @@ class Listing:
 
 def _list_local(value: str) -> Listing:
     root = Path(value)
+    if root.is_dir() and ((root / SYNC_STATE).exists() or (root / SYNC_STATE).is_symlink()):
+        return synced_listing(root)
+    if (root.parent / SYNC_STATE).exists() or (root.parent / SYNC_STATE).is_symlink():
+        state = read_sync_state(root.parent)
+        if root.name in state["files"]:
+            return synced_listing(root.parent, root.name)
     if root.is_file():
         entry = Entry("", root.stat().st_size)
         return Listing(
@@ -226,9 +237,24 @@ def _list_local(value: str) -> Listing:
     if not root.is_dir():
         raise SourceError("path_not_found")
     entries = []
+    synced_loaders = {}
+    failed_paths = set()
+    sync_failed = 0
     # os.walk without following symlinks: the same traversal on every Python version.
     for folder, dirs, files in os.walk(root):
         dirs.sort()
+        if SYNC_STATE in files:
+            # Scanning a parent of several mirrors must retain their missing inputs too.
+            nested = synced_listing(Path(folder))
+            sync_failed += nested.sync_failed
+            for entry in nested.entries:
+                relative = nested.local_path(entry).relative_to(root).as_posix()
+                entries.append(Entry(relative, entry.size, failed=entry.failed))
+                synced_loaders[relative] = nested.opener(entry)
+                if entry.failed:
+                    failed_paths.add(relative)
+            dirs.clear()
+            continue
         for name in files:
             path = Path(folder) / name
             try:
@@ -240,6 +266,8 @@ def _list_local(value: str) -> Listing:
     entries.sort(key=lambda e: e.path)
 
     def read(relative: str, limit: int = REWARD_BYTES) -> bytes:
+        if relative in failed_paths:
+            raise OSError("sync_failed")
         with open(root / relative, "rb") as handle:
             return handle.read(limit)
 
@@ -247,22 +275,37 @@ def _list_local(value: str) -> Listing:
         False,
         True,
         tuple(entries),
-        lambda e: lambda: load_trace(root / e.path),
+        lambda e: synced_loaders.get(e.path, lambda: load_trace(root / e.path)),
         read,
         local_path=lambda e: root / e.path,
+        sync_failed=sync_failed,
     )
+
+
+def remote_revision(info: Mapping) -> str | None:
+    """Content identities supplied by Hub repos and buckets, not size or timestamps."""
+    for key in ("xet_hash", "blob_id", "etag"):
+        value = info.get(key)
+        if isinstance(value, str) and value:
+            return f"{key}:{value}"
+    return None
 
 
 def _list_remote(value: str, fs) -> Listing:
     root = value[len(HF_PREFIX) :].rstrip("/")
     try:
+        # fsspec may reuse HfFileSystem instances, including their directory caches.
+        # A fresh mirror decision must use a fresh remote inventory.
+        invalidate = getattr(fs, "invalidate_cache", None)
+        if callable(invalidate):
+            invalidate()
         info = fs.info(root)
     except FileNotFoundError:
         raise SourceError("hf_path_not_found_or_no_access") from None
     except Exception:
         raise SourceError("hf_request_failed") from None
     if info.get("type") != "directory":
-        entry = Entry("", info.get("size"))
+        entry = Entry("", info.get("size"), remote_revision(info))
         return Listing(
             True,
             False,
@@ -285,7 +328,7 @@ def _list_remote(value: str, fs) -> Listing:
         if confined(Path(), relative) is not None:
             full[relative] = path
     sizes = {path: meta.get("size") for path, meta in found.items()}
-    entries = [Entry(r, sizes[full[r]]) for r in sorted(full)]
+    entries = [Entry(r, sizes[full[r]], remote_revision(found[full[r]])) for r in sorted(full)]
 
     def opener(entry: Entry) -> Callable[[], Trace]:
         return _remote_load(fs, full[entry.path], entry.size)
@@ -544,6 +587,150 @@ def sync_target(value: str, root: Path) -> Path:
     return root.joinpath("hf", *parts)
 
 
+SYNC_STATE = ".atif-sync.json"
+
+
+def private_directory(path: Path) -> None:
+    """Create private parents; tighten the owned directory, never follow symlinks."""
+    for parent in (path, *path.parents):
+        if parent.is_symlink():
+            raise SourceError("unsafe_sync_path")
+    if not path.exists():
+        if not path.parent.exists():
+            private_directory(path.parent)
+        path.mkdir(mode=0o700, exist_ok=True)
+    if not path.is_dir():
+        raise SourceError("unsafe_sync_path")
+    path.chmod(0o700)
+
+
+def private_tree(root: Path) -> None:
+    """Tighten an owned download tree, refusing links instead of following them."""
+    private_directory(root)
+    for folder, dirs, files in os.walk(root):
+        for name in dirs:
+            private_directory(Path(folder) / name)
+        for name in files:
+            path = Path(folder) / name
+            if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1:
+                raise SourceError("unsafe_sync_path")
+            path.chmod(0o600)
+
+
+def private_sync_path(root: Path, path: Path) -> None:
+    """Validate/create only directories inside the mirror; reject linked targets."""
+    relative = path.relative_to(root)
+    parent = root
+    private_directory(parent)
+    for part in relative.parts[:-1]:
+        parent /= part
+        private_directory(parent)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise SourceError("unsafe_sync_path")
+
+
+def read_sync_state(root: Path) -> dict | None:
+    """Malformed state fails closed, never becomes an ordinary directory scan."""
+    path = root / SYNC_STATE
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        if path.is_symlink():
+            raise ValueError
+        with path.open("rb") as handle:
+            data = handle.read(16 * 1024 * 1024 + 1)
+        if len(data) > 16 * 1024 * 1024:
+            raise ValueError
+        value = json.loads(data)
+        if value["schema_version"] != 1 or not isinstance(value["files"], dict):
+            raise ValueError
+        if value["single"] is not None and value["single"] not in value["files"]:
+            raise ValueError
+        for name, row in value["files"].items():
+            if (
+                not isinstance(name, str)
+                or confined(root, name) is None
+                or name == SYNC_STATE
+                or not isinstance(row, dict)
+                or set(row) != {"size", "revision", "stamp", "failed"}
+                or (row["size"] is not None and (type(row["size"]) is not int or row["size"] < 0))
+                or (row["revision"] is not None and not isinstance(row["revision"], str))
+                or (row["stamp"] is not None and not isinstance(row["stamp"], str))
+                or type(row["failed"]) is not bool
+            ):
+                raise ValueError
+        return value
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+        raise SourceError("invalid_sync_inventory") from None
+
+
+def write_sync_state(root: Path, files: dict, single: str | None) -> None:
+    """Publish an inventory atomically; private metadata, never report fields."""
+    private_sync_path(root, root / SYNC_STATE)
+    fd, name = tempfile.mkstemp(prefix=".atif-sync-", suffix=".tmp", dir=root)
+    path = Path(name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump({"schema_version": 1, "files": files, "single": single}, handle)
+        path.replace(root / SYNC_STATE)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def synced_listing(root: Path, single: str | None = None) -> Listing:
+    state = read_sync_state(root)
+    single = single or state["single"]
+    files = state["files"]
+    names = [single] if single is not None else sorted(files)
+    for name in names:
+        path = root / name
+        while path != root:
+            if path.is_symlink():
+                raise SourceError("unsafe_sync_path")
+            path = path.parent
+    entries = tuple(
+        Entry("" if single is not None else name, files[name]["size"], failed=files[name]["failed"])
+        for name in names
+    )
+
+    def local(entry: Entry) -> Path:
+        return root / (single or entry.path)
+
+    def opener(entry: Entry) -> Callable[[], Trace]:
+        def load() -> Trace:
+            if entry.failed:
+                raise TraceError("sync_failed")
+            return load_trace(local(entry))
+
+        return load
+
+    def read(relative: str, limit: int = REWARD_BYTES) -> bytes:
+        if files[relative]["failed"]:
+            raise OSError("sync_failed")
+        with open(root / relative, "rb") as handle:
+            return handle.read(limit)
+
+    return Listing(
+        False,
+        single is None,
+        entries,
+        opener,
+        read,
+        local,
+        sync_failed=sum(row["failed"] for row in files.values()),
+    )
+
+
+def sync_stamp(path: Path) -> str | None:
+    try:
+        st = path.lstat()
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            return None
+        return f"{st.st_size}:{st.st_mtime_ns}"
+    except OSError:
+        return None
+
+
 def sync_remote(
     value: str,
     dest: Path,
@@ -553,55 +740,102 @@ def sync_remote(
     refresh: bool = False,
     progress: Callable[[int, int], None] | None = None,
 ) -> tuple[Path, dict]:
-    """Mirror what a scan needs from an hf:// input into `dest` (parallel, resumable:
-    files already present with the listed size are kept unless `refresh`). Returns the
-    local path to scan and download counts."""
+    """Mirror the current remote inventory, retaining failures as unknown inputs.
+
+    Reuse requires a provider content identity AND an unchanged local fingerprint.
+    Without an identity re-download. The saved inventory excludes obsolete files even
+    when scanning the copy offline; no stale file can stand in for a failed download.
+    """
     listing = list_input(value, fs)
     if listing.fetch is None:
         raise SourceError("not_a_remote_input")
-    if not listing.directory:
-        name = PurePosixPath(normalize(value)).name
-        scan_path = confined(dest, name)
-        if scan_path is None:
-            raise SourceError("invalid_hf_path")
-        wanted = [(listing.entries[0], scan_path, MAX_BYTES)]
-    else:
-        wanted = []
-        for e in listing.entries:
-            name = PurePosixPath(e.path).name
-            cap = MAX_BYTES if fnmatchcase(name, pattern) else SYNC_CAPS.get(name)
-            if cap is not None:
-                wanted.append((e, confined(dest, e.path), cap))
-        scan_path = dest
+    private_directory(dest)
+    previous = (read_sync_state(dest) or {}).get("files", {})
+    single = None if listing.directory else PurePosixPath(normalize(value)).name
+    wanted = []
+    for entry in listing.entries:
+        relative = entry.path if listing.directory else single
+        name = PurePosixPath(relative).name
+        cap = (
+            MAX_BYTES
+            if not listing.directory or fnmatchcase(name, pattern)
+            else SYNC_CAPS.get(name)
+        )
+        if cap is not None:
+            path = confined(dest, relative)
+            if path is None or relative == SYNC_STATE:
+                raise SourceError("invalid_hf_path")
+            private_sync_path(dest, path)
+            wanted.append((entry, relative, path, cap))
+    state = {
+        relative: {"size": entry.size, "revision": entry.revision, "stamp": None, "failed": True}
+        for entry, relative, _, _ in wanted
+    }
+    # Publish unknowns before changing files: interruption cannot resurrect stale facts.
+    write_sync_state(dest, state, single)
+    # Remove only scan-owned file kinds (including legacy mirrors without an inventory).
+    # Other user files are left alone and excluded by the authoritative inventory.
+    for folder, _, files in os.walk(dest):
+        for name in files:
+            path = Path(folder) / name
+            relative = path.relative_to(dest).as_posix()
+            if (
+                relative not in state
+                and (relative in previous or name in SYNC_NAMES or fnmatchcase(name, pattern))
+                and name != SYNC_STATE
+            ):
+                private_sync_path(dest, path)
+                path.unlink()
+
     counts = {"files": len(wanted), "downloaded": 0, "up_to_date": 0, "failed": 0}
 
-    def one(item: tuple[Entry, Path | None, int]) -> str:
-        entry, path, cap = item
-        if path is None or (entry.size or 0) > cap:
-            return "failed"  # would leave `dest`, or too large to read: never written
-        if (
-            not refresh
-            and path.is_file()
-            and (entry.size is None or path.stat().st_size == entry.size)
-        ):
-            return "up_to_date"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        partial = path.with_name(path.name + ".part")
+    def one(item: tuple[Entry, str, Path, int]) -> tuple[str, str, str | None]:
+        entry, relative, path, cap = item
+        partial = None
         try:
+            old = previous.get(relative, {})
+            stamp = sync_stamp(path)
+            if entry.size is not None and entry.size > cap:
+                raise ValueError("sync_too_large")
+            if (
+                not refresh
+                and entry.revision is not None
+                and old.get("revision") == entry.revision
+                and not old.get("failed", True)
+                and stamp is not None
+                and old.get("stamp") == stamp
+                and old.get("size") == entry.size
+            ):
+                path.chmod(0o600)
+                return relative, "up_to_date", stamp
+            # Failure must not leave an old copy usable by direct local scans.
+            path.unlink(missing_ok=True)
+            fd, name = tempfile.mkstemp(prefix=".atif-download-", suffix=".part", dir=path.parent)
+            os.close(fd)
+            partial = Path(name)
             listing.fetch(entry, partial)
+            size = partial.stat().st_size
+            if size > cap or (entry.size is not None and size != entry.size):
+                raise ValueError("sync_size_mismatch")
+            partial.chmod(0o600)
             partial.replace(path)
+            return relative, "downloaded", sync_stamp(path)
         except Exception:
-            partial.unlink(missing_ok=True)
-            return "failed"  # the scan then reports it as unreadable
-        return "downloaded"
+            path.unlink(missing_ok=True)
+            return relative, "failed", None
+        finally:
+            if partial is not None:
+                partial.unlink(missing_ok=True)
 
-    dest.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(max(1, workers)) as pool:
-        for done, outcome in enumerate(pool.map(one, wanted), 1):
+        for done, (relative, outcome, stamp) in enumerate(pool.map(one, wanted), 1):
             counts[outcome] += 1
+            state[relative]["failed"] = outcome == "failed"
+            state[relative]["stamp"] = stamp
             if progress is not None:
                 progress(done, len(wanted))
-    return scan_path, counts
+    write_sync_state(dest, state, single)
+    return (dest / single if single is not None else dest), counts
 
 
 def file_source(label: str, location: str, fs=None) -> Source:
@@ -626,7 +860,11 @@ def _either(read: Callable[[], float | None], fallback: object) -> Callable[[], 
 
 
 def resolve(
-    values: list[str], pattern: str = DEFAULT_PATTERN, fs=None, runs: list | None = None
+    values: list[str],
+    pattern: str = DEFAULT_PATTERN,
+    fs=None,
+    runs: list | None = None,
+    sync_failures: list[int] | None = None,
 ) -> list[Source]:
     """Expand each value in order (see module docstring).
 
@@ -639,6 +877,8 @@ def resolve(
     for value in values:
         value = normalize(value)
         listing = list_input(value, fs)
+        if sync_failures is not None:
+            sync_failures.append(listing.sync_failed)
         saved = saved_hub_listings(listing)
         found_runs, membership = job_folders(listing)
         if runs is not None:
@@ -657,7 +897,11 @@ def resolve(
             if (listed := membership.get(trial_folder(entry))) is not None:
                 meta = {**meta, "in_job_result": listed}
             local = listing.local_path(entry) if listing.local_path is not None else None
-            fingerprint = local_fingerprint(local) if local is not None else (lambda: None)
+            fingerprint = (
+                local_fingerprint(local)
+                if local is not None and not entry.failed
+                else (lambda: None)
+            )
             details = trial_details(listing, entry, value)
             sources.append(
                 Source(

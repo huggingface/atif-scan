@@ -77,7 +77,7 @@ def test_remote_listing_drops_entries_outside_the_root(tmp_path):
     assert counts["downloaded"] == 1 and not (tmp_path / "sync" / "evil").exists()
 
 
-def test_sync_counts_unsafe_listed_paths_as_failed(tmp_path, monkeypatch):
+def test_sync_rejects_unsafe_listed_paths(tmp_path, monkeypatch):
     outside = tmp_path / "outside.json"
     written = []
     entries = (Entry(str(outside), 3), Entry("a/../../x/trajectory.json", 3), Entry("ok.json", 3))
@@ -90,10 +90,9 @@ def test_sync_counts_unsafe_listed_paths_as_failed(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(sources, "list_input", lambda value, fs=None: listing)
     dest = tmp_path / "dest"
-    _, counts = sync_remote("hf://x/y/z", dest, pattern="*.json")
-    assert counts["failed"] == 2 and counts["downloaded"] == 1
-    assert not outside.exists() and written == [dest / "ok.json.part"]
-    assert [p.name for p in dest.iterdir()] == ["ok.json"]
+    with pytest.raises(sources.SourceError, match="invalid_hf_path"):
+        sync_remote("hf://x/y/z", dest, pattern="*.json")
+    assert not outside.exists() and not written
 
 
 # 10: listed files over their size cap are never downloaded.
@@ -111,7 +110,8 @@ def test_sync_skips_oversize_entries(tmp_path, monkeypatch):
     )
     _, counts = sync_remote(f"hf://{ROOT}", tmp_path, fs=fs)
     assert counts == {"files": 4, "downloaded": 2, "up_to_date": 0, "failed": 2}
-    assert not (tmp_path / "a").exists()
+    assert not (tmp_path / "a/trajectory.json").exists()
+    assert not (tmp_path / "a/verifier/reward.txt").exists()
 
 
 # 3: Hub trial ids and names are validated before becoming CLI args or folders.
