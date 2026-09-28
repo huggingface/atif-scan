@@ -43,6 +43,8 @@ def results(t):
         "sk-proj-abcdEFGH1234ijklMNOP",
         "git clone --token opaqueCredential98765 repo",
         "DB_PASSWORD=Opaque98765+/abc==",
+        'password: "svc_pass_2026"',
+        "CLAUDE_CODE_MESSAGING_TOKEN=0123456789abcdef0123456789abcdef",
     ],
 )
 def test_credentials_detected_and_masked(text):
@@ -74,6 +76,12 @@ def test_credentials_detected_and_masked(text):
         'token_chars = "ABCDEFGHIJ"',
         "docker run --secret=<secret-id>] secret=cfg[secret_name]",
         "askpass -password SSH_ASKPASS_REQUIRE=force",
+        # Regressions from TB4 traces: public signing keys and identifiers.
+        "GPG_KEY=0123456789ABCDEF0123456789ABCDEF01234567 HOME=/root",
+        'rate_key = "embedding_lr" if key == "embedding" else "head_lr"',
+        '<Lookup primaryKey="customer_id" displayKey="displayName" />',
+        "primary_key: 'account_ref', sort_key: 'createdAt'",
+        "token = 'identifier_tail'",
     ],
 )
 def test_nonsecrets_not_detected(text):

@@ -66,8 +66,14 @@ _NOT_SECRET_PART = re.compile(
     # `KeyError: 'x'`, `"apiKeySource": "…"`, public site/captcha/Stripe keys in page HTML.
     r"error|source|public|publishable|site|captcha|"
     # keyUsage, past_key_values, src_key_padding_mask, token_owner, secret_oid, token_chars
-    r"usage|values?|mask|padding|owner|oid|chars?)(?:_|$)"
+    r"usage|values?|mask|padding|owner|oid|chars?|"
+    # Public signing keys (`GPG_KEY=<fingerprint>` in every official python image's env)
+    # and database/dict keys: primary_key, foreign_key, sort_key, partition_key, displayKey.
+    r"gpg|pgp|fingerprint|primary|foreign|sort|partition|display|lookup)(?:_|$)"
 )
+# Identifiers, not secrets: `rate_key = "embedding_lr"`, `primaryKey="customerId"`.
+# Letters only, so `opaqueCredential98765` or `svc_pass_2026` still count.
+_IDENTIFIER = re.compile(r"[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+")
 _PLACEHOLDER = re.compile(
     r"(?i)^(?:\*+|x+|\.+|<[^>]*>|\$\{?\w+\}?|%\w+%|your[\w-]*|changeme|none|null|nil|"
     r"true|false|dummy|test\w*|example\w*|placeholder|redacted|masked|secret|password|"
@@ -96,6 +102,8 @@ def plausible_value(value: str) -> bool:
     if value[0] in "/~." or "://" in value or value.startswith(("$(", "`")):
         return False
     if any(c in value for c in "()[]{}<>\\") or value.endswith(",") or _CODE_VALUE.fullmatch(value):
+        return False
+    if _IDENTIFIER.fullmatch(value):
         return False
     return any(c.isalpha() for c in value)
 
