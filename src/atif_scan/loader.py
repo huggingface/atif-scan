@@ -304,8 +304,28 @@ ACTION_TOOLS = {
 }
 
 
-# Codex tools whose input is raw text rather than an object (the recorded call's `input`).
-FREEFORM_TOOLS = frozenset({"apply_patch"})
+# Non-JSON ("freeform") tools take raw text rather than an object: Responses custom
+# tools, Codex apply_patch, fast-agent's raw-command shell. Exporters record that text as
+# the whole `arguments` string or as a lone `input` field. It is routed by the tool's
+# kind, not by the field name; kinds without a natural channel keep it as a payload.
+RAW_INPUT_KEY = "input"
+RAW_INPUT_CHANNEL = {
+    "shell": Channel.COMMAND,
+    "read": Channel.PATH,
+    "write": Channel.PAYLOAD,
+    "web_fetch": Channel.URL,
+    "web_search": Channel.QUERY,
+}
+
+
+def raw_input(args: object) -> str | None:
+    """The raw text of a non-JSON tool call, or None for structured arguments."""
+    if isinstance(args, str):
+        return args
+    if isinstance(args, dict) and set(args) == {RAW_INPUT_KEY}:
+        value = args[RAW_INPUT_KEY]
+        return value if isinstance(value, str) else None
+    return None
 
 
 def program_calls(name: str, args: object) -> list[tuple[str, object]] | None:
@@ -393,6 +413,15 @@ PATCH_PATHS = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to):
 def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
     if tool == "inert":
         return ()
+    text = raw_input(args)
+    # Only a recognized kind says what raw text means: an unrecognized tool's raw text
+    # could be a command or a URL, so it stays unknown (string) or keyed (lone `input`).
+    if text is not None and tool in RAW_INPUT_CHANNEL:
+        channel = RAW_INPUT_CHANNEL[tool]
+        fields = [(channel, content(text))]
+        if channel == Channel.PAYLOAD and PATCH_ENVELOPE.search(text):
+            fields.extend((Channel.PATH, content(m.rstrip())) for m in PATCH_PATHS.findall(text))
+        return tuple(fields)
     if not isinstance(args, dict):
         # Unparseable arguments could hold anything: every tool-input check is unknown.
         channel = REQUIRED.get(tool, Channel.ARGUMENTS)
@@ -505,9 +534,14 @@ def parse_trace(value: object) -> Trace:
             args = call.get("arguments")
             if isinstance(args, str):
                 try:
-                    args = json.loads(args)
+                    decoded = json.loads(args)
                 except ValueError:
-                    args = None
+                    # Text that starts like JSON but doesn't parse is corrupted structured
+                    # arguments (unknown); other text is a non-JSON tool's raw input.
+                    decoded = None if args.lstrip().startswith(("{", "[")) else args
+                # Objects are structured and strings raw text; lists/numbers are not
+                # understood (argv as the whole arguments is not a recorded convention).
+                args = decoded if isinstance(decoded, (dict, str)) else None
             inner = program_calls(call["function_name"], args)
             tool = "inert" if inner is not None else normalize_tool(call["function_name"], args)
             fields = call_fields(tool, args)
@@ -524,8 +558,8 @@ def parse_trace(value: object) -> Trace:
             program.extend((call_id, call["function_name"], name, a) for name, a in inner or ())
         # Calls read from tool programs follow the recorded calls (positions stay stable).
         for k, (parent, outer, name, inner_args) in enumerate(program):
-            if isinstance(inner_args, str) and name in FREEFORM_TOOLS:
-                inner_args = {"input": inner_args}  # `tools.apply_patch("*** Begin Patch…")`
+            if isinstance(inner_args, str):
+                inner_args = {RAW_INPUT_KEY: inner_args}  # `tools.apply_patch("*** Begin Patch…")`
             tool = program_tool(name, inner_args)
             calls.append(
                 ToolCall(

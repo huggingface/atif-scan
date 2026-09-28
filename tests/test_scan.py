@@ -142,7 +142,8 @@ def test_write_payload_is_not_shell_execution():
 
 
 def test_unknown_arguments_not_negative_and_json_arguments_supported():
-    for args in ["not json", None, {"command": None}]:
+    # Corrupted structured arguments (truncated JSON) are unknown, never negative.
+    for args in ['{"command": "curl https://exa', None, {"command": None}]:
         assert (
             results(trajectory(tool="bash", args=args))["network.external_url"].status
             == Status.UNKNOWN
