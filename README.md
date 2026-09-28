@@ -259,6 +259,15 @@ list of tool names. Each argument string is routed by its key and its shape:
 | `path` | key is path-like (`path`, `file_path`, `cwd`, `source`, …), or the value looks like one (`/…`, `~/…`, `./…`, `C:\…`, `file://…`) |
 | `arguments` | anything else; still scanned by command and text-presence checks |
 
+**Non-JSON tools.** Freeform tools (Responses custom tools such as a raw-command shell or
+Codex `apply_patch`) take raw text, recorded as the whole `arguments` string or as a lone
+`input` field. That text is routed by the tool's kind, not its key: a shell tool's text is
+its `command`, a read tool's a `path`, a fetch tool's a `url`, a search tool's a `query`,
+and a write or patch tool's a `payload` (patch file paths are still read). A shell's
+leading `#` option line (fast-agent's `# @shell: {...}`) is an ordinary comment. Raw text
+sent to an unrecognized tool stays `unknown`, and a string that starts like JSON but
+doesn't parse is treated as corrupted structured arguments (`unknown`), never as raw text.
+
 A trace is `unknown` only when arguments can't be parsed, a known tool is missing its
 required input (e.g. a shell call with no command), or a check needs to know what the
 tool *does*. For example, a `query` sent to an unrecognized tool might or might not be a web search,
