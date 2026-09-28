@@ -99,6 +99,8 @@ class ToolCall:
 class Observation:
     source_call_id: str | None = field(repr=False)
     content: Content = field(repr=False)
+    # The loader inferred this link from recorded order, not an exported call ID.
+    pairing_reconstructed: bool = False
 
 
 @dataclass(frozen=True)

@@ -513,6 +513,34 @@ def _drop_rejected_unknowns(calls: list[ToolCall], observations: list[Observatio
     ]
 
 
+def _reconstruct_observation_links(
+    calls: list[ToolCall], observations: list[Observation]
+) -> list[Observation]:
+    """Infer one result per recorded call in order, retaining explicit provenance.
+
+    Only multi-call steps with unlinked results need reconstruction. Count equality
+    is necessary, not proof of order: every inferred link carries a warning. Mixed
+    explicit links must agree with the positional mapping; never silently reorder
+    or discard observations. Missing output altogether remains missing evidence.
+    `calls` excludes synthetic calls extracted from code-mode programs.
+    """
+    if len(calls) < 2 or not any(o.source_call_id is None for o in observations):
+        return observations
+    if len(calls) != len(observations):
+        raise TraceError("observation_pairing_count_mismatch")
+    ids = [c.id for c in calls]
+    if any(not cid for cid in ids) or len(set(ids)) != len(ids):
+        raise TraceError("observation_pairing_ambiguous_call_ids")
+    if any(o.source_call_id not in (None, c.id) for c, o in zip(calls, observations, strict=True)):
+        raise TraceError("observation_pairing_link_conflict")
+    return [
+        replace(o, source_call_id=c.id, pairing_reconstructed=True)
+        if o.source_call_id is None
+        else o
+        for c, o in zip(calls, observations, strict=True)
+    ]
+
+
 def parse_trace(value: object) -> Trace:
     if not isinstance(value, dict) or not isinstance(value.get("steps"), list):
         raise TraceError("invalid_steps")
@@ -608,6 +636,7 @@ def parse_trace(value: object) -> Trace:
             if source_call_id is not None and not isinstance(source_call_id, str):
                 raise TraceError("invalid_observation_call_id")
             observations.append(Observation(source_call_id, content(item.get("content"))))
+        observations = _reconstruct_observation_links(calls[: len(raw_calls)], observations)
         calls = _drop_rejected_unknowns(calls, observations)
         step_id = raw.get("step_id")
         steps.append(

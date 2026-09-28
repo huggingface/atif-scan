@@ -30,6 +30,7 @@ from .questions import BY_ID, Answers, Writer
 from .questions import tally as answer_tally
 from .report import (
     document,
+    filter_findings,
     inspection_text,
     overview,
     overview_text,
@@ -319,8 +320,9 @@ def _overview(doc: dict, args: argparse.Namespace, fmt: str) -> None:
 
 
 def _summary(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+    shown = filter_findings(doc, Severity[args.cite.upper()]) if args.cite else doc
     rolled = dict(
-        summary(doc),
+        summary(shown),
         overview=_scorecard(doc, args),
         dq_threshold=args.dq_on,
         answers=answer_tally(doc["inputs"]),
@@ -331,6 +333,8 @@ def _summary(doc: dict, args: argparse.Namespace, fmt: str) -> None:
 
 
 def _detail(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+    if args.cite:
+        doc = filter_findings(doc, Severity[args.cite.upper()], hide_empty=True)
     if fmt == "json":
         print(to_json(doc))
         return
@@ -557,8 +561,9 @@ def main(argv: list[str] | None = None) -> int:
         const="medium",
         choices=[s.name.lower() for s in Severity],
         metavar="SEVERITY",
-        help="include the trace text (masked excerpt + before/after context) behind "
-        "findings at/above SEVERITY (default: medium). Output then contains trace text.",
+        help="show finding rows at/above SEVERITY (default: medium), with masked trace "
+        "excerpts and context. Scores and coverage still use the full scan. "
+        "Output then contains trace text.",
     )
     parser.add_argument(
         "--fail-on",

@@ -67,7 +67,14 @@ class AnyOf:
         return frozenset().union(*(c.dependencies() for c in self.children))
 
     def evaluate(self, results: Mapping[str, Detection]) -> Truth:
-        values = [c.evaluate(results) for c in self.children]
+        # A check that doesn't apply to this task can't have matched: it's no evidence
+        # either way, so it doesn't make "any of" unknown (TB4 merge: a task-scoped input
+        # left every access roll-up unknown on traces with no tool calls at all).
+        values = [
+            c.evaluate(results)
+            for c in self.children
+            if not (isinstance(c, Ref) and results[c.id].status == Status.NOT_APPLICABLE)
+        ]
         return True if True in values else None if None in values else False
 
 

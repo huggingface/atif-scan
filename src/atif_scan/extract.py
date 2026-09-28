@@ -63,6 +63,8 @@ def outline(trace: Trace) -> list[str]:
             flags.append("media")
         if step.copied:
             flags.append("copied")
+        if any(o.pairing_reconstructed for o in step.observations):
+            flags.append("PAIRING-RECONSTRUCTED")
         lines.append(
             f"{sid:>5} {step.source:<6} {tools[:60]:<60} {' · '.join(sizes)}"
             + (f"  [{', '.join(flags)}]" if flags else "")
@@ -97,6 +99,7 @@ def step_record(trace: Trace, index: int, parts, limit: int, known) -> dict:
                 "call_id": o.source_call_id,
                 "text": _cut(mask(o.content.text, known), limit),
                 **({"media": True} if o.content.media else {}),
+                **({"pairing_reconstructed": True} if o.pairing_reconstructed else {}),
             }
             for o in step.observations
         ]
@@ -112,7 +115,15 @@ def render(record: dict) -> str:
         lines.append(f"--- call {call['tool']} [{call['category']}] id={call['id']}")
         lines += [f"  {k}: {v}" for k, v in call["arguments"].items()]
     for r in record.get("results", []):
-        lines.append(f"--- result for {r['call_id']}" + (" [media]" if r.get("media") else ""))
+        lines.append(
+            f"--- result for {r['call_id']}"
+            + (" [media]" if r.get("media") else "")
+            + (
+                " [WARNING: positional pairing reconstructed]"
+                if r.get("pairing_reconstructed")
+                else ""
+            )
+        )
         lines.append(r["text"])
     return "\n".join(lines)
 
@@ -127,7 +138,14 @@ def grep(trace: Trace, pattern: re.Pattern[str], known, window: int = 160) -> li
             for ch, t in c.fields
             if ch != Channel.METADATA
         ]
-        texts += [(f"result {o.source_call_id}", o.content.text) for o in step.observations]
+        texts += [
+            (
+                f"result {o.source_call_id}"
+                + (" [PAIRING-RECONSTRUCTED]" if o.pairing_reconstructed else ""),
+                o.content.text,
+            )
+            for o in step.observations
+        ]
         for part, text in texts:
             if not text:
                 continue

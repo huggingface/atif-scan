@@ -184,6 +184,8 @@ def cite(trace: Trace, at: Locator, known: frozenset[str] | None = None) -> dict
         "channel": at.channel.value,
         "source": step.source,
     }
+    if at.observation is not None and step.observations[at.observation].pairing_reconstructed:
+        result["pairing_reconstructed"] = True
     if at.channel == Channel.METADATA:
         result.update(before="", match=_metadata(step), after="")
         return result
@@ -204,9 +206,12 @@ def cite(trace: Trace, at: Locator, known: frozenset[str] | None = None) -> dict
     if at.call is not None:
         intent = step.reasoning.text or step.message.text
         call = step.calls[at.call]
-        output = next(
-            (o.content.text for o in step.observations if o.source_call_id == call.result_key), None
+        observation = next(
+            (o for o in step.observations if o.source_call_id == call.result_key), None
         )
+        output = observation.content.text if observation is not None else None
+        if observation is not None and observation.pairing_reconstructed:
+            result["pairing_reconstructed"] = True
         result["context_before"] = _tail(intent, known=known) if intent else ""
         result["context_after"] = _head(output, known=known) if output else ""
     elif at.channel == Channel.OBSERVATION and at.observation is not None:
