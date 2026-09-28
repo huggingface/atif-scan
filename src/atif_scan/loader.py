@@ -171,6 +171,17 @@ HARNESS_ALIASES = {
     "background_exec": "shell",
     "plan": "inert",
     "read_tool_result_page": "inert",
+    # Gemini CLI.
+    "replace": "write",
+    "grep_search": "search_files",
+    "list_directory": "search_files",
+    "update_topic": "inert",
+    "google_web_search": "web_search",
+    "read_background_output": "inert",
+    "list_background_processes": "inert",
+    # indusagi.
+    "ls": "search_files",
+    "find": "search_files",
     # Dext.
     "rg": "search_files",
     "fd": "search_files",
@@ -179,6 +190,11 @@ HARNESS_ALIASES = {
     "http": "web_fetch",
     "git_diff": "read",
     "git_log": "read",
+    # File inspection with arguments rather than a path (a `read` needs a path).
+    "awk": "search_files",
+    "jq": "search_files",
+    "csvkit": "search_files",
+    "todo_read": "inert",
     # Mobile Coder.
     "pdf_parse": "read",
     "todowrite": "inert",
@@ -332,6 +348,8 @@ def program_tool(name: str, args: object) -> str:
 def normalize_tool(name: str, args: object = None) -> str:
     if name == "write_stdin" and isinstance(args, Mapping) and not args.get("chars"):
         return "inert"  # Codex polling a running session: nothing was typed
+    if name == "background_exec" and isinstance(args, Mapping) and not args.get("command"):
+        return "inert"  # dtcoder waiting on/stopping/listing a background task: nothing ran
     actions = ACTION_TOOLS.get(name)
     if actions is not None:
         action = args.get("action_type") if isinstance(args, dict) else None
