@@ -135,6 +135,9 @@ RECORDING_LABELS = {
     "integrity.timestamp_smearing": "timestamps stamped at export",
     "integrity.timestamp_regression": "timestamps going backwards",
     "integrity.orphan_observation": "tool results without a matching call",
+    "integrity.observation_pairing_reconstructed": (
+        "call/result links inferred by position (not verified)"
+    ),
     "integrity.agent_only_fields": "agent-only fields on system/user steps",
     "integrity.output_token_ratio": "recorded text doesn't fit reported output tokens",
     "integrity.web_results_not_recorded": "web searches/fetches without recorded results or URLs",
@@ -285,6 +288,7 @@ def brief_text(b: dict) -> str:
             WARN
             if check
             in (
+                "integrity.observation_pairing_reconstructed",
                 "integrity.reasoning_not_recorded",
                 "integrity.tokens_exceed_recorded_calls",
                 "integrity.output_token_ratio",

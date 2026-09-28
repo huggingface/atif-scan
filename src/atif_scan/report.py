@@ -336,6 +336,10 @@ def citation_lines(c: dict) -> list[tuple[str, str | tuple[str, str, str]]]:
     after) triple, so each renderer marks the match its own way."""
     where_ = f"step {step_label(c)} · {c['channel']}" + (f" · {c['tool']}" if c.get("tool") else "")
     rows = [("@", where_)]
+    if c.get("pairing_reconstructed"):
+        rows.append(
+            ("warning", "Call/result pairing reconstructed by position; not an exported link.")
+        )
     if c.get("context_before"):
         rows.append(("before", _one_line(c["context_before"])))
     rows.append((">", (_flat(c["before"]), _flat(c["match"]), _flat(c["after"]))))

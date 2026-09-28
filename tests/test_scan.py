@@ -480,9 +480,13 @@ def test_search_each_call_needs_its_own_result(linked, content, expected):
     raw["steps"][0]["tool_calls"].append(
         {"tool_call_id": "c2", "function_name": "web_search", "arguments": {"query": "api"}}
     )
+    if not linked:
+        # Reconstruction must not guess when call/result counts differ.
+        with pytest.raises(TraceError, match="observation_pairing_count_mismatch"):
+            _surfaced(raw)
+        return
     result = _surfaced(raw).result
-    # An unlinked observation is ambiguous when there are multiple calls.
-    assert result.status == (expected if linked else Status.UNKNOWN)
+    assert result.status == expected
     assert not result.complete
 
 

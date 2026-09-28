@@ -378,12 +378,12 @@ def test_results_for_links_by_id_else_unlinked_for_a_single_call():
     t = trace(
         agent(calls=[bash("ls", "a")], results=[unlinked("x"), linked("a", "y")]),
         agent(calls=[bash("ls", "a")], results=[unlinked("x")]),
-        agent(calls=[bash("ls", "a"), bash("pwd", "b")], results=[unlinked("x")]),
     )
-    first, single, double = t.steps
+    first, single = t.steps
     assert [j for j, _ in first.results_for(first.calls[0])] == [1]
     assert [j for j, _ in single.results_for(single.calls[0])] == [0]
-    assert double.results_for(double.calls[0]) == []
+    with pytest.raises(loader.TraceError, match="observation_pairing_count_mismatch"):
+        trace(agent(calls=[bash("ls", "a"), bash("pwd", "b")], results=[unlinked("x")]))
 
 
 def test_verifier_feedback_in_the_prompt_still_matches():

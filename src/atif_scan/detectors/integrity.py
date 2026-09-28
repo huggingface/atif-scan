@@ -85,6 +85,19 @@ def orphan_observation(trace: Trace) -> Detection:
     return _result(hits, complete=True)
 
 
+def observation_pairing_reconstructed(trace: Trace) -> Detection:
+    """Warning: result links were inferred from matching counts and recorded order."""
+    return _result(
+        [
+            Locator(step.index, Channel.METADATA, observation=j)
+            for step in trace.steps
+            for j, observation in enumerate(step.observations)
+            if observation.pairing_reconstructed
+        ],
+        complete=True,
+    )
+
+
 def call_id_reused(trace: Trace) -> Detection:
     """A tool_call_id already used by an earlier (non-copied) step: an exporter defect.
     Harmless for linking (observations link within their step), but IDs aren't unique."""
@@ -308,6 +321,10 @@ def integrity_detectors() -> list[Detector]:
         TraceCheck(CheckSpec("integrity.timestamp_smearing", Severity.LOW), timestamp_smearing),
         TraceCheck(CheckSpec("integrity.step_sequence", Severity.INFO), step_sequence),
         TraceCheck(CheckSpec("integrity.orphan_observation", Severity.LOW), orphan_observation),
+        TraceCheck(
+            CheckSpec("integrity.observation_pairing_reconstructed", Severity.LOW),
+            observation_pairing_reconstructed,
+        ),
         TraceCheck(CheckSpec("integrity.agent_only_fields", Severity.LOW), agent_only_fields),
         TraceCheck(CheckSpec("integrity.call_id_reused", Severity.INFO), call_id_reused),
         TraceCheck(
