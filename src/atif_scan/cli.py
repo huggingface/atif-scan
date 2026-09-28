@@ -28,6 +28,7 @@ from .policy import load_rules
 from .questions import BY_ID, Answers, Writer
 from .report import (
     document,
+    filter_findings,
     inspection_text,
     overview,
     overview_text,
@@ -306,13 +307,16 @@ def _overview(doc: dict, args: argparse.Namespace, fmt: str) -> None:
 
 
 def _summary(doc: dict, args: argparse.Namespace, fmt: str) -> None:
-    rolled = dict(summary(doc), overview=_scorecard(doc, args))
+    shown = filter_findings(doc, Severity[args.cite.upper()]) if args.cite else doc
+    rolled = dict(summary(shown), overview=_scorecard(doc, args))
     print(to_json(rolled) if fmt == "json" else summary_text(rolled), end="")
     if fmt == "json":
         print()
 
 
 def _detail(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+    if args.cite:
+        doc = filter_findings(doc, Severity[args.cite.upper()], hide_empty=True)
     if fmt == "json":
         print(to_json(doc))
         return
@@ -520,8 +524,9 @@ def main(argv: list[str] | None = None) -> int:
         const="medium",
         choices=[s.name.lower() for s in Severity],
         metavar="SEVERITY",
-        help="include the trace text (masked excerpt + before/after context) behind "
-        "findings at/above SEVERITY (default: medium). Output then contains trace text.",
+        help="show finding rows at/above SEVERITY (default: medium), with masked trace "
+        "excerpts and context. Scores and coverage still use the full scan. "
+        "Output then contains trace text.",
     )
     parser.add_argument(
         "--fail-on",

@@ -99,6 +99,51 @@ def document(items: list[dict], scanner_version: str) -> dict:
     }
 
 
+def filter_findings(doc: dict, minimum: Severity, *, hide_empty: bool = False) -> dict:
+    """Presentation-only projection; preserve full-scan scores and unknown evidence."""
+    items = []
+    for item in doc["inputs"]:
+        assessments = [
+            a
+            for a in item["assessments"]
+            if not (
+                a["kind"] in ("detector", "rule")
+                and a["status"] == Status.MATCH
+                and RANK[a["severity"]] < minimum
+            )
+        ]
+        shown = dict(item, assessments=assessments)
+        group = sections(shown)
+        if (
+            hide_empty
+            and item.get("input_status") == "available"
+            and not item["incomplete"]
+            and not any(group[key] for key in ("findings", "expected", "unresolved"))
+        ):
+            continue
+        items.append(shown)
+    return dict(
+        doc,
+        inputs=items,
+        finding_minimum=minimum.name.lower(),
+        **({"hidden_inputs": len(doc["inputs"]) - len(items)} if hide_empty else {}),
+    )
+
+
+def filter_notice(doc: dict) -> str:
+    minimum = doc.get("finding_minimum")
+    return (
+        f"Finding rows: {minimum} and above; scores and coverage use the full scan."
+        + (
+            f" {doc['hidden_inputs']} trace(s) omitted with no findings at this level."
+            if doc.get("hidden_inputs")
+            else ""
+        )
+        if minimum
+        else ""
+    )
+
+
 def to_json(doc: dict) -> str:
     return json.dumps(doc, indent=2)
 
@@ -198,6 +243,8 @@ def footer(doc: dict) -> str:
 def to_text(doc: dict) -> str:
     """Plain-text view (no optional dependencies)."""
     lines = [f"atif-scan {doc['scanner_version']}", ""]
+    if notice := filter_notice(doc):
+        lines += [notice, ""]
     for item in doc["inputs"]:
         group, shape = sections(item), counts(item)
         lines.append(f"== {item['input_id']}: {headline(item)}")
@@ -223,6 +270,8 @@ def render_rich(doc: dict, file: IO[str] | None = None) -> None:
 
     console = Console(file=file, highlight=False)
     console.print(f"[bold]atif-scan[/] {doc['scanner_version']}")
+    if notice := filter_notice(doc):
+        console.print(Text(notice, style="dim"))
     for item in doc["inputs"]:
         group, shape = sections(item), counts(item)
         style = STYLE.get(item["severity"] or "", "green")
@@ -409,6 +458,7 @@ def summary(doc: dict) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "summary",
+        **({"finding_minimum": doc["finding_minimum"]} if "finding_minimum" in doc else {}),
         "scanner_version": doc["scanner_version"],
         "coverage": doc["coverage"],
         "highest_severity": {
@@ -425,6 +475,8 @@ def summary(doc: dict) -> dict:
 
 def summary_text(s: dict) -> str:
     lines = [f"atif-scan {s['scanner_version']} · summary", ""]
+    if notice := filter_notice(s):
+        lines += [notice, ""]
     if s.get("overview"):
         lines += [*overview_text(s["overview"]), ""]
     lines.append(
