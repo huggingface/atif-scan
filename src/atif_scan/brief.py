@@ -24,6 +24,18 @@ def _counted(item: dict) -> list[dict]:
     return [a for a in item["assessments"] if is_counted(a)]
 
 
+def _quantile(values: list[float], q: float) -> float:
+    """Linear-interpolated quantile of sorted `values` (so the median of 2 is their mean)."""
+    pos = q * (len(values) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(values) - 1)
+    return values[lo] + (values[hi] - values[lo]) * (pos - lo)
+
+
+# Below this many traces a p5–p95 band is just the extremes; show min–max instead.
+MIN_TRACES_FOR_PERCENTILES = 20
+
+
 def output_ratios(items: list[dict]) -> dict | None:
     """Run-level spread of authored characters per completion token, per basis."""
     by_basis: dict[str, list[float]] = {}
@@ -39,9 +51,11 @@ def output_ratios(items: list[dict]) -> dict | None:
         n = len(values)
         result[basis] = {
             "traces": n,
-            "median": values[n // 2],
-            "p5": values[int(0.05 * (n - 1))],
-            "p95": values[int(0.95 * (n - 1))],
+            "median": _quantile(values, 0.5),
+            "p5": _quantile(values, 0.05),
+            "p95": _quantile(values, 0.95),
+            "min": values[0],
+            "max": values[-1],
         }
     return result
 
@@ -194,11 +208,14 @@ def brief_text(b: dict) -> str:
     if ov["accuracy"]:
         acc, se = ov["accuracy"]
         succ = round(acc * (n - t["reward_unknown"]) / 100)
-        spread = f" ± {se:.1f}" if b["tasks_known"] else ""  # per-task SE needs tasks
+        # The per-task SE needs tasks, and attempts to vary: with one attempt per task
+        # it is 0 by construction (not estimable), so it is left out.
+        has_se = b["tasks_known"] and (k.get("max_trials") or 0) >= 2
+        spread = f" ± {se:.1f}" if has_se else ""
         line = f"RESULT     {acc:.1f}%{spread} ({succ}/{n - t['reward_unknown']})"
         if d and d["candidates"]:
             adj, adj_se = d["accuracy_if_disqualified"]
-            adj_spread = f" ± {adj_se:.1f}" if b["tasks_known"] else ""
+            adj_spread = f" ± {adj_se:.1f}" if has_se else ""
             line += (
                 f"  →  {adj:.1f}%{adj_spread} if {d['candidates']} DQ candidate(s) are disqualified"
             )
@@ -325,10 +342,16 @@ def brief_text(b: dict) -> str:
     if first:
         lines.append(f"TRACES     {OK} no recording defects detected")
     for basis, r in (b.get("output_ratio") or {}).items():
+        k = r["traces"]
+        if k == 1:
+            spread = ""
+        elif k < MIN_TRACES_FOR_PERCENTILES:
+            spread = f" (range {r['min']:.2f}–{r['max']:.2f})"
+        else:
+            spread = f" (p5–p95 {r['p5']:.2f}–{r['p95']:.2f})"
         lines.append(
-            f"{'':<10} {INFO} chars/output token: median {r['median']:.2f}"
-            f" (p5–p95 {r['p5']:.2f}–{r['p95']:.2f}) over {r['traces']} traces,"
-            f" {RATIO_BASIS[basis]}"
+            f"{'':<10} {INFO} chars/output token: median {r['median']:.2f}{spread}"
+            f" over {k} trace{'' if k == 1 else 's'}, {RATIO_BASIS[basis]}"
         )
     if d and d["rewarded_not_cleared"]:
         why = " · ".join(f"{reason} {count}" for reason, count in d["not_cleared_reasons"].items())
