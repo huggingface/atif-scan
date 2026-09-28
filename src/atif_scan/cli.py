@@ -22,7 +22,7 @@ from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
 from .loader import TraceError
 from .policy import load_rules
-from .questions import QUESTIONS, Answers, Writer
+from .questions import BY_ID, Answers, Writer
 from .report import (
     document,
     inspection_text,
@@ -480,8 +480,8 @@ def main(argv: list[str] | None = None) -> int:
         "--question",
         action="append",
         default=[],
-        choices=[q.id for q in QUESTIONS],
-        help="only these questions (repeatable; default: all)",
+        choices=list(BY_ID),
+        help="only these questions (repeatable; default: all except opt-in hack_hunt)",
     )
     parser.add_argument(
         "--answers",
