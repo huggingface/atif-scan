@@ -12,6 +12,7 @@ import tempfile
 from importlib.metadata import version
 from pathlib import Path
 
+from .access import access_rules
 from .brief import brief, brief_text, print_brief
 from .cache import ResultCache, checks_signature
 from .checks import Context, Severity, Status, identifier
@@ -262,7 +263,7 @@ def outcome(item: dict, threshold: Severity | None) -> tuple[bool, bool]:
 
 
 def load_checks(args: argparse.Namespace, records: list | None = None) -> list:
-    checks = builtin_detectors()
+    checks = [*builtin_detectors(), *access_rules()]
     args.packs_loaded = []
     if args.packs == "auto" and records is not None:
         # The recorded task (Hub, result.json) when it wasn't given: small capped reads,
