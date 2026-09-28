@@ -89,6 +89,13 @@ ADJUSTMENTS (estimates for review, not verdicts)
   against uncached, cached and output tokens over its priced trials. If no trial
   recorded a cost at all, the brief says so and shows the token totals; `--price U,C,O`
   ($ per million uncached-input, cached-input, output tokens) then gives an estimate.
+- **Work without usage** is flagged, not dropped. A trial whose trajectory records LLM or
+  tool calls but that reports neither tokens nor cost (typically an agent process that
+  died before writing usage) is missing from the reported total. The COST line shows how
+  many such trials there are, their calls and time, how many errored or were rewarded,
+  and a rough estimate: cost ≈ a·calls + b·calls² fitted on the run's priced,
+  uncompacted trials (each call resends a growing context). Per trial that's rough, but
+  in aggregate it's close to unbiased. A rewarded trial here counts in RESULT with no cost.
 - **Missing activity** is estimated for trials with compacted history: token totals ÷
   the typical prompt tokens per call of uncompacted trials, as a median–p90 range. On
   three sessions whose full history was later recovered, the estimate matched to within

@@ -12,6 +12,12 @@ Both are fitted on the run's own data and stay estimates; the brief labels them 
   p90 references give a range (validated against three Grok Build sessions whose full
   history was recoverable: recorded share 26.5%/1.6%/1.3% vs estimated 21-27%/0.7-0.9%/
   0.7-0.9%).
+- unmetered work: trials that recorded agent work (LLM or tool calls) but report neither
+  tokens nor cost, e.g. because the agent process died before writing usage. The run's
+  total cost silently omits them, so they are counted and their cost is estimated from
+  recorded LLM calls: cost ~ a*calls + b*calls^2 over the run's priced, uncompacted
+  trials (each call resends a growing context). That is rough per trial but close to
+  unbiased in aggregate; a single $/call ratio if the fit is ill-posed.
 """
 
 from __future__ import annotations
@@ -107,6 +113,63 @@ def cost_estimate(items: list[dict], price: tuple[float, float, float] | None = 
     errors = [abs(predict(row) - t) for row, t in priced]
     result["median_abs_error_usd"] = round(_median(errors), 3)
     result["estimate_usd"] = round(sum(max(predict(row), 0.0) for row in unpriced), 2)
+    return result
+
+
+def _work(item: dict) -> bool:
+    return bool(item.get("llm_calls") or item.get("tool_calls"))
+
+
+def unmetered_work(items: list[dict]) -> dict:
+    """Trials with recorded agent work but no usage (tokens) and no cost at all."""
+    rows = [
+        i
+        for i in items
+        if _work(i)
+        and not (i.get("input_tokens") or i.get("output_tokens"))
+        and i.get("cost_usd") is None
+    ]
+    result: dict = {
+        "trials": len(rows),
+        "ids": [i["input_id"] for i in rows],
+        "llm_calls": sum(i.get("llm_calls") or 0 for i in rows),
+        "tool_calls": sum(i.get("tool_calls") or 0 for i in rows),
+        "duration_sec": round(sum(i.get("duration_sec") or 0 for i in rows), 1),
+        "rewarded": sum(1 for i in rows if (i.get("reward") or 0) > 0),
+        "errored": sum(1 for i in rows if i.get("error_type")),
+        "estimate_usd": None,
+        "method": None,
+        "median_abs_error_usd": None,
+    }
+    if not rows:
+        return result
+    refs = [
+        (float(i["llm_calls"]), float(i["cost_usd"]))
+        for i in items
+        if i.get("cost_usd") and (i.get("llm_calls") or 0) >= 5 and not i.get("compacted")
+    ]
+    if len(refs) < MIN_PRICED:
+        result["method"] = f"not estimated: fewer than {MIN_PRICED} priced trials with LLM calls"
+        return result
+    xs = [[c / 100, (c / 100) ** 2] for c, _ in refs]  # per 100 calls: well-conditioned
+    xtx = [[sum(r[a] * r[b] for r in xs) for b in range(2)] for a in range(2)]
+    xty = [sum(r[a] * y for r, (_, y) in zip(xs, refs, strict=True)) for a in range(2)]
+    coef = _solve(xtx, xty)
+    if coef is not None and all(k >= 0 for k in coef):
+
+        def predict(calls: float) -> float:
+            return coef[0] * calls / 100 + coef[1] * (calls / 100) ** 2
+
+        result["method"] = f"cost ~ LLM calls + calls² fit on {len(refs)} priced trials"
+    else:
+        rate = sum(y for _, y in refs) / sum(c for c, _ in refs)
+
+        def predict(calls: float) -> float:
+            return rate * calls
+
+        result["method"] = f"average $/LLM call over {len(refs)} priced trials"
+    result["median_abs_error_usd"] = round(_median([abs(predict(c) - y) for c, y in refs]), 3)
+    result["estimate_usd"] = round(sum(predict(float(i.get("llm_calls") or 0)) for i in rows), 2)
     return result
 
 

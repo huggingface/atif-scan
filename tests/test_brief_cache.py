@@ -385,3 +385,69 @@ def test_brief_says_why_trials_cannot_be_cleared_and_which_errors_occurred():
         in text
     )
     assert "2 errored (50.0%): UnknownApiError 1, OutputTokenExceededError 1" in text
+
+
+def _worked(i, calls, cost=None, tokens=True, reward=0.0, error_type=None, tools=None):
+    return {
+        "input_id": f"w{i}",
+        "llm_calls": calls,
+        "tool_calls": calls // 2 if tools is None else tools,
+        "duration_sec": 60.0,
+        "reward": reward,
+        "error_type": error_type,
+        "compacted": False,
+        "input_tokens": 1000 * calls if tokens else None,
+        "output_tokens": 10 * calls if tokens else None,
+        "cache_tokens": None,
+        "cost_usd": cost,
+    }
+
+
+def test_work_without_usage_is_flagged_and_estimated_not_silently_dropped():
+    """Regression: an agent that died before writing usage did real (even rewarded) work,
+    but the run total omitted it and the brief said "every trial priced"."""
+    from atif_scan.estimates import unmetered_work
+
+    a, b = 0.01, 0.0002  # true cost = a*calls + b*calls^2
+    priced_ = [_worked(i, c, cost=a * c + b * c * c) for i, c in enumerate(range(10, 70, 2))]
+    died = [
+        _worked(100, 200, tokens=False, error_type="NonZeroAgentExitCodeError"),
+        _worked(101, 40, tokens=False, reward=1.0, error_type="NonZeroAgentExitCodeError"),
+    ]
+    idle = _worked(102, 0, tokens=False, tools=0)  # nothing ran: not unmetered work
+    hub_cost_only = _worked(103, 30, tokens=False, cost=0.5)  # cost known: not unmetered
+
+    um = unmetered_work(priced_ + died + [idle, hub_cost_only])
+    assert um["ids"] == ["w100", "w101"]
+    assert (um["llm_calls"], um["tool_calls"], um["rewarded"], um["errored"]) == (240, 120, 1, 2)
+    truth = sum(a * c + b * c * c for c in (200, 40))
+    assert um["estimate_usd"] == pytest.approx(truth, rel=0.02)
+    # Too few references: counted, but not guessed.
+    few = unmetered_work(priced_[:5] + died)
+    assert few["trials"] == 2 and few["estimate_usd"] is None and "fewer than" in few["method"]
+
+
+def test_brief_warns_about_work_without_usage():
+    from atif_scan.brief import brief, brief_text
+
+    def item(i, calls, cost, tokens=True, reward=1.0, error_type=None):
+        it = _item(i, "m", reward, error_type=error_type)
+        it.update(_worked(i, calls, cost, tokens, reward, error_type))
+        it["input_id"] = f"t{i}"
+        return it
+
+    items = [item(i, 20 + i, 0.1 + 0.01 * i) for i in range(25)]
+    items.append(item(90, 120, None, tokens=False, error_type="NonZeroAgentExitCodeError"))
+    text = brief_text(
+        brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": []})
+    )
+    assert "every trial priced" not in text
+    assert "every trial with usage priced" in text
+    assert "⚠ 1 trial(s) did work but report no usage or cost (1 errored, 1 rewarded)" in text
+    assert "120 LLM calls" in text and "not in the total" in text
+    assert "1 rewarded, counted in RESULT without a cost" in text
+    # A fully metered run keeps the plain "every trial priced".
+    clean = brief_text(
+        brief({"scanner_version": "dev", "inputs": items[:-1], "coverage": {}, "runs": []})
+    )
+    assert "every trial priced" in clean and "did work" not in clean

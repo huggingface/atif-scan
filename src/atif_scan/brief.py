@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .estimates import cost_estimate, missing_activity
+from .estimates import cost_estimate, missing_activity, unmetered_work
 from .harbor_files import override_kind
 from .packs import BUNDLED
 from .questions import tally
@@ -95,6 +95,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "agents": dict(agents.most_common()),
         "overview": ov,
         "cost_estimate": cost_estimate(items, price),
+        "unmetered_work": unmetered_work(items),
         "tasks_known": sum(1 for i in items if i.get("task")),
         "missing_activity": missing_activity(items),
         "output_ratio": output_ratios(items),
@@ -129,7 +130,7 @@ RECORDING_LABELS = {
     "integrity.tool_results_not_recorded": "tool results exported as status words only",
     "integrity.actions_not_recorded": "work claimed but no tool calls recorded",
     "integrity.trace_head_missing": "trace starts mid-session (no prompt recorded)",
-    "integrity.timestamp_missing": "steps without timestamps",
+    "integrity.timestamp_missing": "traces with untimestamped agent steps",
     "integrity.tokens_exceed_recorded_calls": "token totals exceed what recorded calls could use",
     "integrity.cost_missing": "tokens recorded but no cost (anywhere)",
     "integrity.timestamp_smearing": "timestamps stamped at export",
@@ -149,6 +150,7 @@ RATIO_BASIS = {
 
 def brief_text(b: dict) -> str:
     ov, ce, ma = b["overview"], b["cost_estimate"], b["missing_activity"]
+    um = b.get("unmetered_work") or {"trials": 0}
     t, k, d, c = ov["trials"], ov["tasks"], ov["disqualification"], ov["cost"]
     n = t["present"]
     lines = [f"atif-scan {b['scanner_version']} · run integrity", ""]
@@ -336,11 +338,35 @@ def brief_text(b: dict) -> str:
             line += f" → est. +${ce['estimate_usd']:,.2f} (≈ ${corrected:,.2f}, +{share:.1f}%)"
         else:
             line += f" ({ce['method']})"
+    elif um["trials"]:
+        line += f" · {OK} every trial with usage priced"
     else:
         line += f" · {OK} every trial priced"
-    if ce["no_usage"] and ce["no_usage"] < n:
-        line += f" · {ce['no_usage']} without usage data"
+    idle = ce["no_usage"] - um["trials"]  # no usage and no recorded work either
+    if idle and ce["no_usage"] < n:
+        line += f" · {idle} without usage data (no recorded work)"
     lines.append(line)
+    if um["trials"]:
+        # Real work the reported total silently leaves out.
+        why = ", ".join(
+            f"{v} {k}" for k, v in (("errored", um["errored"]), ("rewarded", um["rewarded"])) if v
+        )
+        line = (
+            f"{'':<10} {WARN} {um['trials']} trial(s) did work but report no usage or cost"
+            + (f" ({why})" if why else "")
+            + f": {um['llm_calls']:,} LLM calls, {um['tool_calls']:,} tool calls,"
+            f" {um['duration_sec'] / 60:,.1f} min"
+        )
+        if um["estimate_usd"] is not None:
+            total = c["total_usd"] + um["estimate_usd"]
+            share = 100 * um["estimate_usd"] / total if total else 0
+            line += (
+                f" → est. +${um['estimate_usd']:,.2f} (≈ ${total:,.2f}, +{share:.1f}%)"
+                " not in the total"
+            )
+        else:
+            line += f" · not in the total ({um['method']})"
+        lines.append(line)
 
     # FINDINGS
     f = b["findings"]
@@ -420,6 +446,21 @@ def brief_text(b: dict) -> str:
                 f", median error ${ce['median_abs_error_usd']})"
                 if ce["median_abs_error_usd"] is not None
                 else ")"
+            )
+        )
+    if um["trials"]:
+        adj.append(
+            f"cost: {um['trials']} trial(s) with {um['llm_calls']:,} LLM calls report no usage"
+            + (
+                f" → est. +${um['estimate_usd']:,.2f} (rough: {um['method']},"
+                f" median error ${um['median_abs_error_usd']}/trial)"
+                if um["estimate_usd"] is not None
+                else f" ({um['method']})"
+            )
+            + (
+                f"; {um['rewarded']} rewarded, counted in RESULT without a cost"
+                if um["rewarded"]
+                else ""
             )
         )
     if ma["missing_calls_pct"] and ma["missing_calls_pct"][1] >= 1:
