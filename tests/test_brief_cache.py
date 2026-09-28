@@ -528,3 +528,52 @@ def test_step_model_names_are_parsed_label_safe(tmp_path, capsys):
     main([str(tmp_path / "run"), "--format", "json"])
     item = json.loads(capsys.readouterr().out)["inputs"][0]
     assert item["step_models"] == {"claude-main-1": 2, "claude-other-2": 1}
+
+
+def test_header_model_hides_a_fallback_end_to_end(tmp_path, capsys):
+    """Regression (TB4 Claude Code / Fable 5.1 row): every trace header named the configured
+    model while Claude Code fell back to another one, so a header-only check saw 12 of 50
+    such trials. From trajectory files through the loader to the brief's model line."""
+    run = tmp_path / "run"
+
+    def trial(name, step_models, reward):
+        folder = run / name
+        (folder / "agent").mkdir(parents=True)
+        (folder / "verifier").mkdir()
+        (folder / "verifier" / "reward.txt").write_text(str(reward))
+        steps = [{"step_id": 1, "source": "user", "message": "do the task"}]
+        for n, model in enumerate(step_models, 2):
+            message = "working"
+            if n > 2 and model != step_models[n - 3]:  # Claude Code's recorded switch
+                message = json.dumps(
+                    {"type": "fallback", "from": {"model": "claude-main-1"}, "to": {"model": model}}
+                )
+            steps.append({"step_id": n, "source": "agent", "message": message, "model_name": model})
+        (folder / "agent" / "trajectory.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "ATIF-v1.2",
+                    "session_id": name,
+                    # The header keeps the configured model whatever the steps ran.
+                    "agent": {"name": "claude-code", "version": "1", "model_name": "claude-main-1"},
+                    "steps": steps,
+                }
+            )
+        )
+
+    for i in range(4):
+        trial(f"task-a__main{i}", ["claude-main-1"] * 3, 1)
+    trial("task-b__fellback", ["claude-other-2"] * 3, 1)  # fell back before its first step
+    trial("task-c__switched", ["claude-main-1", "claude-other-2", "claude-other-2"], 1)
+
+    main([str(run), "--brief", "--format", "json", "--no-cache", "--packs", "none"])
+    mm = json.loads(capsys.readouterr().out)["overview"]["model_mismatch"]
+
+    def trials(ids):  # labels are relative paths (`task-b__fellback/agent`)
+        return sorted(i.split("/")[0] for i in ids)
+
+    assert mm["expected"] == "claude-main-1"
+    assert trials(mm["trial_ids"]) == ["task-b__fellback", "task-c__switched"]
+    assert trials(mm["switched_ids"]) == ["task-c__switched"]
+    assert mm["other_models"] == {"claude-other-2": 2}
+    assert trials(mm["rewarded_ids"]) == ["task-b__fellback", "task-c__switched"]
