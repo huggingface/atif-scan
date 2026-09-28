@@ -82,6 +82,9 @@ def test_credentials_detected_and_masked(text):
         '<Lookup primaryKey="customer_id" displayKey="displayName" />',
         "primary_key: 'account_ref', sort_key: 'createdAt'",
         "token = 'identifier_tail'",
+        'STATE_KEY = "cutover:state" INFLIGHT_KEY = "app:inflight_writes"',
+        'STORE_KEY = "__store_marker__"',
+        "key_r = 'model.layers.0.mlp.weight'",
     ],
 )
 def test_nonsecrets_not_detected(text):

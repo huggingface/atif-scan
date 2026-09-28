@@ -71,9 +71,14 @@ _NOT_SECRET_PART = re.compile(
     # and database/dict keys: primary_key, foreign_key, sort_key, partition_key, displayKey.
     r"gpg|pgp|fingerprint|primary|foreign|sort|partition|display|lookup)(?:_|$)"
 )
-# Identifiers, not secrets: `rate_key = "embedding_lr"`, `primaryKey="customerId"`.
-# Letters only, so `opaqueCredential98765` or `svc_pass_2026` still count.
-_IDENTIFIER = re.compile(r"[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+")
+# Identifiers, not secrets: `rate_key = "embedding_lr"`, `primaryKey="customerId"`, Redis
+# key names (`STATE_KEY = "cutover:state"`), dunder markers, parameter paths
+# (`layers.0.mlp.weight`). Letters only (bar numeric path segments), so
+# `opaqueCredential98765` or `svc_pass_2026` still count.
+_IDENTIFIER = re.compile(
+    r"[a-z]+(?:_[a-z]+)+|[a-z]+(?:[A-Z][a-z]+)+|[a-z_]+(?::[a-z_]+)+|__[a-z_]+__|"
+    r"[a-z_]+(?:\.(?:[a-z_]+|\d+))*\.\d+(?:\.(?:[a-z_]+|\d+))+"
+)
 _PLACEHOLDER = re.compile(
     r"(?i)^(?:\*+|x+|\.+|<[^>]*>|\$\{?\w+\}?|%\w+%|your[\w-]*|changeme|none|null|nil|"
     r"true|false|dummy|test\w*|example\w*|placeholder|redacted|masked|secret|password|"
