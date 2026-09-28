@@ -290,11 +290,28 @@ def _reduced(show: Mapping, rows: list[Mapping]) -> dict:
 
 
 def save_listing(dest: Path, job: str, show: Mapping | None, rows: list[Mapping]) -> None:
-    """Atomically write the reduced listing into the job's sync folder (best effort)."""
+    """Atomically write the reduced listing into the job's sync folder (best effort).
+
+    Rows already saved for the same job are kept (these rows win by trial id): several
+    leaderboard rows can share one job, and each row sync lists only its own trials.
+    """
     try:
         dest.mkdir(parents=True, exist_ok=True)
+        ids = {str(r.get("id")) for r in rows}
+        try:
+            old = json.loads((dest / SAVED_LISTING).read_text())
+            kept = [
+                r
+                for r in old["rows"]
+                if str(old["job"]).lower() == job.lower()
+                and isinstance(r, Mapping)
+                and valid_row(r)
+                and str(r["id"]) not in ids
+            ]
+        except (OSError, KeyError, TypeError, ValueError, AttributeError, RecursionError):
+            kept = []
         tmp = dest / f".{SAVED_LISTING}.{os.getpid()}.tmp"
-        tmp.write_text(json.dumps({"version": 1, "job": job, **_reduced(show or {}, rows)}))
+        tmp.write_text(json.dumps({"version": 1, "job": job, **_reduced(show or {}, kept + rows)}))
         tmp.replace(dest / SAVED_LISTING)
     except (OSError, TypeError, ValueError):
         pass  # a missing sidecar only means a later local rescan lacks Hub facts

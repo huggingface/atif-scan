@@ -508,3 +508,36 @@ def test_local_copy_of_a_hub_job_keeps_hub_facts(harbor, tmp_path, capsys):
         assert main([str(sync / "harbor" / JOB), "--format", "json"]) in (0, 1)
         doc = json.loads(capsys.readouterr().out)
         assert all(i["reward"] is None for i in doc["inputs"])
+
+
+def test_row_syncs_sharing_a_job_keep_each_others_listing_rows(tmp_path):
+    """Several leaderboard rows can share one job, and each row sync lists only its own
+    trials. The sidecar used to be replaced by the last row's rows, so a later scan of
+    the job folder lost the other rows' tasks and every task-scoped check went unknown
+    (TB2.1: 1,779 of 2,219 trials of one combined job)."""
+    from atif_scan.harbor_hub import SAVED_LISTING, save_listing, saved_listing
+
+    def row(n: int, task: str) -> dict:
+        tid = f"00000000-0000-4000-8000-{n:012d}"
+        return {"id": tid, "name": f"{task}__t{n}", "task_name": task, "reward": 1.0}
+
+    folder = tmp_path / JOB
+    save_listing(folder, JOB, {}, [row(1, "task-a"), row(2, "task-a")])
+    save_listing(folder, JOB, {}, [row(2, "task-b"), row(3, "task-c")])  # row 2 updated
+    _, trials = saved_listing((folder / SAVED_LISTING).read_bytes())
+    assert {k: t["task"] for k, t in trials.items()} == {
+        "task-a__t1": "task-a",
+        "task-b__t2": "task-b",
+        "task-c__t3": "task-c",
+    }
+
+    # A sidecar for another job is replaced, not merged; stray keys never survive.
+    saved = json.loads((folder / SAVED_LISTING).read_text())
+    saved["rows"][0]["env"] = "sk-proj-secret1234567890"
+    (folder / SAVED_LISTING).write_text(json.dumps(saved))
+    save_listing(folder, JOB, {}, [row(4, "task-d")])
+    assert "sk-proj" not in (folder / SAVED_LISTING).read_text()
+    other = "11111111-1111-4111-8111-111111111111"
+    save_listing(folder, other, {}, [row(5, "task-e")])
+    _, trials = saved_listing((folder / SAVED_LISTING).read_bytes())
+    assert list(trials) == ["task-e__t5"]
