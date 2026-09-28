@@ -29,7 +29,7 @@ PYTHONPATH=examples uv run atif-scan examples/synthetic.json \
 
 Remote inputs (`hf://`, huggingface.co URLs, `harbor://jobs/…`) are **synced by default**.
 Only the files the scan needs are downloaded (matching trajectories plus `result.json`,
-`config.json`, reward files and `exception.txt`), in parallel, and the local copy is
+`config.json`, reward files, `exception.txt` and a `trials.jsonl` run ledger), in parallel, and the local copy is
 scanned. Later runs fetch only files that are new or changed size, and per-trace results
 are cached, so a rescan takes seconds. On a terminal a status line shows each stage
 (listing the row/job, `downloading trajectories 120/445 · 3 failed`, `scanning n/N`),
@@ -52,6 +52,14 @@ atif-scan ~/.cache/atif-scan/hf/buckets/org/runs/job           # or scan the cop
 Synced Harbor Hub jobs also keep `hub-listing.json`: the Hub's per-trial facts (task,
 reward, error, cost, tokens; override settings but no other config) so a later scan of the
 folder itself reports the same rewards and DQ candidates. It is re-validated on every read.
+
+Exported runs without Harbor's per-trial files can carry a `trials.jsonl` ledger next to
+their trial folders (or their `trials/` folder): one `schema_version: 1` object per trial
+with `trial_name` (the folder), `task_name`, `reward`, `error_type`, `cost_usd`,
+`input_tokens` (incl. cached), `cached_input_tokens`, `output_tokens` and
+`started_at`/`finished_at`. Those are read as recorded run facts, so tasks and rewards are
+known without `--task-from`. Malformed rows are skipped and a trial listed twice is left
+unknown. A saved Hub listing in the same folder wins.
 
 The copies are real traces: delete the sync directory when you're done with a run.
 

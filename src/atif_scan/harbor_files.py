@@ -175,6 +175,55 @@ def trial_result(data: bytes | None) -> dict:
     return {k: v for k, v in meta.items() if v is not None}
 
 
+TRIAL_LEDGER = "trials.jsonl"
+LEDGER_BYTES = 16 * 1024 * 1024  # ~500 bytes per trial
+LEDGER_TRIAL = re.compile(r"[A-Za-z0-9][\w.-]{0,127}")
+
+
+def trial_ledger(data: bytes | None) -> dict[str, dict]:
+    """{trial folder: allowlisted facts} from a run's `trials.jsonl` ledger.
+
+    One JSON object per trial (schema_version 1): `trial_name` (the trial folder),
+    `task_name`, `reward`, `error_type`, `cost_usd`, `input_tokens` (incl. cached),
+    `cached_input_tokens`, `output_tokens`, `started_at`/`finished_at`. These are
+    recorded run facts, like a trial's result.json. Malformed lines are skipped; a
+    trial listed more than once is ambiguous and dropped (unknown, not a guess).
+    """
+    if not data or len(data) > LEDGER_BYTES:
+        return {}
+    found: dict[str, dict] = {}
+    repeated: set[str] = set()
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeError:
+        return {}
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(row, dict) or row.get("schema_version") != 1:
+            continue
+        name = row.get("trial_name")
+        if not isinstance(name, str) or not LEDGER_TRIAL.fullmatch(name):
+            continue
+        if name in found:
+            repeated.add(name)
+        error = row.get("error_type")
+        meta = {
+            "task": _label(str(row.get("task_name") or "").rsplit("/", 1)[-1]),
+            "reward": number(row.get("reward")),
+            "error_type": (_label(error) or "other") if error else None,
+            "cost_usd": number(row.get("cost_usd"), 0),
+            "input_tokens": count(row.get("input_tokens")),
+            "cache_tokens": count(row.get("cached_input_tokens")),
+            "output_tokens": count(row.get("output_tokens")),
+            "duration_sec": duration(row),
+        }
+        found[name] = {k: v for k, v in meta.items() if v is not None}
+    return {k: v for k, v in found.items() if k not in repeated}
+
+
 def configured_agents(cfg: dict) -> int | None:
     """How many agent/model entries a job config plans (a comparison job runs several,
     so several models are expected rather than a substitution)."""

@@ -30,7 +30,15 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 from .checks import identifier
-from .harbor_files import job_listed_trials, job_meta, number, trial_result
+from .harbor_files import (
+    LEDGER_BYTES,
+    TRIAL_LEDGER,
+    job_listed_trials,
+    job_meta,
+    number,
+    trial_ledger,
+    trial_result,
+)
 from .loader import MAX_BYTES, TraceError, load_bytes, load_trace
 from .model import Trace
 
@@ -457,20 +465,29 @@ LISTING_BYTES = 16 * 1024 * 1024  # a saved Hub listing: ~500 bytes per trial
 
 
 def saved_hub_listings(listing: Listing) -> dict[str, tuple[dict | None, dict[str, dict]]]:
-    """Saved Harbor Hub listings (harbor_hub.save_listing) by the folder holding them:
-    (run facts, {trial folder: trial facts}), so a scan of a synced job keeps its Hub
-    facts (reward, task, error, cost)."""
+    """Saved Harbor Hub listings (harbor_hub.save_listing) and `trials.jsonl` run ledgers
+    by the folder holding them: (run facts, {trial folder: trial facts}), so a scan of a
+    synced job keeps its recorded facts (reward, task, error, cost). A ledger lists the
+    trials of the folder it sits in or of its `trials/` subfolder (see hub_trial)."""
     from .harbor_hub import SAVED_LISTING, saved_listing  # harbor_hub imports this module
 
     if not listing.directory or listing.reader is None:
         return {}
     out = {}
     for path in sorted(listing.paths):
-        if PurePosixPath(path).name == SAVED_LISTING:
+        if PurePosixPath(path).name == TRIAL_LEDGER:
             try:
-                out[str(PurePosixPath(path).parent)] = saved_listing(
-                    listing.reader(path, LISTING_BYTES)
-                )
+                trials = trial_ledger(listing.reader(path, LEDGER_BYTES))
+            except Exception:
+                continue  # unreadable: the trials simply lack ledger facts
+            folder = str(PurePosixPath(path).parent)
+            run, known = out.get(folder, (None, {}))
+            out[folder] = (run, {**trials, **known})  # a saved Hub listing wins
+        elif PurePosixPath(path).name == SAVED_LISTING:
+            try:
+                folder = str(PurePosixPath(path).parent)
+                run, trials = saved_listing(listing.reader(path, LISTING_BYTES))
+                out[folder] = (run, {**out.get(folder, (None, {}))[1], **trials})
             except Exception:
                 continue  # unreadable: the trials simply lack Hub facts
     return out
@@ -505,6 +522,7 @@ SYNC_CAPS = {
     "reward.txt": REWARD_BYTES,
     "reward.json": REWARD_BYTES,
     "exception.txt": RESULT_BYTES,
+    TRIAL_LEDGER: LEDGER_BYTES,
 }
 SYNC_NAMES = frozenset(SYNC_CAPS)
 
