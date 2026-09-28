@@ -14,9 +14,10 @@ from types import MappingProxyType
 from . import jslit
 from .model import Channel, Content, Observation, Step, ToolCall, Trace, Usage
 
-# TB4 leaderboard traces reach ~180 MB (images, huge tool outputs); parsing needs several
-# times the file size in memory, so larger files are rejected (reported, never cleared).
-MAX_BYTES = 128 * 1024 * 1024
+# TB4 leaderboard traces reach ~192 MiB (legacy-utility-triage: ~900 base64 screenshots).
+# That one loads in ~1 s and peaks at ~790 MiB RSS, so 256 MiB covers every TB4 trace with
+# headroom; larger files are rejected (reported, never cleared).
+MAX_BYTES = 256 * 1024 * 1024
 
 
 class TraceError(ValueError):
