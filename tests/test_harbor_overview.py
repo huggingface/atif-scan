@@ -278,7 +278,7 @@ def test_local_traces_use_final_metrics_and_exception_marker(tmp_path, capsys):
 
 # --- leaderboard rows ---------------------------------------------------------------------
 
-ROW = "1fe87c62-99ed-477b-9f6c-23ffbabc49f6"
+ROW = "0000feed-0000-4000-8000-00000000c0de"
 JOB2 = "2c89a14f-d14a-4ea8-ad8a-d08d90c67a5d"
 
 ROW_FAKE = textwrap.dedent(
@@ -374,7 +374,7 @@ def test_leaderboard_row_scans_exactly_its_trials(row_harbor, capsys, value):
 def test_leaderboard_row_brief_compares_with_reported(row_harbor, capsys):
     main([f"harbor://rows/{ROW}", "--format", "text"])
     out = capsys.readouterr().out
-    assert "leaderboard row #9 · row 1fe87c62" in out
+    assert "leaderboard row #9 · row 0000feed" in out
     assert "leaderboard  Demo CLI / Model X (high)" in out
     assert "REPORTED   50.0% after the leaderboard's reward-hack DQs (20.0% of trials)" in out
     assert "⚠ 5 trials" in out  # the row reports 5, the scan found 4
