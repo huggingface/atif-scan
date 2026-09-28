@@ -9,7 +9,6 @@ import io
 import json
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -172,20 +171,28 @@ def test_row_trial_ids_must_be_uuids():
 # 4: listing lookups are linear, not quadratic.
 
 
-def test_many_trials_resolve_and_inspect_quickly():
-    files = {}
-    for i in range(3000):
-        trial = f"{ROOT}/t{i:04d}"
-        files[f"{trial}/agent/trajectory.json"] = b"{}"
-        files[f"{trial}/result.json"] = b"{}"
-        files[f"{trial}/config.json"] = b"{}"
-        files[f"{trial}/verifier/reward.txt"] = b"1"
-    files[f"{ROOT}/config.json"] = files[f"{ROOT}/result.json"] = b"{}"
-    fs = FS(files)
-    start = time.perf_counter()
+def test_many_trials_resolve_and_inspect_quickly(linear):
+    def job(n):
+        files = {}
+        for i in range(n):
+            trial = f"{ROOT}/t{i:04d}"
+            files[f"{trial}/agent/trajectory.json"] = b"{}"
+            files[f"{trial}/result.json"] = b"{}"
+            files[f"{trial}/config.json"] = b"{}"
+            files[f"{trial}/verifier/reward.txt"] = b"1"
+        files[f"{ROOT}/config.json"] = files[f"{ROOT}/result.json"] = b"{}"
+        return FS(files)
+
+    jobs = {n: job(n) for n in (750, 3000)}
+
+    def scan(n):
+        resolve([f"hf://{ROOT}"], fs=jobs[n])
+        layout.inspect_listing(list_input(f"hf://{ROOT}", jobs[n]), "trajectory.json", 1)
+
+    linear(scan, 750)
+    fs = jobs[3000]
     found = resolve([f"hf://{ROOT}"], fs=fs)
     card = layout.inspect_listing(list_input(f"hf://{ROOT}", fs), "trajectory.json", 1)
-    assert time.perf_counter() - start < 1.5
     assert len(found) == 3000 and card["harbor"]["trials"] == 3000 and card["harbor"]["jobs"] == 1
 
 

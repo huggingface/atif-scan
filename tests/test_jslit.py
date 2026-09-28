@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from atif_scan.jslit import UNREAD, tool_calls
@@ -39,33 +37,31 @@ def test_every_prefix_of_a_program_is_safe():
         assert isinstance(tool_calls(program[:end]), list)
 
 
-SIZE = 200_000
+SIZE = 50_000  # x4 in the linear check: 200 KB programs
 
 
 @pytest.mark.parametrize(
     "program",
     [
         # Regression: every `tools.x(` inside an already-read string was rescanned (3.6s).
-        'tools.exec_command({cmd: "' + "tools.x(" * (SIZE // 8) + '"})',
+        lambda n: 'tools.exec_command({cmd: "' + "tools.x(" * (n // 8) + '"})',
         # Regression: each nested call re-skipped the rest of the program.
-        "tools.a(" * (SIZE // 9) + ")" * (SIZE // 9),
-        "tools.a([" * (SIZE // 9),
-        "tools.a('" * (SIZE // 9),
-        "tools.a(`${" * (SIZE // 12),
-        "tools.a({k: tools.b(1)}); " * (SIZE // 26),
+        lambda n: "tools.a(" * (n // 9) + ")" * (n // 9),
+        lambda n: "tools.a([" * (n // 9),
+        lambda n: "tools.a('" * (n // 9),
+        lambda n: "tools.a(`${" * (n // 12),
+        lambda n: "tools.a({k: tools.b(1)}); " * (n // 26),
         # Regression: one regex search per declared name, plus a slice per declaration (2s).
-        "".join(f'const v{i} = "x";\n' for i in range(SIZE // 18)) + "tools.a(v1)",
-        "function f(" * (SIZE // 11),
-        "a" * SIZE + " => tools.a(1)",
-        "/* " * (SIZE // 3),
-        "x / " * (SIZE // 4) + "tools.a(1)",
+        lambda n: "".join(f'const v{i} = "x";\n' for i in range(n // 18)) + "tools.a(v1)",
+        lambda n: "function f(" * (n // 11),
+        lambda n: "a" * n + " => tools.a(1)",
+        lambda n: "/* " * (n // 3),
+        lambda n: "x / " * (n // 4) + "tools.a(1)",
     ],
-    ids=lambda p: p[:12],
+    ids=lambda p: p(40)[:12],
 )
-def test_large_programs_are_read_in_linear_time(program):
-    start = time.perf_counter()
-    tool_calls(program)
-    assert time.perf_counter() - start < 0.5
+def test_large_programs_are_read_in_linear_time(linear, program):
+    linear(lambda n: tool_calls(program(n)), SIZE)
 
 
 @pytest.mark.parametrize(

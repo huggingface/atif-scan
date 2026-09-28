@@ -4,7 +4,6 @@ Synthetic fixtures only."""
 from __future__ import annotations
 
 import importlib
-import time
 
 import pytest
 
@@ -131,14 +130,7 @@ def _surface(text, channel=None, tool=None):
     return Surface(Locator(0, channel or Channel.MESSAGE), Content(text), tool)
 
 
-def _fast(fn, limit=0.5):
-    start = time.perf_counter()
-    fn()
-    elapsed = time.perf_counter() - start
-    assert elapsed < limit, elapsed
-
-
-def test_tb21_patterns_are_linear():
+def test_tb21_patterns_are_linear(linear):
     # Regression: `objdump `×n and `open(`×n were quadratic (0.8s / 0.5s).
     import re
 
@@ -146,8 +138,8 @@ def test_tb21_patterns_are_linear():
 
     orig = re.compile(tb21.ORIG_BINARY, re.I)
     data = re.compile(tb21.DATA_WRITE, re.I)
-    _fast(lambda: orig.search("objdump " * 20000))
-    _fast(lambda: data.search("open(" * 40000))
+    linear(lambda n: orig.search("objdump " * n), 5_000)
+    linear(lambda n: data.search("open(" * n), 10_000)
     assert orig.search("objdump -d --no-show-raw-insn /app/orig | head")
     # Calibration on cached real traces: an in-scope command put 231 characters of flags
     # between the tool and /app/orig, past the first 200-character bound.
@@ -155,13 +147,16 @@ def test_tb21_patterns_are_linear():
     assert data.search("with open('/app/data_batch_1',\n          'wb') as f:")
 
 
-def test_tb21_catalog_names_bisect_is_fast_and_exact():
+def test_tb21_catalog_names_bisect_is_fast_and_exact(linear):
     # Regression: 8k names x 8k benchmark mentions took 2.4s.
     from atif_scan.checks import Context
     from atif_scan.packs.tb21 import NEAR_BENCHMARK, catalog_names
 
-    text = " ".join(["regex-chess"] * 8000 + ["terminal-bench"] * 8000)
-    _fast(lambda: list(catalog_names(_surface(text), Context())))
+    def names(n):
+        text = " ".join(["regex-chess"] * n + ["terminal-bench"] * n)
+        return list(catalog_names(_surface(text), Context()))
+
+    linear(names, 2_000)
     gap = " " * (NEAR_BENCHMARK - len("regex-chess") - 1)
     near_before = "regex-chess " + gap + "Terminal-Bench"
     assert [n for n, _ in catalog_names(_surface(near_before), Context())] == ["regex-chess"]
@@ -227,13 +222,13 @@ def test_cite_mask_cases(text, expected):
     assert mask(text) == expected
 
 
-def test_cite_mask_secret_named_key_is_linear():
+def test_cite_mask_secret_named_key_is_linear(linear):
     # Regression: "token"×8000 took 3.5s (secret word searched inside every identifier).
     from atif_scan.cite import mask
 
-    _fast(lambda: mask("token" * 8000))
-    _fast(lambda: mask("a-" * 20000 + "token"))
-    _fast(lambda: mask("x=" * 20000))
+    linear(lambda n: mask("token" * n), 2_000)
+    linear(lambda n: mask("a-" * n + "token"), 5_000)
+    linear(lambda n: mask("x=" * n), 5_000)
     assert mask("token" * 100 + "=abcdef") == "token" * 100 + "=***"
 
 
@@ -287,12 +282,12 @@ def test_parse_answer_prose_with_two_objects_and_fences():
     assert parse_answer('{"answer": "used"', META) is None
 
 
-def test_parse_answer_is_bounded_on_hostile_replies():
+def test_parse_answer_is_bounded_on_hostile_replies(linear):
     from atif_scan.questions import parse_answer
 
-    _fast(lambda: parse_answer("{" * 60000, META))
-    _fast(lambda: parse_answer('{"a":' * 20000, META))
-    _fast(lambda: parse_answer("{} " * 20000 + REPLY, META))
+    linear(lambda n: parse_answer("{" * n, META), 15_000)
+    linear(lambda n: parse_answer('{"a":' * n, META), 5_000)
+    linear(lambda n: parse_answer("{} " * n + REPLY, META), 5_000)
 
 
 def test_parse_answer_uses_the_questions_own_enum():

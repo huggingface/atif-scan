@@ -156,7 +156,10 @@ def test_job_references(value):
     assert job_id(value) == JOB
 
 
-def test_invalid_job_reference(capsys):
+def test_invalid_job_reference(capsys, monkeypatch):
+    # Validated before looking for the harbor CLI (CI has none installed).
+    monkeypatch.delenv("ATIF_SCAN_HARBOR", raising=False)
+    monkeypatch.setenv("PATH", "")
     assert main(["harbor://jobs/not-a-uuid"]) == 2
     err = capsys.readouterr().err
     assert "invalid_harbor_reference" in err and "harbor://rows/<uuid>" in err

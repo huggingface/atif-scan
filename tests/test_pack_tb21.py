@@ -474,14 +474,11 @@ def test_path_tracing_reverse_pixel_special_case(message, expected):
     assert results(raw, "path-tracing")[check].result.status == Status.NOT_APPLICABLE
 
 
-def test_pixel_special_case_is_linear():
+def test_pixel_special_case_is_linear(linear):
     import re
-    import time
 
     from atif_scan.packs.tb21 import PIXEL_SPECIAL_CASE
 
     pattern = re.compile(PIXEL_SPECIAL_CASE, re.I)
-    for text in ("specific pixels " * 20_000, "hard-code " * 30_000, "wrong " * 40_000):
-        start = time.perf_counter()
-        pattern.search(text)
-        assert time.perf_counter() - start < 0.5
+    for unit, n in (("specific pixels ", 5_000), ("hard-code ", 7_500), ("wrong ", 10_000)):
+        linear(lambda k, unit=unit: pattern.search(unit * k), n)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from atif_scan import shell
@@ -77,11 +75,9 @@ def test_every_prefix_parses_without_raising():
         shell.parse(text[:i])
 
 
-def test_parse_is_fast():
-    for text in ("echo a " * 30_000, "$(" * 2_000, "'x' " * 40_000, "a |" * 30_000):
-        start = time.perf_counter()
-        shell.parse(text)
-        assert time.perf_counter() - start < 1.0
+def test_parse_is_linear(linear):
+    for unit, n in (("echo a ", 7_500), ("$(", 500), ("'x' ", 10_000), ("a |", 7_500)):
+        linear(lambda k, unit=unit: shell.parse.__wrapped__(unit * k), n)
 
 
 # --- tamper -----------------------------------------------------------------------------

@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import json
 import sys
-import time
 
 import pytest
 from test_brief_cache import write_run
@@ -146,15 +145,17 @@ def _item(i, model, high=False, unknown=False):
     }
 
 
-def test_overview_is_linear_in_items():
+def test_overview_is_linear_in_items(linear):
     # Regression: DQ candidate de-duplication and the not-cleared lookup were quadratic.
-    items = [
-        _item(i, "a" if i < 2600 else "b", high=i % 2 == 0, unknown=i % 2 == 1) for i in range(5000)
-    ]
-    doc = {"scanner_version": "dev", "inputs": items, "coverage": {}}
-    start = time.perf_counter()
-    ov = overview(doc)
-    assert time.perf_counter() - start < 0.5
+    def run(n):
+        items = [
+            _item(i, "a" if i < n * 0.52 else "b", high=i % 2 == 0, unknown=i % 2 == 1)
+            for i in range(n)
+        ]
+        return overview({"scanner_version": "dev", "inputs": items, "coverage": {}})
+
+    linear(run, 1_250)
+    ov = run(5000)
     d = ov["disqualification"]
     assert d["candidates"] == 2500 + 1200 and len(set(d["candidate_ids"])) == d["candidates"]
     assert d["rewarded_not_cleared"] == 2500

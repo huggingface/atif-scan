@@ -89,6 +89,12 @@ def row_id(value: str) -> str | None:
     return match.group(1).lower() if match else None
 
 
+def reference(value: str) -> tuple[str, str]:
+    """("row" | "job", uuid) for a Hub reference; invalid ones fail before any CLI call."""
+    row = row_id(value)
+    return ("row", row) if row is not None else ("job", job_id(value))
+
+
 @dataclass(frozen=True)
 class HarborCLI:
     exe: str
@@ -512,16 +518,17 @@ def harbor_sources(
     refresh: bool = False,
     progress: Progress = _quiet,
 ) -> tuple[list[Source], dict]:
+    kind, ref = reference(value)
     cli = cli or HarborCLI.find()
-    if (row := row_id(value)) is not None:
-        run, jobs = row_listing(cli, row, progress)
+    if kind == "row":
+        run, jobs = row_listing(cli, ref, progress)
         sources = [
             s
             for job, rows in jobs
             for s in _trial_sources(cli, job, rows, dest, full, workers, refresh, progress)
         ]
         return sources, run
-    job = job_id(value)
+    job = ref
     shows: dict[str, Mapping] = {}
     run, rows = listing(cli, job, progress, shows=shows)
     sources = _trial_sources(cli, job, rows, dest, full, workers, refresh, progress, shows[job])
@@ -530,11 +537,12 @@ def harbor_sources(
 
 def inspect_job(value: str, cli: HarborCLI | None = None) -> dict:
     """Listing only (no downloads): run facts plus per-trial metadata records."""
+    kind, ref = reference(value)
     cli = cli or HarborCLI.find()
-    if (row := row_id(value)) is not None:
-        run, jobs = row_listing(cli, row)
+    if kind == "row":
+        run, jobs = row_listing(cli, ref)
         rows = [r for _, job_rows in jobs for r in job_rows]
     else:
-        run, rows = listing(cli, job_id(value))
+        run, rows = listing(cli, ref)
     trials = [dict(trial_meta(r), input_id=_label(r)) for r in rows if valid_row(r)]
     return {"run": run, "trials": trials}
