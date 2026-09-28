@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import re
 import sys
 import tempfile
@@ -21,6 +22,8 @@ from .engine import Engine, effective_context
 from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
 from .loader import TraceError
+from .packs import recognise
+from .packs.reference import ENV as PACK_ENV
 from .policy import load_rules
 from .questions import BY_ID, Answers, Writer
 from .report import (
@@ -258,8 +261,21 @@ def outcome(item: dict, threshold: Severity | None) -> tuple[bool, bool]:
     return invalid, failed
 
 
-def load_checks(args: argparse.Namespace) -> list:
+def load_checks(args: argparse.Namespace, records: list | None = None) -> list:
     checks = builtin_detectors()
+    args.packs_loaded = []
+    if args.packs == "auto" and records is not None:
+        # The recorded task (Hub, result.json) when it wasn't given: small capped reads,
+        # needed only when no dataset was recorded or a pack needs task data.
+        needs_tasks = PACK_ENV in os.environ or not any(r.get("datasets") for r in args.runs)
+        tasks = [
+            context.task or (source.details().get("task") if needs_tasks else None)
+            for source, context in records
+        ]
+        for pack, reason in recognise(args.runs, tasks):
+            if pack.plugin not in args.plugin:  # named explicitly: loaded below
+                checks.extend(pack.load())
+                args.packs_loaded.append({"pack": pack.name, "reason": reason})
     for plugin in args.plugin:
         module, separator, factory = plugin.partition(":")
         if not separator or not module or not factory:
@@ -421,6 +437,13 @@ def main(argv: list[str] | None = None) -> int:
         help="JSON policy with rules and/or allowances (repeatable)",
     )
     parser.add_argument(
+        "--packs",
+        choices=["auto", "none"],
+        default="auto",
+        help="auto: load the bundled task packs (e.g. tb21) for runs recognised by their "
+        "recorded dataset or tasks; none: built-ins and --plugin only",
+    )
+    parser.add_argument(
         "--plugin",
         action="append",
         default=[],
@@ -521,7 +544,7 @@ def main(argv: list[str] | None = None) -> int:
 def scan(args: argparse.Namespace) -> int:
     try:
         records = inputs(args)
-        engine = Engine(load_checks(args))
+        engine = Engine(load_checks(args, records))
     except SourceError as error:
         # Fixed codes only (e.g. a missing optional extra); never paths or remote messages.
         print(f"atif-scan: {error}", file=sys.stderr)
@@ -613,6 +636,8 @@ def scan(args: argparse.Namespace) -> int:
     doc = document(output, version("atif-scan"))
     if args.runs:
         doc["runs"] = args.runs
+    if args.packs_loaded:
+        doc["packs"] = args.packs_loaded
     emit(doc, args)
     return 2 if invalid else 1 if failed else 0
 

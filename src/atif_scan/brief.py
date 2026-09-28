@@ -13,6 +13,7 @@ from collections import Counter
 
 from .estimates import cost_estimate, missing_activity
 from .harbor_files import override_kind
+from .packs import BUNDLED
 from .questions import tally
 from .report import RANK, STYLE, _m, is_counted, overview
 
@@ -43,11 +44,6 @@ def output_ratios(items: list[dict]) -> dict | None:
             "p95": values[int(0.95 * (n - 1))],
         }
     return result
-
-
-# Task packs a run's dataset has, by (dataset pattern, check-id prefix, plugin spec).
-# Never loaded automatically (plugins are trusted code): the brief only names them.
-PACKS = ((r"terminal-bench-2-1\b|terminal-bench-2\.1", "tb21", "atif_scan.packs.tb21:checks"),)
 
 
 def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price=None) -> dict:
@@ -81,14 +77,16 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
     }
     loaded = {a["id"].split(".", 1)[0] for item in items for a in item["assessments"]}
     datasets = " ".join(d for run in ov["runs"] for d in run.get("datasets") or [])
+    # A bundled pack the run's dataset has but the scan didn't load (e.g. --packs none).
     suggested = [
-        pack
-        for pattern, prefix, pack in PACKS
-        if re.search(pattern, datasets, re.I) and prefix not in loaded
+        pack.plugin
+        for pack in BUNDLED
+        if pack.datasets is not None and pack.datasets.search(datasets) and pack.name not in loaded
     ]
     return {
         "schema_version": 1,
         "kind": "integrity_brief",
+        "packs": doc.get("packs") or [],
         "suggested_packs": suggested,
         # Reviewer answers to --questions prompts (annotations only; never DQ math).
         "answers": tally(items),
@@ -397,6 +395,8 @@ def brief_text(b: dict) -> str:
     for i, (question, counts) in enumerate(sorted((b.get("answers") or {}).items())):
         shown = " · ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1]))
         lines.append(f"{'ANSWERS' if i == 0 else '':<10} {question}: {shown}")
+    for pack in b.get("packs") or []:
+        lines.append(f"PACKS      {OK} {pack['pack']} loaded (recognised by {pack['reason']})")
     for pack in b.get("suggested_packs") or []:
         lines.append(f"PACKS      {WARN} task pack for this dataset not loaded: --plugin {pack}")
 

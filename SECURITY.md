@@ -38,7 +38,9 @@
   (which may contain URLs) are withheld; files over the size cap are rejected.
 - Plugins and rule files are **trusted** code/configuration, not a sandbox. A plugin can
   read raw text and do its own I/O. Only load modules you have reviewed. Plugins are
-  never discovered automatically.
+  never discovered automatically. The only code loaded without `--plugin` is this
+  package's own bundled packs (`atif_scan.packs`), for runs they recognise; `--packs none`
+  disables that.
 - The loader has a size cap, but there is no isolation for JSON depth, regex runtime or
   plugin CPU/filesystem use. Use a restricted worker for hostile inputs.
 - A finding doesn't authorize accusation, disqualification or exclusion. Keep the
