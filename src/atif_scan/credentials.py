@@ -10,6 +10,10 @@ Two kinds of evidence:
   `TIKTOKEN_CACHE_DIR` or `MAX_TOKENS` are not secrets, and path/URL/placeholder values
   (`/root/.ssh/id_rsa`, `${KEY}`, `<your-key>`, `***`) are ignored.
 
+`find` is the broad masking contract, not the exposure predicate. `find_exposures`
+adds contextual exclusions for code identifiers and explicit dummy values. Never
+use exposure findings to decide what is safe to publish.
+
 Findings carry spans only; values never leave memory except as masking input.
 """
 
@@ -69,7 +73,7 @@ _NOT_SECRET_PART = re.compile(
     r"usage|values?|mask|padding|owner|oid|chars?|"
     # Public signing keys (`GPG_KEY=<fingerprint>` in every official python image's env)
     # and database/dict keys: primary_key, foreign_key, sort_key, partition_key, displayKey.
-    r"gpg|pgp|fingerprint|primary|foreign|sort|partition|display|lookup)(?:_|$)"
+    r"gpg|pgp|fingerprint|primary|sort|partition|display|lookup)(?:_|$)"
 )
 # Identifiers, not secrets: `rate_key = "embedding_lr"`, `primaryKey="customerId"`.
 # Letters only, so `opaqueCredential98765` or `svc_pass_2026` still count.
@@ -96,8 +100,96 @@ def secret_name(name: str) -> bool:
 
 
 def plausible_value(value: str) -> bool:
-    """A value that could be a real credential: not a placeholder, path, URL or number."""
+    """Historical masking heuristic, retained independently of exposure filtering."""
     if len(value) < 8 or _PLACEHOLDER.match(value) or value.isdigit():
+        return False
+    if value[0] in "/~." or "://" in value or value.startswith(("$(", "`")):
+        return False
+    if any(c in value for c in "()[]{}<>\\") or value.endswith(",") or _CODE_VALUE.fullmatch(value):
+        return False
+    if _IDENTIFIER.fullmatch(value):
+        return False
+    return any(c.isalpha() for c in value)
+
+
+# These exclusions apply only to exposure findings, never to masking. A generic
+# "key" can be a lookup/schema key; explicit authentication components take priority.
+_AUTH_PARTS = frozenset(
+    {
+        "api",
+        "apikey",
+        "secret",
+        "token",
+        "password",
+        "passwd",
+        "pwd",
+        "credential",
+        "credentials",
+        "private",
+        "access",
+        "session",
+        "auth",
+    }
+)
+_LOOKUP_PARTS = frozenset(
+    {
+        # Configuration and descriptive metadata keys.
+        "setting",
+        "settings",
+        "enabled",
+        "analysis",
+        "description",
+        "options",
+        # Message routing, merge selectors and relational schema keys.
+        "routing",
+        "merge",
+        "foreign",
+        # Scoped registries, plugin registries, object handles and map selectors.
+        # Match components, not particular task identifiers or adjacent word pairs.
+        "scope",
+        "plugin",
+        "handle",
+        "map",
+    }
+)
+
+# Whole-value semantics, not prefixes: "testament..." and arbitrary credentials
+# beginning with "test" are still possible secrets. A test directory is not evidence.
+_LITERAL_PLACEHOLDER = re.compile(
+    r"(?i)^(?:\*+|x+|\.+|<[^>]*>|\$\{?\w+\}?|%\w+%|your[\w-]*|changeme|"
+    r"none|null|nil|true|false|dummy|test|example|placeholder|redacted|masked|"
+    r"secret|password|undefined|sk-\.\.\.)$"
+)
+_DUMMY_CREDENTIAL = re.compile(
+    r"(?i)^(?:sk[-_])?(?:dummy|test|example|fake|placeholder)[-_]"
+    r"(?:(?:api|access|auth|secret)[-_])?(?:key|token|secret|password)"
+    r"(?:[-_](?:\d+|dummy|test|example|fake|placeholder))?$"
+)
+_PEM_PLACEHOLDER = re.compile(
+    r"-----BEGIN (?P<label>[A-Z ]*PRIVATE KEY)-----\s*"
+    r"(?:\.{3}|…|<[^<>\r\n]*>)\s*"
+    r"-----END (?P=label)-----"
+)
+
+
+def _exposure_name(name: str) -> bool:
+    if not secret_name(name):
+        return False
+    # Also split acronym-to-word boundaries (e.g. APIKey).
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    parts = set(re.split(r"[_\-]+|(?<=[a-z0-9])(?=[A-Z])", name))
+    parts = {p.lower() for p in parts}
+    if parts & _AUTH_PARTS:
+        return True
+    return not parts & _LOOKUP_PARTS
+
+
+def _exposure_value(value: str) -> bool:
+    # Keep the historical length/numeric boundary: collected values are replaced
+    # globally in prompts and citations, not just at the assignment site.
+    if len(value) < 8 or value.isdigit():
+        return False
+    if _LITERAL_PLACEHOLDER.fullmatch(value) or _DUMMY_CREDENTIAL.fullmatch(value):
         return False
     if value[0] in "/~." or "://" in value or value.startswith(("$(", "`")):
         return False
@@ -116,17 +208,44 @@ class Found:
 
 
 def find(text: str) -> Iterator[Found]:
-    """Credential occurrences in `text`, token shapes first; spans may overlap."""
+    """Broad masking candidates, token shapes first; spans may overlap.
+
+    Preserves the historical candidates even when exposure context excludes them.
+    Also includes opaque test-prefixed values, with the same length/numeric limits.
+    Use `find_exposures` for detector findings, not this privacy-oriented API.
+    """
     if not text:
         return
     for m in TOKEN_SHAPES.finditer(text):
         yield Found("token", m.span(), m.span())
     for pattern in (_ENV, _KEYED):
         for m in pattern.finditer(text):
-            if secret_name(m.group("name")) and plausible_value(m.group("value")):
+            if secret_name(m.group("name")) and (
+                plausible_value(m.group("value")) or _exposure_value(m.group("value"))
+            ):
                 yield Found("named", m.span("name"), m.span("value"))
     for m in _FLAG.finditer(text):
-        if plausible_value(m.group("value")):
+        if plausible_value(m.group("value")) or _exposure_value(m.group("value")):
+            yield Found("named", m.span(), m.span("value"))
+
+
+def find_exposures(text: str) -> Iterator[Found]:
+    """Context-aware review findings; deliberately narrower than masking candidates.
+
+    Known token shapes override non-secret assignment names. Only self-contained,
+    explicit dummy tokens and placeholder-only closed PEM blocks are excluded.
+    Incomplete or otherwise suspicious PEM blocks remain review candidates.
+    """
+    for m in TOKEN_SHAPES.finditer(text):
+        value = m.group()
+        if not _DUMMY_CREDENTIAL.fullmatch(value) and not _PEM_PLACEHOLDER.fullmatch(value):
+            yield Found("token", m.span(), m.span())
+    for pattern in (_ENV, _KEYED):
+        for m in pattern.finditer(text):
+            if _exposure_name(m.group("name")) and _exposure_value(m.group("value")):
+                yield Found("named", m.span("name"), m.span("value"))
+    for m in _FLAG.finditer(text):
+        if _exposure_value(m.group("value")):
             yield Found("named", m.span(), m.span("value"))
 
 

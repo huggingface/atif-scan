@@ -828,3 +828,13 @@ task selection (or recorded Harbor task metadata) for the break-filter local-tes
 allowance. Do not broadly excuse arbitrary writes under `/tests`.
 Directory expansion deliberately does not follow symlinks; name a target directory
 directly or use an explicit manifest instead.
+
+
+### Credential review
+
+Credential exposure detection excludes structural lookup-key names (for example
+routing/schema and UI/configuration keys), explicit dummy credentials, and closed
+placeholder-only PEM blocks. Explicit authentication components and credential
+token shapes still take priority. No blanket test-directory allowance is applied.
+**Masking remains broader than exposure detection**: strings filtered out as
+findings can still be redacted in citations, prompts and inspector output.
