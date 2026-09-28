@@ -3,9 +3,10 @@
 Codex's code mode records one `exec` call whose `input` is a program such as
 `const r = await tools.exec_command({cmd: "git show HEAD:a.py"}); text(r);`. This module
 finds each `tools.NAME({...})` call and parses its argument when it is a *literal*
-(objects, arrays, strings, numbers, true/false/null). Nothing is executed. A value that
-isn't a literal (a variable, `${}` interpolation, an expression) becomes `UNREAD`, so
-callers can treat it as unknown evidence rather than as absent.
+(objects, arrays, strings, numbers, true/false/null), or a name bound once to a string
+literal (`const patch = "*** Begin Patch…"; tools.apply_patch(patch)`). Nothing is
+executed. Any other value (a reassigned or shadowed name, `${}` interpolation, an
+expression) becomes `UNREAD`, so callers can treat it as unknown evidence, not absent.
 """
 
 from __future__ import annotations
@@ -19,9 +20,41 @@ _NUMBER = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 
 
+_DECLARED = re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=(?![=>])")
+
+
+def _string_bindings(program: str) -> dict[str, tuple[int, str]]:
+    """Names bound exactly once to a string literal and never reassigned or used as a
+    parameter (which could shadow them): name -> (position after the binding, value).
+    Strings are immutable, so such a name holds that literal wherever it's in scope."""
+    found: dict[str, tuple[int, object]] = {}
+    for match in _DECLARED.finditer(program):
+        reader = _Reader(program, match.end(), {})
+        try:
+            value = reader.string() if reader.peek() in "\"'`" else UNREAD
+        except ValueError:
+            value = UNREAD
+        if not re.match(r"[ \t]*(?:[;,\n]|$)", program[reader.pos :]):
+            value = UNREAD  # `"a" + b`, `"x".repeat(3)`: an expression, not the literal
+        name = match.group(1)
+        found[name] = (reader.pos, UNREAD if name in found else value)
+    bindings = {}
+    for name, (pos, value) in found.items():
+        n = re.escape(name)
+        assigned = re.findall(rf"(?<![\w$.]){n}\s*(?:[-+*/%]|\?\?|\|\||&&)?=(?![=>])", program)
+        parameter = re.search(
+            rf"\bfunction\b[^(]*\([^)]*(?<![\w$]){n}(?![\w$])|"
+            rf"\([^()]*(?<![\w$]){n}(?![\w$])[^()]*\)\s*=>|(?<![\w$.]){n}\s*=>",
+            program,
+        )
+        if isinstance(value, str) and len(assigned) == 1 and not parameter:
+            bindings[name] = (pos, value)
+    return bindings
+
+
 class _Reader:
-    def __init__(self, text: str, pos: int):
-        self.text, self.pos = text, pos
+    def __init__(self, text: str, pos: int, bindings: dict[str, tuple[int, str]]):
+        self.text, self.pos, self.bindings = text, pos, bindings
 
     def skip(self) -> None:
         text = self.text
@@ -88,6 +121,9 @@ class _Reader:
             elif ident and ident.group() in ("true", "false", "null", "undefined"):
                 self.pos = ident.end()
                 value = {"true": True, "false": False}.get(ident.group())
+            elif ident and self.bindings.get(ident.group(), (len(self.text),))[0] <= self.pos:
+                self.pos = ident.end()
+                value = self.bindings[ident.group()][1]
             else:
                 self.expression()
                 return UNREAD
@@ -172,8 +208,9 @@ def tool_calls(program: str) -> list[tuple[str, object]]:
     """(tool name, argument) for each `tools.NAME(arg)` call, in source order. The argument
     is the parsed literal, UNREAD when it isn't one, or None when the call has none."""
     calls = []
+    bindings = _string_bindings(program)
     for match in CALL.finditer(program):
-        reader = _Reader(program, match.end())
+        reader = _Reader(program, match.end(), bindings)
         try:
             argument = None if reader.peek() == ")" else reader.value()
         except ValueError:

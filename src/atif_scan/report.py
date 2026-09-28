@@ -482,6 +482,7 @@ def _outcome(item: dict) -> bool | None:
 
 # Recording defects that explain why a rewarded trial can't be cleared.
 NOT_CLEARED_BECAUSE = {
+    "integrity.agent_steps_missing": "no agent steps recorded",
     "integrity.web_results_not_recorded": "web results/URLs not recorded",
     "integrity.history_compacted": "history compacted",
     "integrity.tool_results_not_recorded": "tool results not recorded",

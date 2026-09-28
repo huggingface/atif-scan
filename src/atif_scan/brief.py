@@ -138,6 +138,7 @@ RECORDING_LABELS = {
     "integrity.output_token_ratio": "recorded text doesn't fit reported output tokens",
     "integrity.web_results_not_recorded": "web searches/fetches without recorded results or URLs",
     "integrity.redacted_values": "bare [REDACTED] values (invalid JSON, read as unknown)",
+    "integrity.agent_steps_missing": "no agent steps recorded",
 }
 RATIO_BASIS = {
     "answer_only": "excl. reasoning",
@@ -288,6 +289,7 @@ def brief_text(b: dict) -> str:
                 "integrity.output_token_ratio",
                 "integrity.web_results_not_recorded",
                 "integrity.redacted_values",
+                "integrity.agent_steps_missing",
             )
             else INFO
         )
