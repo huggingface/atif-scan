@@ -226,6 +226,8 @@ def run_facts(meta: dict, traced: dict) -> dict:
         "error_type": meta.get("error_type"),
         "status": meta.get("status"),
         "hub_trial_id": meta.get("hub_trial_id"),
+        # False: the job's own result.json doesn't list this trial (rerun/resume).
+        "in_job_result": meta.get("in_job_result"),
         "duration_sec": meta.get("duration_sec"),
         "overrides": meta.get("overrides") or [],
         "cost_usd": meta.get("cost_usd"),

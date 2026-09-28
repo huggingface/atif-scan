@@ -214,3 +214,89 @@ def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
     assert "scoring overrides" in text and "agents[].override_timeout_sec" in text
     assert "infrastructure overrides (provisioning only)" in text
     assert "non-canonical source: github.com/example/terminal-bench-2-1/tasks" in text
+
+
+def rerun_job(tmp_path, listing=True, completed=2):
+    """A job whose result.json lists two trials; a third folder re-ran `alpha` (as when
+    a resumed job writes into the folder while the first execution still runs)."""
+    job = tmp_path / "rerun"
+    job.mkdir(parents=True)
+    (job / "config.json").write_text(json.dumps({"datasets": [{"name": "terminal-bench/x"}]}))
+    evals = {
+        "agent__model__x": {
+            "n_trials": 2,
+            "reward_stats": {"reward": {"1.0": ["alpha__a1"], "0.0": ["beta__b1"]}},
+            "exception_stats": {},
+        }
+    }
+    stats = {"n_completed_trials": completed, **({"evals": evals} if listing else {})}
+    (job / "result.json").write_text(
+        json.dumps(
+            {"id": "2d6abb23-0000-4000-8000-000000000000", "n_total_trials": 2, "stats": stats}
+        )
+    )
+    rows = [
+        ("alpha__a1", "alpha", 1.0, 1.0, True),
+        ("beta__b1", "beta", 0.0, 2.0, True),
+        ("alpha__a2", "alpha", 0.0, 4.0, True),  # the unlisted rerun
+        ("gamma__g2", "gamma", None, None, False),  # unlisted, died before a trajectory
+    ]
+    for folder, task, reward, cost, traced in rows:
+        trial = job / folder
+        trial.mkdir()
+        if traced:
+            (trial / "agent").mkdir()
+            (trial / "agent" / "trajectory.json").write_text(json.dumps(trajectory("ls")))
+        (trial / "result.json").write_text(
+            json.dumps(
+                result_json(task, reward, None if traced else "RemoteProtocolError", cost=cost)
+            )
+        )
+    return job
+
+
+def test_trials_missing_from_the_jobs_result_are_scored_and_flagged_as_a_rerun(tmp_path, capsys):
+    """Regression: two executions of one job wrote into the same folder; the scan scored
+    both silently and showed "✓ 126/89 planned trials"."""
+    job = rerun_job(tmp_path)
+    main([str(job), "--format", "json"])
+    items = {i["input_id"]: i for i in json.loads(capsys.readouterr().out)["inputs"]}
+    assert items["alpha__a2/agent"]["in_job_result"] is False
+    assert items["alpha__a1/agent"]["in_job_result"] is True
+    main([str(job), "--brief", "--format", "json"])
+    b = json.loads(capsys.readouterr().out)
+    rr = b["overview"]["reruns"]
+    assert (rr["unlisted_trials"], rr["unlisted_with_trajectory"], rr["tasks_rerun"]) == (2, 1, 1)
+    assert rr["listed"] == {"trials": 2, "scored": 2, "rewarded": 1, "cost_usd": 3.0}
+    assert rr["unlisted"] == {"trials": 1, "scored": 1, "rewarded": 0, "cost_usd": 4.0}
+    main([str(job), "--format", "text"])
+    out = capsys.readouterr().out
+    assert "RESULT     33.3%" in out  # everything seen is scored
+    assert "⚠ 3/2 planned trials have a trajectory" in out
+    assert "2 trial folder(s) not in the job's result.json (1 with a trajectory)" in out
+    assert "1 task(s) run again: likely a rerun or resume" in out
+    assert "job's listed trials 1/2 (50.0%), $3.00 · other trials 0/1 (0.0%), $4.00" in out
+
+
+def test_job_listing_missing_or_incomplete_is_unknown_not_clean(tmp_path, capsys):
+    for kwargs in ({"listing": False}, {"completed": 3}):  # none / fewer names than completed
+        job = rerun_job(tmp_path / next(iter(kwargs)), **kwargs)
+        main([str(job), "--format", "json"])
+        items = json.loads(capsys.readouterr().out)["inputs"]
+        assert all(i["in_job_result"] is None for i in items)
+        main([str(job), "--brief", "--format", "json"])
+        assert json.loads(capsys.readouterr().out)["overview"]["reruns"] is None
+        main([str(job), "--format", "text"])
+        assert "not in the job's result.json" not in capsys.readouterr().out
+
+
+def test_job_listed_trials_tolerates_malformed_stats():
+    from atif_scan.harbor_files import job_listed_trials
+
+    def listed(stats):
+        return job_listed_trials(json.dumps({"stats": stats}).encode())
+
+    assert listed({"evals": {"e": {"reward_stats": [], "exception_stats": "x"}}}) is None
+    assert listed({"evals": {"e": {"reward_stats": {"reward": {"1.0": ["a", 3, ""]}}}}}) == {"a"}
+    assert listed({"evals": {"e": {"exception_stats": {"E": ["b"]}}, "f": None}}) == {"b"}
+    assert job_listed_trials(b"not json") is None and job_listed_trials(None) is None

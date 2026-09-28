@@ -184,6 +184,35 @@ def configured_agents(cfg: dict) -> int | None:
     return len([a for a in agents if isinstance(a, dict)]) or None
 
 
+def job_listed_trials(result: bytes | None) -> frozenset[str] | None:
+    """Trial folder names the job's own result.json accounts for (its per-eval
+    `reward_stats` and `exception_stats`), or None when that can't be trusted: no
+    listing, or fewer names than the job says it completed. Unknown, never "none"."""
+    stats = _json(result).get("stats")
+    evals = stats.get("evals") if isinstance(stats, dict) else None
+    if not isinstance(evals, dict):
+        return None
+    names: set[str] = set()
+
+    def add(values: object) -> None:
+        if isinstance(values, list):
+            names.update(v for v in values if isinstance(v, str) and v)
+
+    for ev in evals.values():
+        if not isinstance(ev, dict):
+            continue
+        rewards, exceptions = ev.get("reward_stats"), ev.get("exception_stats")
+        for by_value in rewards.values() if isinstance(rewards, dict) else ():
+            for values in by_value.values() if isinstance(by_value, dict) else ():
+                add(values)
+        for values in exceptions.values() if isinstance(exceptions, dict) else ():
+            add(values)
+    completed = count(stats.get("n_completed_trials"))
+    if not names or (completed is not None and len(names) < completed):
+        return None
+    return frozenset(names)
+
+
 def job_meta(config: bytes | None, result: bytes | None) -> dict | None:
     """Run facts from a Harbor job folder's config.json/result.json (None if not a job)."""
     cfg, res = _json(config), _json(result)

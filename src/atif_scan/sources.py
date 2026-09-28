@@ -30,7 +30,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 from .checks import identifier
-from .harbor_files import job_meta, number, trial_result
+from .harbor_files import job_listed_trials, job_meta, number, trial_result
 from .loader import MAX_BYTES, TraceError, load_bytes, load_trace
 from .model import Trace
 
@@ -384,14 +384,24 @@ def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], di
 
 
 def job_runs(listing: Listing) -> list[dict]:
-    """Harbor job facts for every job folder in the listing, at any depth.
+    """Harbor job facts for every job folder in the listing, at any depth."""
+    return job_folders(listing)[0]
+
+
+def job_folders(listing: Listing) -> tuple[list[dict], dict[str, bool]]:
+    """(run facts per Harbor job folder, {trial folder: listed in its job's result.json}).
 
     A job folder has config.json and at least one subfolder with a result.json (its
     trials); trial folders' own agent/ and verifier/ subfolders never do, so trial
     configs aren't read. job_meta then rejects anything that isn't a job config.
+
+    Trial folders the job's result.json doesn't account for usually come from another
+    execution of the same job (a rerun or resume writing into the folder, possibly while
+    the first one still ran). They are still scanned; the run facts count them. When the
+    job's own listing is missing or incomplete, membership is unknown (not recorded).
     """
     if not listing.directory or listing.reader is None:
-        return []
+        return [], {}
     present = listing.paths
     has_trial_child = {
         str(PurePosixPath(p).parent.parent)
@@ -405,7 +415,7 @@ def job_runs(listing: Listing) -> list[dict]:
         }
         if d in has_trial_child
     )
-    runs = []
+    runs, membership = [], {}
     for folder in candidates:
         prefix = "" if folder == "." else folder + "/"
         try:
@@ -414,9 +424,33 @@ def job_runs(listing: Listing) -> list[dict]:
             result = listing.reader(result_path, RESULT_BYTES) if result_path in present else None
         except Exception:
             continue
-        if (run := job_meta(config, result)) is not None:
-            runs.append(run)
-    return runs
+        if (run := job_meta(config, result)) is None:
+            continue
+        listed = job_listed_trials(result)
+        if listed is not None:
+            trials, traced = set(), set()
+            for p in present:
+                if not p.startswith(prefix):
+                    continue
+                parts = PurePosixPath(p[len(prefix) :]).parts
+                if len(parts) == 2 and parts[1] == "result.json":
+                    trials.add(parts[0])
+                elif parts[1:] in (("agent", "trajectory.json"), ("trajectory.json",)):
+                    trials.add(parts[0])
+                    traced.add(parts[0])
+            unlisted = trials - listed
+            run["trial_folders"] = len(trials)
+            run["unlisted_trials"] = len(unlisted)
+            run["unlisted_with_trajectory"] = len(unlisted & traced)
+            membership.update({prefix + t: t in listed for t in trials})
+        runs.append(run)
+    return runs, membership
+
+
+def trial_folder(entry: Entry) -> str:
+    """The trial folder of a trajectory: `<trial>/trajectory.json` or `<trial>/agent/...`."""
+    trial = PurePosixPath(entry.path).parent
+    return str(trial.parent if trial.name == "agent" else trial)
 
 
 LISTING_BYTES = 16 * 1024 * 1024  # a saved Hub listing: ~500 bytes per trial
@@ -588,8 +622,9 @@ def resolve(
         value = normalize(value)
         listing = list_input(value, fs)
         saved = saved_hub_listings(listing)
+        found_runs, membership = job_folders(listing)
         if runs is not None:
-            runs.extend(job_runs(listing))
+            runs.extend(found_runs)
             runs.extend(run for run, _ in saved.values() if run)
         entries = selected(listing, pattern)
         if not entries:
@@ -601,6 +636,8 @@ def resolve(
             hint = "/".join(p for p in (value.rstrip("/"), entry.path) if p)
             if errored(listing, entry) and not meta.get("error_type"):
                 meta = {**meta, "error_type": "exception"}
+            if (listed := membership.get(trial_folder(entry))) is not None:
+                meta = {**meta, "in_job_result": listed}
             local = listing.local_path(entry) if listing.local_path is not None else None
             fingerprint = local_fingerprint(local) if local is not None else (lambda: None)
             details = trial_details(listing, entry, value)

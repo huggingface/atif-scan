@@ -85,6 +85,13 @@ ADJUSTMENTS (estimates for review, not verdicts)
   `n_attempts` and any forbidden overrides. The Hub supplies the same for `harbor://`.
   Trajectory `final_metrics` are the fallback. Tasks that can't be determined are
   reported as unknown (no per-task SE), never invented.
+- **Reruns** are scored but called out. A job's `result.json` names the trials it
+  accounts for. A trial folder it doesn't name usually comes from another execution of
+  the same job: a rerun or resume writing into the folder, possibly while the first one
+  was still running. COVERAGE counts those folders and the tasks that were run again,
+  and shows the job's listed trials and the others side by side (rewarded and cost).
+  RESULT still covers every trial present. If the job's listing is missing or
+  incomplete, membership is unknown and nothing is flagged.
 - **Missing cost** is estimated from the run's own prices: a least-squares fit of cost
   against uncached, cached and output tokens over its priced trials. If no trial
   recorded a cost at all, the brief says so and shows the token totals; `--price U,C,O`

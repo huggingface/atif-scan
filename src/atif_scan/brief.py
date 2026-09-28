@@ -238,7 +238,9 @@ def brief_text(b: dict) -> str:
     if t["planned"] is not None:
         folder = any(r.get("source") == "harbor_job_folder" for r in b["runs"])
         what = "planned trials have a trajectory" if folder else "planned trials present"
-        cov.append(f"{OK if not t['missing'] else WARN} {t['present']}/{t['planned']} {what}")
+        over = t["present"] > t["planned"]  # more than planned: retries, reruns, merges
+        mark = WARN if t["missing"] or over else OK
+        cov.append(f"{mark} {t['present']}/{t['planned']} {what}")
     if k["expected_tasks"]:
         cov.append(
             f"{OK if not k['missing_tasks'] else WARN} {k['count']}/{k['expected_tasks']} tasks"
@@ -257,6 +259,26 @@ def brief_text(b: dict) -> str:
     if t["without_trajectory"]:
         cov.append(f"{WARN} {t['without_trajectory']} without trajectory")
     lines.append("COVERAGE   " + " · ".join(cov))
+    rr = ov.get("reruns")
+    if rr and rr["unlisted_trials"]:
+        lst, un = rr["listed"], rr["unlisted"]
+        line = (
+            f"{'':<10} {WARN} {rr['unlisted_trials']} trial folder(s) not in the job's"
+            f" result.json ({rr['unlisted_with_trajectory']} with a trajectory)"
+        )
+        if rr["tasks_rerun"]:
+            line += f" · {rr['tasks_rerun']} task(s) run again: likely a rerun or resume of the job"
+        lines.append(line)
+
+        def share(p: dict) -> str:
+            pct = f" ({100 * p['rewarded'] / p['scored']:.1f}%)" if p["scored"] else ""
+            cost = f", ${p['cost_usd']:,.2f}" if p["cost_usd"] is not None else ""
+            return f"{p['rewarded']}/{p['scored']}{pct}{cost}"
+
+        lines.append(
+            f"{'':<10} {INFO} all scored above · job's listed trials {share(lst)}"
+            f" · other trials {share(un)}"
+        )
 
     # TRACES: recording integrity + missing-activity estimate
     rec = b["recording"]
