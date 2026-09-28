@@ -419,6 +419,42 @@ def job_runs(listing: Listing) -> list[dict]:
     return runs
 
 
+LISTING_BYTES = 16 * 1024 * 1024  # a saved Hub listing: ~500 bytes per trial
+
+
+def saved_hub_listings(listing: Listing) -> dict[str, tuple[dict | None, dict[str, dict]]]:
+    """Saved Harbor Hub listings (harbor_hub.save_listing) by the folder holding them:
+    (run facts, {trial folder: trial facts}), so a scan of a synced job keeps its Hub
+    facts (reward, task, error, cost)."""
+    from .harbor_hub import SAVED_LISTING, saved_listing  # harbor_hub imports this module
+
+    if not listing.directory or listing.reader is None:
+        return {}
+    out = {}
+    for path in sorted(listing.paths):
+        if PurePosixPath(path).name == SAVED_LISTING:
+            try:
+                out[str(PurePosixPath(path).parent)] = saved_listing(
+                    listing.reader(path, LISTING_BYTES)
+                )
+            except Exception:
+                continue  # unreadable: the trials simply lack Hub facts
+    return out
+
+
+def hub_trial(saved: dict, entry: Entry) -> dict:
+    """The saved Hub facts of the trial whose trajectory is `entry` (`<job>/<trial>/
+    trajectory.json`, or `<job>/job/<trial>/agent/trajectory.json` for a full archive)."""
+    trial = PurePosixPath(entry.path).parent
+    if trial.name == "agent":
+        trial = trial.parent
+    for folder in (trial.parent, trial.parent.parent):
+        found = saved.get(str(folder))
+        if found and trial.name in found[1]:
+            return found[1][trial.name]
+    return {}
+
+
 def errored(listing: Listing, entry: Entry) -> bool:
     """Harbor writes `<trial>/exception.txt` when a trial raised; seen in the listing."""
     if not listing.directory:
@@ -525,6 +561,18 @@ def file_source(label: str, location: str, fs=None) -> Source:
     return Source(label, lambda: load_trace(Path(location)), local=Path(location))
 
 
+def _either(read: Callable[[], float | None], fallback: object) -> Callable[[], float | None]:
+    """The reward file's value, else the saved Hub listing's."""
+    if not isinstance(fallback, float | int):
+        return read
+
+    def reward() -> float | None:
+        found = read()
+        return found if found is not None else float(fallback)
+
+    return reward
+
+
 def resolve(
     values: list[str], pattern: str = DEFAULT_PATTERN, fs=None, runs: list | None = None
 ) -> list[Source]:
@@ -539,16 +587,20 @@ def resolve(
     for value in values:
         value = normalize(value)
         listing = list_input(value, fs)
+        saved = saved_hub_listings(listing)
         if runs is not None:
             runs.extend(job_runs(listing))
+            runs.extend(run for run, _ in saved.values() if run)
         entries = selected(listing, pattern)
         if not entries:
             raise SourceError("no_files_match_pattern")
         for entry in entries:
             label = label_for(entry, pattern) or f"input-{len(sources) + 1:04d}"
-            reward = reward_lookup(listing, entry, value)
+            meta = hub_trial(saved, entry)
+            reward = _either(reward_lookup(listing, entry, value), meta.get("reward"))
             hint = "/".join(p for p in (value.rstrip("/"), entry.path) if p)
-            meta = {"error_type": "exception"} if errored(listing, entry) else {}
+            if errored(listing, entry) and not meta.get("error_type"):
+                meta = {**meta, "error_type": "exception"}
             local = listing.local_path(entry) if listing.local_path is not None else None
             fingerprint = local_fingerprint(local) if local is not None else (lambda: None)
             details = trial_details(listing, entry, value)

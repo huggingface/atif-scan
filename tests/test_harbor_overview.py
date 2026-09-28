@@ -463,3 +463,45 @@ def test_row_listing_stops_paging_once_the_rows_trials_are_found():
     cli = _PagedCLI(size=10)  # a wanted trial on the last page: every page is read
     listing(cli, JOB, want={"t01", "t24"})
     assert cli.pages == [1, 2, 3]
+
+
+def test_local_copy_of_a_hub_job_keeps_hub_facts(harbor, tmp_path, capsys):
+    """A synced job scanned from its folder reports the same task/reward/error facts as a
+    harbor:// scan (the listing is saved next to the trajectories): reward-gated rules and
+    DQ candidates don't turn unknown on a rescan."""
+    from atif_scan.harbor_hub import SAVED_LISTING
+
+    data = json.loads((tmp_path / "data.json").read_text())
+    data["show"]["config"]["agents"][0]["env"] = {"OPENAI_API_KEY": "sk-proj-secret1234567890"}
+    (tmp_path / "data.json").write_text(json.dumps(data))
+    sync = tmp_path / "sync"
+    assert main([f"harbor://jobs/{JOB}", "--sync-to", str(sync), "--format", "json"]) in (0, 1)
+    live = json.loads(capsys.readouterr().out)
+    saved = sync / "harbor" / JOB / SAVED_LISTING
+    assert saved.is_file() and "sk-proj" not in saved.read_text()  # env/keys aren't kept
+
+    assert main([str(sync / "harbor" / JOB), "--format", "json"]) in (0, 1)
+    local = json.loads(capsys.readouterr().out)
+    keys = ("task", "reward", "error_type", "cost_usd", "hub_trial_id")
+    facts = {
+        i["input_id"]: tuple(i[k] for k in keys)
+        for i in live["inputs"]
+        if i["input_status"] == "available"
+    }
+    assert {i["input_id"]: tuple(i[k] for k in keys) for i in local["inputs"]} == facts
+    assert any(r for _, r, *_ in facts.values())  # the fixture has rewards to lose
+    rewarded = {
+        i["input_id"]: next(a["status"] for a in i["assessments"] if a["id"] == "context.rewarded")
+        for i in local["inputs"]
+    }
+    assert "unknown" not in {s for k, s in rewarded.items() if facts[k][1] is not None}
+    (run,) = [r for r in local["runs"] if r.get("source") == "harbor_hub"]
+    assert run["job_id"] == JOB and run["overrides"] == live["runs"][0]["overrides"]
+    assert run["listed_trials"] == len(live["inputs"]) > len(local["inputs"])  # T6: none
+
+    # A damaged or foreign sidecar is ignored, never trusted or fatal.
+    for junk in ("not json", json.dumps({"version": 1, "job": "../x", "show": {}, "rows": []})):
+        saved.write_text(junk)
+        assert main([str(sync / "harbor" / JOB), "--format", "json"]) in (0, 1)
+        doc = json.loads(capsys.readouterr().out)
+        assert all(i["reward"] is None for i in doc["inputs"])

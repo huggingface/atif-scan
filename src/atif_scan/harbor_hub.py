@@ -29,7 +29,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .checks import identifier
-from .harbor_files import configured_agents, count, duration, number, overrides, text_label
+from .harbor_files import (
+    OVERRIDE,
+    _flatten,
+    configured_agents,
+    count,
+    duration,
+    number,
+    overrides,
+    text_label,
+)
 from .loader import TraceError, load_trace
 from .sources import Source, SourceError, local_fingerprint
 
@@ -189,10 +198,12 @@ def listing(
     progress: Progress = _quiet,
     label: str = "job",
     want: set[str] | None = None,
+    shows: dict[str, Mapping] | None = None,
 ) -> tuple[dict, list[dict]]:
     """Run facts and trial rows of one job. With `want` (a leaderboard row's trials),
     paging stops once every wanted trial has been listed: a row often holds one agent's
-    share of a multi-agent job, so the rest of the job isn't needed."""
+    share of a multi-agent job, so the rest of the job isn't needed. `shows` collects the
+    raw `hub job show` record per job (for save_listing)."""
     progress(f"listing {label}")
     show = cli.json("hub", "job", "show", job)
     if not isinstance(show, Mapping):
@@ -206,7 +217,96 @@ def listing(
         if want is not None and want <= rows.keys():
             break
     ordered = sorted(rows.values(), key=lambda r: str(r.get("name") or r["id"]))
+    if shows is not None:
+        shows[job] = show
     return run_meta(job, show, ordered), ordered
+
+
+# Written into each synced job folder so a later scan of the local copy (`atif-scan
+# ~/.cache/atif-scan/harbor/<job>`) keeps the Hub's run facts: task, reward, error, cost.
+SAVED_LISTING = "hub-listing.json"
+ROW_KEYS = (
+    "id",
+    "name",
+    "task_name",
+    "reward",
+    "error_type",
+    "status",
+    "cost_usd",
+    "input_tokens",
+    "cache_tokens",
+    "output_tokens",
+    "started_at",
+    "finished_at",
+)
+SHOW_KEYS = (
+    "name",
+    "n_planned_trials",
+    "n_total_trials",
+    "n_completed_trials",
+    "n_errors",
+    "cost_usd",
+)
+
+
+def _override_values(config: object) -> dict:
+    """Only the override settings `overrides()` looks at: configs can hold env and keys."""
+    return {path: value for path, value in _flatten(config) if OVERRIDE.search(path)}
+
+
+def _reduced(show: Mapping, rows: list[Mapping]) -> dict:
+    """What run_meta/trial_meta read, and nothing else (they re-validate it on load)."""
+    config = show.get("config") if isinstance(show.get("config"), Mapping) else {}
+    datasets = [d for d in config.get("datasets") or [] if isinstance(d, Mapping)]
+    agents = config.get("agents")
+    return {
+        "show": {
+            **{k: show.get(k) for k in SHOW_KEYS},
+            "config": {
+                "datasets": [
+                    {k: d.get(k) for k in ("name", "ref", "task_names")} for d in datasets
+                ],
+                "n_attempts": config.get("n_attempts"),
+                "agents": [{} for a in agents if isinstance(a, dict)]
+                if isinstance(agents, list)
+                else None,
+                **_override_values(config),
+            },
+        },
+        "rows": [
+            {
+                **{k: r.get(k) for k in ROW_KEYS},
+                "config_values": _override_values(r.get("config_values") or {}),
+            }
+            for r in rows
+        ],
+    }
+
+
+def save_listing(dest: Path, job: str, show: Mapping | None, rows: list[Mapping]) -> None:
+    """Atomically write the reduced listing into the job's sync folder (best effort)."""
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp = dest / f".{SAVED_LISTING}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps({"version": 1, "job": job, **_reduced(show or {}, rows)}))
+        tmp.replace(dest / SAVED_LISTING)
+    except (OSError, TypeError, ValueError):
+        pass  # a missing sidecar only means a later local rescan lacks Hub facts
+
+
+def saved_listing(data: bytes) -> tuple[dict | None, dict[str, dict]]:
+    """(run facts, {trial folder label: trial facts}) from a saved listing, re-validated
+    exactly like a live listing; ({}, {}) when it isn't one."""
+    try:
+        value = json.loads(data.decode("utf-8"))
+        job = str(value["job"]).lower()
+        show, rows = value["show"], [r for r in value["rows"] if isinstance(r, Mapping)]
+        if not TRIAL_ID.fullmatch(job) or not isinstance(show, Mapping):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, RecursionError):
+        return None, {}
+    rows = [r for r in rows if valid_row(r)]
+    return run_meta(job, show, rows), {_label(r): trial_meta(r) for r in rows}
 
 
 def _label(row: Mapping) -> str:
@@ -381,9 +481,12 @@ def row_listing(
     return run, jobs
 
 
-def _trial_sources(cli, job, rows, dest, full, workers, refresh, progress=_quiet) -> list[Source]:
+def _trial_sources(
+    cli, job, rows, dest, full, workers, refresh, progress=_quiet, show=None
+) -> list[Source]:
     rows = [r for r in rows if valid_row(r)]
     paths = fetch(cli, job, rows, dest / job, full, workers, refresh, progress)
+    save_listing(dest / job, job, show, rows)
     sources = []
     for row in rows:
         meta = trial_meta(row)
@@ -419,8 +522,10 @@ def harbor_sources(
         ]
         return sources, run
     job = job_id(value)
-    run, rows = listing(cli, job, progress)
-    return _trial_sources(cli, job, rows, dest, full, workers, refresh, progress), run
+    shows: dict[str, Mapping] = {}
+    run, rows = listing(cli, job, progress, shows=shows)
+    sources = _trial_sources(cli, job, rows, dest, full, workers, refresh, progress, shows[job])
+    return sources, run
 
 
 def inspect_job(value: str, cli: HarborCLI | None = None) -> dict:

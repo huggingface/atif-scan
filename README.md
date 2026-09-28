@@ -49,6 +49,10 @@ atif-scan ~/.cache/atif-scan/hf/buckets/org/runs/job           # or scan the cop
 | `--jobs N` | parallel downloads (default 16) |
 | `--no-cache` / `--cache DIR` | disable or relocate the per-trace result cache (default `<sync dir>/results`) |
 
+Synced Harbor Hub jobs also keep `hub-listing.json`: the Hub's per-trial facts (task,
+reward, error, cost, tokens; override settings but no other config) so a later scan of the
+folder itself reports the same rewards and DQ candidates. It is re-validated on every read.
+
 The copies are real traces: delete the sync directory when you're done with a run.
 
 ### Run integrity at a glance
