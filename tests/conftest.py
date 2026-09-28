@@ -8,13 +8,22 @@ def isolated_sync_dir(tmp_path_factory, monkeypatch):
 
 
 def _best(fn, size, runs=3):
+    """Best of `runs`, with the cyclic GC paused: its full collections grow with the heap
+    and make linear code that allocates many objects look superlinear (a runtime effect,
+    not an algorithmic one, and noisy on CI runners)."""
+    import gc
     import time
 
     best = float("inf")
     for _ in range(runs):
-        start = time.perf_counter()
-        fn(size)
-        best = min(best, time.perf_counter() - start)
+        gc.collect()
+        gc.disable()
+        try:
+            start = time.perf_counter()
+            fn(size)
+            best = min(best, time.perf_counter() - start)
+        finally:
+            gc.enable()
     return best
 
 

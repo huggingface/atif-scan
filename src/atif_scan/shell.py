@@ -46,7 +46,7 @@ SHELL_C = re.compile(r"-[a-z]*c[a-z]*")  # -c, -lc, -ec, …
 MAX_DEPTH = 32
 
 
-@dataclass
+@dataclass(slots=True)
 class Command:
     words: list[str] = field(default_factory=list)
     spans: list[Span] = field(default_factory=list)
@@ -92,7 +92,7 @@ class Command:
         return word if word.startswith(("$(", "`")) else word.rsplit("/", 1)[-1]
 
 
-@dataclass
+@dataclass(slots=True)
 class Script:
     commands: list[Command] = field(default_factory=list)  # every command, nested included
     bodies: list[Span] = field(default_factory=list)  # heredoc contents (not commands)
