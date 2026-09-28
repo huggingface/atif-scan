@@ -90,3 +90,21 @@ def test_reference_pack_needs_sources_for_the_tasks(tmp_path, capsys, monkeypatc
     (refs / "path-tracing-reverse").mkdir()
     doc, _ = scan(capsys, root)
     assert {"pack": "reference", "reason": "reference_sources"} in doc["packs"]
+
+
+TB4 = "terminal-bench/terminal-bench"
+
+
+@pytest.mark.parametrize(
+    ("tasks", "dataset", "loaded"),
+    [
+        (["rs-archive-clone", "wdm-design"], TB4, [{"pack": "tb4", "reason": "dataset"}]),
+        # The same package name for a later version with other tasks: not TB4's pack.
+        (["a-tb5-task", "another-tb5-task"], TB4, None),
+        (["rs-archive-clone", "wdm-design"], None, [{"pack": "tb4", "reason": "tasks"}]),
+    ],
+)
+def test_tb4_needs_its_dataset_and_its_tasks(tmp_path, capsys, monkeypatch, tasks, dataset, loaded):
+    monkeypatch.delenv("ATIF_SCAN_REFERENCE", raising=False)
+    doc, _ = scan(capsys, job(tmp_path, tasks, dataset))
+    assert doc.get("packs") == loaded

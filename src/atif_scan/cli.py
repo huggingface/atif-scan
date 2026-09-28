@@ -22,7 +22,7 @@ from .engine import Engine, effective_context
 from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
 from .loader import TraceError
-from .packs import recognise
+from .packs import recognise, tasks_needed
 from .packs.reference import ENV as PACK_ENV
 from .policy import load_rules
 from .questions import BY_ID, Answers, Writer
@@ -266,8 +266,9 @@ def load_checks(args: argparse.Namespace, records: list | None = None) -> list:
     args.packs_loaded = []
     if args.packs == "auto" and records is not None:
         # The recorded task (Hub, result.json) when it wasn't given: small capped reads,
-        # needed only when no dataset was recorded or a pack needs task data.
-        needs_tasks = PACK_ENV in os.environ or not any(r.get("datasets") for r in args.runs)
+        # needed only when no dataset was recorded, the dataset needs the tasks to pin a
+        # pack, or a pack needs task data.
+        needs_tasks = PACK_ENV in os.environ or tasks_needed(args.runs)
         tasks = [
             context.task or (source.details().get("task") if needs_tasks else None)
             for source, context in records
