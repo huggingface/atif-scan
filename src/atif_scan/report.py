@@ -547,25 +547,53 @@ def uncleared_reasons(items: list[dict]) -> dict[str, int]:
     return ranked(reasons)
 
 
-def model_mismatch(items: list[dict], planned_models: int = 1) -> dict | None:
-    """Trials whose recorded model isn't the run's main model: a safety-classifier fallback
-    or substitution. Their rewards and costs belong to another model, so rewarded ones are
-    critical DQ candidates (TB4: 12 trials of a Fable 5.1 row ran Opus 5).
+DATE_SUFFIX = re.compile(r"-(?:\d{4}-\d{2}-\d{2}|\d{8})$")
 
-    A job that plans several agent/model entries (a comparison job) expects that many
-    models: the `planned_models` most common are the run's, and only others are flagged
-    (TB2.1: a 5-agent job read as 1,347 substitutions)."""
-    counts = ranked(Counter(i["model_name"] for i in items if i.get("model_name")))
+
+def model_key(name: str) -> str:
+    """Compare model names without provider prefix, date snapshot or case
+    ("anthropic/claude-fable-5" = "claude-fable-5", "gpt-5.5-2026-04-23" = "gpt-5.5")."""
+    return DATE_SUFFIX.sub("", name.rsplit("/", 1)[-1].lower())
+
+
+def served_models(item: dict) -> dict[str, int]:
+    """Agent steps per model that actually ran in a trial: the step-level models when
+    recorded, else the header's model (a harness can keep the configured model in the
+    header while its steps fall back to another one)."""
+    steps: dict[str, int] = {}
+    for name, n in (item.get("step_models") or {}).items():
+        steps[model_key(name)] = steps.get(model_key(name), 0) + n
+    if steps:
+        return steps
+    return {model_key(item["model_name"]): 1} if item.get("model_name") else {}
+
+
+def model_mismatch(items: list[dict], planned_models: int = 1) -> dict | None:
+    """Trials that ran another model than the run's: a safety-classifier fallback or
+    substitution. Their rewards and costs belong (at least partly) to another model, so
+    rewarded ones are critical DQ candidates (TB4: a Fable 5.1 row ran Opus 5 in 45
+    trials, 33 of them switching mid-trial with the header still saying Fable).
+
+    A trial's model is what its agent steps recorded, else its header. The run's model(s)
+    are the most common per-trial main models; a job that plans several agent/model
+    entries (a comparison job) expects that many (TB2.1: a 5-agent job read as 1,347
+    substitutions)."""
+    served = {i["input_id"]: served_models(i) for i in items}
+    main = Counter(max(m, key=m.get) for m in served.values() if m)
+    counts = ranked(main)
     planned = set(list(counts)[: max(planned_models, 1)])
-    if len(counts) <= len(planned):
+    other = [i for i in items if set(served[i["input_id"]]) - planned]
+    if not other:
         return None
     expected = next(iter(counts))
-    other = [i for i in items if i.get("model_name") and i["model_name"] not in planned]
+    by_model = Counter(m for i in other for m in set(served[i["input_id"]]) - planned)
     return {
         "expected": expected,
         "planned_models": sorted(planned) if len(planned) > 1 else None,
-        "other_models": {m: n for m, n in counts.items() if m not in planned},
+        "other_models": dict(by_model.most_common()),  # model -> trials that used it
         "trial_ids": [i["input_id"] for i in other],
+        # Switched mid-trial: some steps on the run's model, some on another.
+        "switched_ids": [i["input_id"] for i in other if set(served[i["input_id"]]) & planned],
         "rewarded_ids": [i["input_id"] for i in other if _outcome(i)],
         "cost_usd": round(sum(i.get("cost_usd") or 0 for i in other), 2),
     }

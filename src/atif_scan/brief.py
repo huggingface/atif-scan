@@ -49,6 +49,7 @@ def output_ratios(items: list[dict]) -> dict | None:
 def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price=None) -> dict:
     items = doc["inputs"]
     ov = overview(doc, dq, min_trials, expect_tasks=expect_tasks)
+    other_model = frozenset((ov.get("model_mismatch") or {}).get("trial_ids") or [])
     agents = Counter(
         " / ".join(
             p for p in (i.get("agent_name"), i.get("agent_version"), i.get("model_name")) if p
@@ -94,8 +95,8 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "runs": ov["runs"],
         "agents": dict(agents.most_common()),
         "overview": ov,
-        "cost_estimate": cost_estimate(items, price),
-        "unmetered_work": unmetered_work(items),
+        "cost_estimate": cost_estimate(items, price, other_model),
+        "unmetered_work": unmetered_work(items, other_model),
         "tasks_known": sum(1 for i in items if i.get("task")),
         "missing_activity": missing_activity(items),
         "output_ratio": output_ratios(items),
@@ -336,6 +337,7 @@ def brief_text(b: dict) -> str:
         )
 
     # COST
+    cost_notes: list[str] = []
     line = f"COST       ${c['total_usd']:,.2f} reported"
     tk = ce.get("tokens") or {}
     if ce["unpriced"] and ce["unpriced"] == n - ce["no_usage"] and ce["estimate_usd"] is None:
@@ -353,8 +355,26 @@ def brief_text(b: dict) -> str:
             " (uncached/cached/output)"
         )
     elif ce["unpriced"]:
+        mm = ov.get("model_mismatch") or {}
+        if ce.get("priced_other_model") and mm.get("cost_usd"):
+            spent = mm["cost_usd"]
+            line += (
+                " (all of it on another model)"
+                if abs(spent - c["total_usd"]) < 0.01
+                else f" (${spent:,.2f} of it on another model)"
+            )
         line += f" · {WARN} {ce['unpriced']} unpriced trial(s) ({_pct(ce['unpriced'], n)})"
-        if ce["estimate_usd"] is not None:
+        if ce["estimate_usd"] is None and ce.get("priced_other_model"):
+            ut = ce["unpriced_tokens"]
+            cost_notes += [
+                f"{'':<10} {WARN} not estimated: only {ce['priced_other_model']} trial(s) on"
+                " another model are priced, and their prices aren't this model's",
+                f"{'':<10} {INFO} unpriced tokens:"
+                f" {_m(ut['uncached_input'] + ut['cached_input'])} input"
+                f" ({_m(ut['cached_input'])} cached) · {_m(ut['output'])} output"
+                " · estimate with --price U,C,O ($/M)",
+            ]
+        elif ce["estimate_usd"] is not None:
             corrected = c["total_usd"] + ce["estimate_usd"]
             share = 100 * ce["estimate_usd"] / corrected if corrected else 0
             line += f" → est. +${ce['estimate_usd']:,.2f} (≈ ${corrected:,.2f}, +{share:.1f}%)"
@@ -368,6 +388,7 @@ def brief_text(b: dict) -> str:
     if idle and ce["no_usage"] < n:
         line += f" · {idle} without usage data (no recorded work)"
     lines.append(line)
+    lines += cost_notes
     if um["trials"]:
         # Real work the reported total silently leaves out.
         why = ", ".join(
@@ -427,6 +448,7 @@ def brief_text(b: dict) -> str:
             f"MODEL      {BAD} critical  {len(mm['trial_ids'])} trial(s)"
             f" ({_pct(len(mm['trial_ids']), n)}) ran another model than {mm['expected']}:"
             f" {others} · {len(mm['rewarded_ids'])} rewarded · ${mm['cost_usd']:,.2f}"
+            + (f" · {len(mm['switched_ids'])} switched mid-trial" if mm.get("switched_ids") else "")
         )
         lines.append(
             f"{'':<10} fallback or substitution: those rewards and costs aren't this model's"

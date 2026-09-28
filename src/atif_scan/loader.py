@@ -626,6 +626,7 @@ def parse_trace(value: object) -> Trace:
                 agent_only_fields=raw["source"] != "agent"
                 and any(raw.get(k) for k in ("tool_calls", "reasoning_content", "metrics")),
                 completion_tokens=step_completion_tokens(raw.get("metrics")),
+                model_name=model_label(raw.get("model_name")),
             )
         )
     metrics = value.get("final_metrics")
@@ -661,16 +662,21 @@ def step_completion_tokens(metrics: object) -> int | None:
     return _count(metrics.get("completion_tokens")) if isinstance(metrics, dict) else None
 
 
+def model_label(v: object) -> str | None:
+    """A label-safe agent/model name, else None (e.g. Claude Code's `<synthetic>`
+    placeholder, or a name carrying query parameters, stays unknown)."""
+    return v if isinstance(v, str) and re.fullmatch(r"[\w.:@/+-]{1,100}", v) else None
+
+
 def agent_info(value: object) -> tuple[str | None, str | None, str | None]:
     """(name, version, model_name) from the ATIF root `agent` block, label-safe only."""
     if not isinstance(value, dict):
         return (None, None, None)
-
-    def label(key: str) -> str | None:
-        v = value.get(key)
-        return v if isinstance(v, str) and re.fullmatch(r"[\w.:@/+-]{1,100}", v) else None
-
-    return (label("name"), label("version"), label("model_name"))
+    return (
+        model_label(value.get("name")),
+        model_label(value.get("version")),
+        model_label(value.get("model_name")),
+    )
 
 
 # Harness notices that earlier conversation history was replaced by a summary.

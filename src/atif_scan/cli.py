@@ -188,6 +188,8 @@ def trace_facts(trace) -> dict:
         "agent_name": trace.agent[0],
         "agent_version": trace.agent[1],
         "model_name": trace.agent[2],
+        # Agent steps per step-level model (at most 8, most used first): what actually ran.
+        "step_models": dict(sorted(trace.step_models.items(), key=lambda kv: -kv[1])[:8]) or None,
         "llm_calls": trace.llm_calls or trace.agent_steps,
         # A number and a fixed code only: authored characters per reported completion token.
         "chars_per_output_token": round(ratio.value, 2) if ratio else None,
@@ -211,6 +213,7 @@ TRACE_FACTS = (
     "agent_name",
     "agent_version",
     "model_name",
+    "step_models",
     "llm_calls",
     "chars_per_output_token",
     "output_ratio_basis",

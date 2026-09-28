@@ -119,6 +119,10 @@ class Step:
     agent_only_fields: bool = False
     # metrics.completion_tokens when recorded as a non-negative integer.
     completion_tokens: int | None = None
+    # The step's own `model_name` (label-safe), which can differ from the root agent
+    # block's: a harness falling back to another model mid-run keeps the configured
+    # model in the header (Terminus 2 on TB2.1: 79 of 445 Fable 5 trials ran Opus 4.8).
+    model_name: str | None = None
 
     @property
     def authored(self) -> bool:
@@ -202,6 +206,15 @@ class Trace:
     agent: tuple[str | None, str | None, str | None] = (None, None, None)
     # Bare `[REDACTED]` JSON values the loader read as null (a publisher redaction defect).
     redacted_values: int = 0
+
+    @cached_property
+    def step_models(self) -> dict[str, int]:
+        """Agent steps per recorded step model (authored steps only)."""
+        counts: dict[str, int] = {}
+        for step in self.steps:
+            if step.authored and step.model_name:
+                counts[step.model_name] = counts.get(step.model_name, 0) + 1
+        return counts
 
     @cached_property
     def results_unrecorded(self) -> bool:

@@ -451,3 +451,80 @@ def test_brief_warns_about_work_without_usage():
         brief({"scanner_version": "dev", "inputs": items[:-1], "coverage": {}, "runs": []})
     )
     assert "every trial priced" in clean and "did work" not in clean
+
+
+def _served(i, reward, steps, header="anthropic/main-model", cost=None, tokens=True):
+    it = _item(i, header, reward)
+    it.update(
+        step_models=steps,
+        cost_usd=cost,
+        input_tokens=1_000_000 + 1000 * i if tokens else None,
+        cache_tokens=500_000,
+        output_tokens=20_000 + 100 * i if tokens else None,
+    )
+    return it
+
+
+def test_step_models_reveal_a_fallback_the_header_hides():
+    """Regression (TB2.1 Terminus 2 / Fable 5 row): every header said claude-fable-5, but
+    77 trials' steps ran claude-opus-4-8 end to end and 2 switched mid-trial. Only those
+    were priced, so the cost fit priced Fable at Opus rates."""
+    from atif_scan.brief import brief, brief_text
+
+    items = [_served(i, 1.0, {"main-model": 10}) for i in range(30)]
+    items += [_served(30 + i, 1.0, {"fallback-model": 10}, cost=1.0) for i in range(25)]
+    items.append(_served(60, 0.0, {"main-model": 4, "fallback-model": 6}, cost=1.0))
+    b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": []})
+    mm, ce = b["overview"]["model_mismatch"], b["cost_estimate"]
+    assert mm["expected"] == "main-model" and len(mm["trial_ids"]) == 26
+    assert mm["switched_ids"] == ["t60"] and mm["other_models"] == {"fallback-model": 26}
+    assert len(b["overview"]["disqualification"]["candidate_ids"]) == 25
+    # 26 priced trials ran the fallback: no fit on them, even though there are >= 20.
+    assert ce["priced_other_model"] == 26 and ce["estimate_usd"] is None
+    text = brief_text(b)
+    assert "ran another model than main-model: fallback-model 26" in text
+    assert "1 switched mid-trial" in text
+    assert "(all of it on another model)" in text
+    assert "not estimated: only 26 trial(s) on another model are priced" in text
+    assert "unpriced tokens:" in text and "--price" in text
+
+
+def test_model_names_differing_only_in_prefix_date_or_case_are_the_same_model():
+    from atif_scan.brief import brief
+    from atif_scan.report import model_key
+
+    assert model_key("anthropic/Claude-Fable-5") == model_key("claude-fable-5")
+    assert model_key("gpt-5.5-2026-04-23") == model_key("openai/gpt-5.5") == "gpt-5.5"
+    assert model_key("claude-3-5-sonnet-20241022") == "claude-3-5-sonnet"
+    assert model_key("claude-opus-4-8") != model_key("claude-fable-5")
+    items = [_served(i, 1.0, {"openai/gpt-5.5": 5}, header="gpt-5.5") for i in range(3)]
+    items += [_served(3, 1.0, {"gpt-5.5-2026-04-23": 5}, header="openai/gpt-5.5")]
+    items += [_served(4, 1.0, None, header="GPT-5.5")]  # no step models: header decides
+    b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": []})
+    assert b["overview"]["model_mismatch"] is None
+
+
+def test_step_model_names_are_parsed_label_safe(tmp_path, capsys):
+    """Claude Code's `<synthetic>` placeholder (locally generated messages) is not a model."""
+    trial = tmp_path / "run" / "t1"
+    trial.mkdir(parents=True)
+    steps = [
+        {"step_id": 1, "source": "user", "message": "do it"},
+        {"step_id": 2, "source": "agent", "message": "ok", "model_name": "claude-main-1"},
+        {"step_id": 3, "source": "agent", "message": "ok", "model_name": "claude-other-2"},
+        {"step_id": 4, "source": "agent", "message": "err", "model_name": "<synthetic>"},
+        {"step_id": 5, "source": "agent", "message": "ok", "model_name": "claude-main-1"},
+    ]
+    (trial / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "ATIF-v1.2",
+                "session_id": "s",
+                "agent": {"name": "a", "version": "1", "model_name": "anthropic/claude-main-1"},
+                "steps": steps,
+            }
+        )
+    )
+    main([str(tmp_path / "run"), "--format", "json"])
+    item = json.loads(capsys.readouterr().out)["inputs"][0]
+    assert item["step_models"] == {"claude-main-1": 2, "claude-other-2": 1}

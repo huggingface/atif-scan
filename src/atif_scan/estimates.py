@@ -60,22 +60,40 @@ def _price(rates: list[float], row: list[float]) -> float:
     return sum(r * v / 1e6 for r, v in zip(rates, row, strict=True))
 
 
-def cost_estimate(items: list[dict], price: tuple[float, float, float] | None = None) -> dict:
+def cost_estimate(
+    items: list[dict],
+    price: tuple[float, float, float] | None = None,
+    other_model: frozenset[str] = frozenset(),
+) -> dict:
+    """`other_model`: input IDs of trials that ran another model than the run's (e.g. a
+    fallback). Their prices are another model's, so they never train the fit: a run
+    whose only priced trials were fallbacks gets no estimate rather than a wrong one."""
     has_tokens = [
         (i, _features(i)) for i in items if i.get("input_tokens") or i.get("output_tokens")
     ]
     unpriced = [row for i, row in has_tokens if not i.get("cost_usd")]
-    priced = [(row, float(i["cost_usd"])) for i, row in has_tokens if i.get("cost_usd")]
+    priced = [
+        (row, float(i["cost_usd"]))
+        for i, row in has_tokens
+        if i.get("cost_usd") and i["input_id"] not in other_model
+    ]
+    priced_other = sum(
+        1 for i, _ in has_tokens if i.get("cost_usd") and i["input_id"] in other_model
+    )
     result: dict = {
         "unpriced": len(unpriced),
         "unpriced_ids": [i["input_id"] for i, _ in has_tokens if not i.get("cost_usd")],
         "no_usage": len(items) - len(has_tokens),
+        "priced_other_model": priced_other,  # priced trials left out of the fit
         "estimate_usd": None,
         "method": None,
         "median_abs_error_usd": None,
         "rates_per_mtok": None,
         "tokens": {
             kind: int(sum(row[n] for _, row in has_tokens)) for n, kind in enumerate(TOKEN_KINDS)
+        },
+        "unpriced_tokens": {
+            kind: int(sum(row[n] for row in unpriced)) for n, kind in enumerate(TOKEN_KINDS)
         },
     }
     if not unpriced:
@@ -87,7 +105,11 @@ def cost_estimate(items: list[dict], price: tuple[float, float, float] | None = 
         result["estimate_usd"] = round(sum(_price(rates, row) for row in unpriced), 2)
         return result
     if len(priced) < MIN_PRICED:
-        result["method"] = f"not estimated: fewer than {MIN_PRICED} priced trials"
+        result["method"] = f"not estimated: fewer than {MIN_PRICED} priced trials" + (
+            f" on the run's model ({priced_other} priced trial(s) ran another model)"
+            if priced_other
+            else ""
+        )
         return result
     x = [row for row, _ in priced]
     y = [cost for _, cost in priced]
@@ -120,8 +142,9 @@ def _work(item: dict) -> bool:
     return bool(item.get("llm_calls") or item.get("tool_calls"))
 
 
-def unmetered_work(items: list[dict]) -> dict:
-    """Trials with recorded agent work but no usage (tokens) and no cost at all."""
+def unmetered_work(items: list[dict], other_model: frozenset[str] = frozenset()) -> dict:
+    """Trials with recorded agent work but no usage (tokens) and no cost at all.
+    `other_model` trials (another model's prices) are left out of the reference fit."""
     rows = [
         i
         for i in items
@@ -146,7 +169,10 @@ def unmetered_work(items: list[dict]) -> dict:
     refs = [
         (float(i["llm_calls"]), float(i["cost_usd"]))
         for i in items
-        if i.get("cost_usd") and (i.get("llm_calls") or 0) >= 5 and not i.get("compacted")
+        if i.get("cost_usd")
+        and (i.get("llm_calls") or 0) >= 5
+        and not i.get("compacted")
+        and i["input_id"] not in other_model
     ]
     if len(refs) < MIN_PRICED:
         result["method"] = f"not estimated: fewer than {MIN_PRICED} priced trials with LLM calls"
