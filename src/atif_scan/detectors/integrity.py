@@ -22,17 +22,15 @@ SMEAR_MIN_STEPS = 3
 
 
 def _result(hits: list[Locator], complete: bool, matched: bool | None = None) -> Detection:
-    matched = bool(hits) if matched is None else matched
+    """`matched` decides a trace-level fact that has no locator of its own."""
+    if matched is None:
+        return Detection.of(hits, complete)
     status = Status.MATCH if matched else Status.NO_MATCH if complete else Status.UNKNOWN
     return Detection(status, tuple(dict.fromkeys(hits)), complete)
 
 
 def _meta(step) -> Locator:
     return Locator(step.index, Channel.METADATA)
-
-
-def _agent(step) -> bool:
-    return step.source == "agent" and not step.copied
 
 
 def timestamp_invalid(trace: Trace) -> Detection:
@@ -43,7 +41,7 @@ def timestamp_invalid(trace: Trace) -> Detection:
 
 def timestamp_missing(trace: Trace) -> Detection:
     """Agent steps without a usable timestamp: timing evidence is absent for them."""
-    hits = [_meta(s) for s in trace.steps if _agent(s) and s.timestamp is None]
+    hits = [_meta(s) for s in trace.steps if s.authored and s.timestamp is None]
     return _result(hits, complete=True)
 
 
@@ -145,10 +143,7 @@ def web_results_not_recorded(trace: Trace) -> Detection:
         wanted = WEB_INPUT.get(call.tool)
         if wanted is None:
             continue
-        unlinked = len(step.calls) == 1 and any(o.source_call_id is None for o in step.observations)
-        has_result = unlinked or any(
-            call.result_key and o.source_call_id == call.result_key for o in step.observations
-        )
+        has_result = bool(step.results_for(call))
         has_input = any(ch == wanted and c.understood and c.text for ch, c in call.fields)
         if not (has_result and has_input):
             hits.append(_meta(step))
@@ -183,17 +178,11 @@ def subagent_unrecorded(trace: Trace) -> Detection:
     """A subagent was launched but its result is only a status stub: its tool calls (and
     anything it fetched) aren't in this trace (ACE `explore`, async Claude Code agents)."""
     hits = []
-    for step in trace.steps:
-        if step.source != "agent" or step.copied:
+    for step, call in trace.agent_calls():
+        if call.name not in SUBAGENT_TOOLS:
             continue
-        results = {o.source_call_id: o for o in step.observations}
-        for call in step.calls:
-            if call.name not in SUBAGENT_TOOLS:
-                continue
-            obs = results.get(call.result_key)
-            text = obs.content.text if obs is not None else ""
-            if SUBAGENT_STUB.match(text or ""):
-                hits.append(Locator(step.index, Channel.MESSAGE))
+        if all(SUBAGENT_STUB.match(o.content.text) for _, o in step.results_for(call)):
+            hits.append(Locator(step.index, Channel.MESSAGE))
     return _result(hits, complete=True)
 
 
@@ -267,7 +256,7 @@ def _string_chars(value: object) -> int:
 
 def output_ratio(trace: Trace) -> OutputRatio | None:
     """None when no completion tokens are reported (or none remain after reasoning)."""
-    agent = [s for s in trace.steps if _agent(s)]
+    agent = [s for s in trace.steps if s.authored]
     usage = trace.usage
     if usage is not None and usage.completion_tokens is not None:
         steps, tokens, whole = agent, usage.completion_tokens, True
@@ -338,7 +327,9 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec("integrity.actions_not_recorded", Severity.MEDIUM), actions_not_recorded
         ),
         TraceCheck(CheckSpec("integrity.trace_head_missing", Severity.INFO), trace_head_missing),
-        TraceCheck(CheckSpec("integrity.subagent_unrecorded", Severity.LOW), subagent_unrecorded),
+        TraceCheck(
+            CheckSpec("integrity.subagent_unrecorded", Severity.LOW, "2"), subagent_unrecorded
+        ),
         TraceCheck(
             CheckSpec("integrity.web_results_not_recorded", Severity.LOW),
             web_results_not_recorded,

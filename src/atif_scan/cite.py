@@ -8,6 +8,7 @@ and keep it out of Git.
 
 from __future__ import annotations
 
+import functools
 import re
 
 from . import credentials
@@ -19,40 +20,68 @@ WINDOW = 160  # characters of context on each side of a matched span
 CONTEXT = 240  # characters of before/after context
 PER_FINDING = 3  # evidence items cited per finding
 
-SECRETS = [
-    (
-        re.compile(
-            r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)", re.S
-        ),
-        "[private key]",
-    ),
+# Token shapes are `credentials.TOKEN_SHAPES`; these are the masks beyond it and beyond
+# `credentials.mask`'s secret-named values: header values, bearer tokens, unquoted
+# secret-named values, URL userinfo and query-string keys. The sk-/pk-/rk- shape stays
+# here too because credentials requires a digit in it (fewer false findings); citations
+# mask it either way.
+HEADERS = [
     (re.compile(r"(?i)\b(authorization|proxy-authorization)\s*[:=]\s*[^\n\"']+"), r"\1: ***"),
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"), "Bearer ***"),
-    (
-        re.compile(
-            r"(?i)\b([A-Z0-9_]*(?:api[_-]?key|token|secret|passw(?:or)?d|credential)[A-Z0-9_]*)"
-            r"(\s*[:=]\s*|['\"]\s*:\s*['\"])([^\s'\"&]{4,})"
-        ),
-        r"\1\2***",
-    ),
+]
+SHAPES = [
     (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}"), "***"),
-    (re.compile(r"\bhf_[A-Za-z0-9]{20,}"), "***"),
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), "***"),
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), "***"),
-    (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), "***"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***"),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), "***"),
     (re.compile(r"(://[^/\s:@]+):[^/\s@]+@"), r"\1:***@"),
     (re.compile(r"(?i)([?&](?:token|key|sig|signature|access_token|api_key)=)[^&\s]+"), r"\1***"),
 ]
+SECRETS = HEADERS + SHAPES
+# NAME: value / NAME=value / "name": "value" where NAME contains a secret word. The name is
+# matched as a whole identifier and tested separately (one regex with the word inside the
+# identifier was quadratic on long identifiers); the value is only checked for length in
+# the lookahead so a rejected name doesn't swallow a later `token=...` in its value.
+SECRET_WORD = re.compile(r"(?i)api[_-]?key|token|secret|passw(?:or)?d|credential")
+KEYED = re.compile(r"(?<![\w-])([\w-]+)(\s*[:=]\s*|['\"]\s*:\s*['\"])(?=[^\s'\"&]{4})")
+KEYED_VALUE = re.compile(r"[^\s'\"&]+")
+
+
+def _keyed(text: str) -> list[tuple[int, int, int]]:
+    """(match start, value start, value end) of secret-named values."""
+    out = []
+    pos = 0
+    for m in KEYED.finditer(text):
+        if m.start() < pos or not SECRET_WORD.search(m[1]):
+            continue
+        end = KEYED_VALUE.match(text, m.end()).end()
+        out.append((m.start(), m.end(), end))
+        pos = end
+    return out
 
 
 def mask(text: str, known: frozenset[str] = frozenset()) -> str:
     """Mask credential shapes, secret-named values and any `known` secret value (the same
-    secret seen elsewhere in the trace, e.g. printed bare on its own line)."""
-    for pattern, replacement in SECRETS:
+    secret seen elsewhere in the trace, e.g. printed bare on its own line).
+
+    Order matters: private-key blocks first (a header mask stops at the line end), then
+    the broad header/assignment masks (a token glued to another would otherwise be cut by
+    its shape and the rest left unmatched), then token shapes, then `credentials.mask`,
+    whose named-value test sees tokens already masked (a glued token isn't "code")."""
+    text = credentials.PRIVATE_KEY.sub("[private key]", text)
+    for pattern, replacement in HEADERS:
+        text = pattern.sub(replacement, text)
+    text = _mask_keyed(text)
+    text = credentials.TOKEN_SHAPES.sub("***", text)
+    for pattern, replacement in SHAPES:
         text = pattern.sub(replacement, text)
     return credentials.mask(text, known)
+
+
+def _mask_keyed(text: str) -> str:
+    out, last = [], 0
+    for _, value, end in _keyed(text):
+        out += [text[last:value], "***"]
+        last = end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def trace_secrets(trace: Trace) -> frozenset[str]:
@@ -67,6 +96,7 @@ def trace_secrets(trace: Trace) -> frozenset[str]:
 
 def _secret_spans(text: str, known: frozenset[str]) -> list[tuple[int, int]]:
     spans = [m.span() for pattern, _ in SECRETS for m in pattern.finditer(text)]
+    spans += [(start, end) for start, _, end in _keyed(text)]
     spans += [f.value for f in credentials.find(text)]
     for value in known:
         start = text.find(value)
@@ -76,14 +106,20 @@ def _secret_spans(text: str, known: frozenset[str]) -> list[tuple[int, int]]:
     return spans
 
 
+@functools.lru_cache(maxsize=256)
+def _masked(text: str, known: frozenset[str]) -> str:
+    """`mask`, memoised: one result or intent is often cited by several locators."""
+    return mask(text, known)
+
+
 # Mask the whole text *before* cutting windows, so a secret can't straddle a cut.
 def _head(text: str, limit: int = CONTEXT, known: frozenset[str] = frozenset()) -> str:
-    masked = mask(text, known)
+    masked = _masked(text, known)
     return masked[:limit] + ("…" if len(masked) > limit else "")
 
 
 def _tail(text: str, limit: int = CONTEXT, known: frozenset[str] = frozenset()) -> str:
-    masked = mask(text, known)
+    masked = _masked(text, known)
     return ("…" if len(masked) > limit else "") + masked[-limit:]
 
 

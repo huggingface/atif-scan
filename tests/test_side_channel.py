@@ -39,6 +39,10 @@ def results(t):
         'api_key="opaqueCredential98765"',
         "--api-key opaqueCredential98765",
         "x-api-key: opaqueCredential98765",
+        "STRIPE_SECRET_KEY=opaqueCredential98765",
+        "sk-proj-abcdEFGH1234ijklMNOP",
+        "git clone --token opaqueCredential98765 repo",
+        "DB_PASSWORD=Opaque98765+/abc==",
     ],
 )
 def test_credentials_detected_and_masked(text):
@@ -54,6 +58,22 @@ def test_credentials_detected_and_masked(text):
         'SSH_KEY_PATH="/root/.ssh/id" MY_TOKEN=${TOKEN}',
         'api_key="your-key"',
         "env",
+        # Regressions from TB2.1 Claude Code traces: code and public keys, not secrets.
+        "predicted = max(scores, key=scores.get)",
+        "largest = max(contours, key=cv2.contourArea)\\n",
+        'const key = "SPECIAL_" + fn.toString(16);',
+        "KeyError: 'adapt_engaged_setting'",
+        '{"apiKeySource": "ANTHROPIC_API_KEY"}',
+        '"captchaApiKey":"6LcFakeSiteKey0123456789","stripePublicKey":"pk_live_abcDEF123456"',
+        "openssl pkcs12 -password=KEY_PASSWORD -in cert.pem",
+        "(define (rk-free-variables-list expr) ...)",
+        "compare per-token probabilities; a multi-token approach.",
+        "keyUsage = digitalSignature,keyEncipherment",
+        "out = model(x, past_key_values=cache.past_values, src_key_padding_mask=mask_tensor)",
+        "token_owner=list_owner_address, secret_oid=3f2a9c1b7d4e5f60",
+        'token_chars = "ABCDEFGHIJ"',
+        "docker run --secret=<secret-id>] secret=cfg[secret_name]",
+        "askpass -password SSH_ASKPASS_REQUIRE=force",
     ],
 )
 def test_nonsecrets_not_detected(text):

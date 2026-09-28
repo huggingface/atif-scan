@@ -23,8 +23,9 @@
   credential-bearing traces: keep the directory private, never inside a repository, and
   delete it when done (`--no-sync` streams without keeping files). The sync layout is
   confined to that directory (path traversal is rejected).
-- The result cache (`--cache`, default `<sync dir>/results`) stores the same allowlisted
-  per-trace results as the JSON report, never citations or trace text.
+- The result cache (`--cache`, default `<sync dir>/results`) stores a subset of the
+  allowlisted JSON report (the trace-derived results; run facts are re-read each scan),
+  never citations or trace text.
 - Besides trajectories, the scanner reads only small listed reward files
   (`verifier/reward.{json,txt}`, at most 4 KiB) to record the reward. `--inspect` reads no
   file contents.

@@ -24,14 +24,28 @@ class TraceError(ValueError):
 
 
 # Harness text standing in for an attached image (Devin CLI: "[Image 1]").
-MEDIA_PLACEHOLDER = re.compile(r"^\s*\[(?:Image|Screenshot|Attachment)\s*#?\d*\]\s*$", re.I | re.M)
+# Padding is same-line whitespace only: `^\s*` would span blank lines and rescan every
+# run of them from each line start (quadratic); the matches are the same.
+MEDIA_PLACEHOLDER = re.compile(
+    r"^[^\S\n]*\[(?:Image|Screenshot|Attachment)\s*#?\d*\][^\S\n]*$", re.I | re.M
+)
+# Media serialized into a string: Codex `view_image` results (a repr of
+# `[{'type': 'input_image', 'image_url': 'data:image/png;base64,…'}]`), Claude Code's
+# image-size note for a Read image, and PDF/image blocks written as JSON (TB2.1).
+MEDIA_INLINE = re.compile(
+    r"\bdata:(?:image|audio|video)/[\w.+-]+;base64,|"
+    r"^\s*\[Image: original \d+x\d+, displayed at \d+x\d+\.|"
+    r"""["']media_type["']\s*:\s*["'](?:image/|audio/|video/|application/pdf)""",
+    re.I | re.M,
+)
 
 
 def content(value: object) -> Content:
     if value is None:
         return Content()
     if isinstance(value, str):
-        return Content(value, media=bool(MEDIA_PLACEHOLDER.search(value)))
+        media = bool(MEDIA_PLACEHOLDER.search(value) or MEDIA_INLINE.search(value[:4096]))
+        return Content(value, media=media)
     if isinstance(value, list):
         parts = [content(part) for part in value]
         return Content(
@@ -371,9 +385,9 @@ def classify(key: str | None, value: str) -> tuple[Channel, str]:
 
 # Codex apply_patch envelope: the file paths live inside the patch text.
 PATCH_ENVELOPE = re.compile(r"^\*\*\* Begin Patch\b", re.M)
-PATCH_PATHS = re.compile(
-    r"^\*\*\* (?:Add File|Update File|Delete File|Move to): *(\S.*?)\s*$", re.M
-)
+# Greedy to the line end, then rstrip(): a lazy `(\S.*?)\s*$` retries `\s*$` at every
+# character (quadratic on long lines).
+PATCH_PATHS = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): *(\S.*)$", re.M)
 
 
 def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
@@ -394,7 +408,9 @@ def call_fields(tool: str, args: object) -> tuple[tuple[Channel, Content], ...]:
             channel, text = classify(key, value)
             fields.append((channel, content(text)))
             if channel == Channel.PAYLOAD and PATCH_ENVELOPE.search(value):
-                fields.extend((Channel.PATH, content(m)) for m in PATCH_PATHS.findall(value))
+                fields.extend(
+                    (Channel.PATH, content(m.rstrip())) for m in PATCH_PATHS.findall(value)
+                )
         elif isinstance(value, list) and _norm(key) in COMMAND_KEYS:
             fields.append((Channel.COMMAND, Content(understood=False)))  # e.g. ["bash", 1]
     required = REQUIRED.get(tool)
@@ -439,7 +455,7 @@ def _drop_rejected_unknowns(calls: list[ToolCall], observations: list[Observatio
     rejected = {
         o.source_call_id
         for o in observations
-        if o.source_call_id and INPUT_REJECTED.match(o.content.text or "")
+        if o.source_call_id and INPUT_REJECTED.match(o.content.text)
     }
     return [
         replace(c, fields=tuple(f for f in c.fields if f[1].understood))
@@ -567,7 +583,7 @@ def parse_trace(value: object) -> Trace:
         for raw in value["steps"]
         if isinstance(raw, dict) and raw.get("source") == "agent"
     ]
-    counted = [c for c in calls if type(c) is int and c >= 0]
+    counted = [c for c in calls if _count(c) is not None]
     return Trace(
         version,
         tuple(steps),
@@ -583,9 +599,13 @@ def parse_trace(value: object) -> Trace:
     )
 
 
-def step_completion_tokens(metrics: object) -> int | None:
-    value = metrics.get("completion_tokens") if isinstance(metrics, dict) else None
+def _count(value: object) -> int | None:
+    """A recorded count: a non-negative int (not a bool or float), else None."""
     return value if type(value) is int and value >= 0 else None
+
+
+def step_completion_tokens(metrics: object) -> int | None:
+    return _count(metrics.get("completion_tokens")) if isinstance(metrics, dict) else None
 
 
 def agent_info(value: object) -> tuple[str | None, str | None, str | None]:
@@ -617,20 +637,16 @@ def usage(metrics: object) -> Usage | None:
     if not isinstance(metrics, dict):
         return None
 
-    def count(key: str) -> int | None:
-        value = metrics.get(key)
-        return value if type(value) is int and value >= 0 else None
-
     extra = metrics.get("extra") if isinstance(metrics.get("extra"), dict) else {}
     reasoning = extra.get("total_reasoning_tokens")
     cost = metrics.get("total_cost_usd")
     cost = float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
     found = Usage(
         cost,
-        count("total_prompt_tokens"),
-        count("total_completion_tokens"),
-        count("total_cached_tokens"),
-        reasoning if type(reasoning) is int and reasoning >= 0 else None,
+        _count(metrics.get("total_prompt_tokens")),
+        _count(metrics.get("total_completion_tokens")),
+        _count(metrics.get("total_cached_tokens")),
+        _count(reasoning),
     )
     return None if found == Usage() else found
 

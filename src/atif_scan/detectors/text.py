@@ -3,11 +3,40 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 
 from ..checks import CheckSpec, Context, Detection, Status
 from ..model import TOOL_INPUT_CHANNELS, Channel, Locator, Surface, Trace
+
+
+@dataclass(frozen=True)
+class Gated:
+    """A case-insensitive pattern behind a literal prefilter: for ASCII text, search only
+    when some lowercase `hint` occurs in it. Every match must contain a hint (tests check
+    each alternative of a gated pattern). Non-ASCII text always gets the full regex:
+    re.I folds some non-ASCII letters to ASCII ones (ı, ſ, İ, the Kelvin sign)."""
+
+    pattern: re.Pattern[str]
+    hints: tuple[str, ...]
+
+    def _may_match(self, text: str) -> bool:
+        if not text.isascii():
+            return True
+        low = text.lower()
+        return any(h in low for h in self.hints)
+
+    def search(self, text: str) -> re.Match[str] | None:
+        return self.pattern.search(text) if self._may_match(text) else None
+
+    def finditer(self, text: str) -> Iterator[re.Match[str]]:
+        return self.pattern.finditer(text) if self._may_match(text) else iter(())
+
+
+def gated(pattern: re.Pattern[str], hints: tuple[str, ...]) -> Gated:
+    if not pattern.flags & re.I or any(h != h.lower() for h in hints):
+        raise ValueError("gated_pattern_needs_re_i_and_lowercase_hints")
+    return Gated(pattern, hints)
 
 
 def matched(surface: Surface, result: object) -> Locator | None:
@@ -19,11 +48,6 @@ def matched(surface: Surface, result: object) -> Locator | None:
     if isinstance(result, tuple) and len(result) == 2:
         return replace(surface.at, span=(int(result[0]), int(result[1])))
     return surface.at
-
-
-def _result(hits: list, complete: bool) -> Detection:
-    status = Status.MATCH if hits else Status.NO_MATCH if complete else Status.UNKNOWN
-    return Detection(status, tuple(dict.fromkeys(hits)), complete)
 
 
 @dataclass(frozen=True)
@@ -61,7 +85,7 @@ class SurfaceDetector:
                 hits.append(at)
             elif self.undecidable is not None and self.undecidable(surface):
                 complete = False
-        return _result(hits, complete)
+        return Detection.of(hits, complete)
 
 
 class RegexDetector(SurfaceDetector):
@@ -97,7 +121,29 @@ class ObservationDetector:
             at = matched(surface, self.predicate(surface))
             if at is not None:
                 hits.append(at)
-        return _result(hits, complete)
+        return Detection.of(hits, complete)
+
+
+@dataclass(frozen=True)
+class PromptDetector:
+    """Match a pattern against the messages the harness gave the agent: every step that
+    isn't the agent's (system/user prompts, copied context). Unknown when one of those
+    messages isn't understood."""
+
+    spec: CheckSpec
+    pattern: re.Pattern[str] = field(repr=False)
+
+    def evaluate(self, trace: Trace, context: Context) -> Detection:
+        hits = []
+        complete = True
+        for step in trace.steps:
+            if step.source == "agent":
+                continue
+            complete = complete and step.message.understood
+            found = self.pattern.search(step.message.text)
+            if found:
+                hits.append(Locator(step.index, Channel.MESSAGE, span=found.span()))
+        return Detection.of(hits, complete)
 
 
 @dataclass(frozen=True)

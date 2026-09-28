@@ -18,18 +18,19 @@ Hub input is used, so local scans never touch the network.
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
+import stat
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
+from functools import cached_property
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 from .checks import identifier
-from .harbor_files import job_meta, trial_result
+from .harbor_files import job_meta, number, trial_result
 from .loader import MAX_BYTES, TraceError, load_bytes, load_trace
 from .model import Trace
 
@@ -94,21 +95,41 @@ def parse_reward(data: bytes, name: str) -> float | None:
         return None
     if isinstance(value, dict):
         value = value.get("reward")
-    if type(value) in (int, float) and math.isfinite(value):
-        return float(value)
-    return None
+    return number(value)
+
+
+REWARD_NAMES = tuple(f"verifier/{name}" for name in REWARD_FILES)
+
+
+def _near(path, names):
+    """`<dir>/<name>` for the file's folder, then one level up (Harbor's trial folder:
+    `<trial>/agent/trajectory.json` -> `<trial>/verifier/reward.*`). Path or PurePath."""
+    parent = path.parent
+    folders = [parent] + ([parent.parent] if parent != parent.parent else [])
+    return [folder / name for folder in folders for name in names]
 
 
 def reward_candidates(path: str) -> list[str]:
-    """Relative reward-file paths for a trajectory: `<dir>/verifier/` and one level up
-    (Harbor: `<trial>/agent/trajectory.json` -> `<trial>/verifier/reward.*`)."""
-    parent = PurePosixPath(path).parent
-    folders = [parent] + ([parent.parent] if parent != parent.parent else [])
-    return [
-        (folder / "verifier" / name).as_posix().removeprefix("./")
-        for folder in folders
-        for name in REWARD_FILES
-    ]
+    """Relative reward-file paths for a listed trajectory, in lookup order."""
+    return [p.as_posix() for p in _near(PurePosixPath(path), REWARD_NAMES)]
+
+
+def _read_local(path: Path, limit: int) -> bytes | None:
+    """Up to `limit` bytes of a local metadata file; None when missing or unreadable."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(limit)
+    except OSError:
+        return None
+
+
+def confined(root: Path, relative: str) -> Path | None:
+    """`root/relative` for a plain relative POSIX path; None if it could leave `root`
+    (absolute, empty, `.` or `..` parts, NUL)."""
+    parts = relative.split("/")
+    if "\0" in relative or any(p in ("", ".", "..") for p in parts):
+        return None
+    return root.joinpath(*parts)
 
 
 def hf_filesystem():
@@ -181,6 +202,11 @@ class Listing:
     # Remote listings: download an entry to a local path (for --sync).
     fetch: Callable[[Entry, Path], None] | None = field(default=None, repr=False)
 
+    @cached_property
+    def paths(self) -> frozenset[str]:
+        """Every listed path, for O(1) "is this file present" lookups."""
+        return frozenset(e.path for e in self.entries)
+
 
 def _list_local(value: str) -> Listing:
     root = Path(value)
@@ -197,8 +223,12 @@ def _list_local(value: str) -> Listing:
         dirs.sort()
         for name in files:
             path = Path(folder) / name
-            if path.is_file() and not path.is_symlink():
-                entries.append(Entry(path.relative_to(root).as_posix(), path.stat().st_size))
+            try:
+                st = path.lstat()
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):  # regular files only: no symlinks
+                entries.append(Entry(path.relative_to(root).as_posix(), st.st_size))
     entries.sort(key=lambda e: e.path)
 
     def read(relative: str, limit: int = REWARD_BYTES) -> bytes:
@@ -242,9 +272,10 @@ def _list_remote(value: str, fs) -> Listing:
             continue
         try:
             relative = PurePosixPath(path).relative_to(root).as_posix()
-        except ValueError:  # e.g. revision-qualified listings; keep the full path
-            relative = path
-        full[relative] = path
+        except ValueError:  # not under the root (e.g. revision-qualified): skip, so the
+            continue  # root never reaches a label or a sync path
+        if confined(Path(), relative) is not None:
+            full[relative] = path
     sizes = {path: meta.get("size") for path, meta in found.items()}
     entries = [Entry(r, sizes[full[r]]) for r in sorted(full)]
 
@@ -293,23 +324,17 @@ def reward_lookup(listing: Listing, entry: Entry, value: str) -> Callable[[], fl
     if not listing.directory:
         if listing.remote:
             return _no_reward
-        path = Path(normalize(value))
-        candidates = [
-            (folder / "verifier" / name)
-            for folder in (path.parent, path.parent.parent)
-            for name in REWARD_FILES
-        ]
+        candidates = _near(Path(normalize(value)), REWARD_NAMES)
 
         def local() -> float | None:
             for candidate in candidates:
                 if candidate.is_file():
-                    with open(candidate, "rb") as handle:
-                        return parse_reward(handle.read(REWARD_BYTES), candidate.name)
+                    data = _read_local(candidate, REWARD_BYTES)
+                    return None if data is None else parse_reward(data, candidate.name)
             return None
 
         return local
-    present = {e.path for e in listing.entries}
-    found = next((c for c in reward_candidates(entry.path) if c in present), None)
+    found = next((c for c in reward_candidates(entry.path) if c in listing.paths), None)
     if found is None or listing.reader is None:
         return _no_reward
     reader = listing.reader
@@ -326,14 +351,8 @@ def reward_lookup(listing: Listing, entry: Entry, value: str) -> Callable[[], fl
 def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], dict]:
     """Lazy reader for the trial's Harbor result.json (trajectory folder or one up)."""
     if listing.directory:
-        present = {e.path for e in listing.entries}
-        parent = PurePosixPath(entry.path).parent
-        folders = [parent] + ([parent.parent] if parent != parent.parent else [])
-        found = [
-            p
-            for p in ((f / "result.json").as_posix().removeprefix("./") for f in folders)
-            if p in present
-        ]
+        near = _near(PurePosixPath(entry.path), ["result.json"])
+        found = [p for p in (f.as_posix() for f in near) if p in listing.paths]
         reader = listing.reader
         if not found or reader is None:
             return dict
@@ -351,16 +370,14 @@ def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], di
         return listed
     if listing.remote:
         return dict
-    path = Path(normalize(value))
+    candidates = _near(Path(normalize(value)), ["result.json"])
 
     def local() -> dict:
-        for folder in (path.parent, path.parent.parent):
-            candidate = folder / "result.json"
-            if candidate.is_file():
-                with open(candidate, "rb") as handle:
-                    facts = trial_result(handle.read(RESULT_BYTES))
-                if facts:
-                    return facts
+        for candidate in candidates:
+            if candidate.is_file() and (
+                facts := trial_result(_read_local(candidate, RESULT_BYTES))
+            ):
+                return facts
         return {}
 
     return local
@@ -375,7 +392,7 @@ def job_runs(listing: Listing) -> list[dict]:
     """
     if not listing.directory or listing.reader is None:
         return []
-    present = {e.path for e in listing.entries}
+    present = listing.paths
     has_trial_child = {
         str(PurePosixPath(p).parent.parent)
         for p in present
@@ -406,14 +423,20 @@ def errored(listing: Listing, entry: Entry) -> bool:
     """Harbor writes `<trial>/exception.txt` when a trial raised; seen in the listing."""
     if not listing.directory:
         return False
-    present = {e.path for e in listing.entries}
-    parent = PurePosixPath(entry.path).parent
-    folders = [parent] + ([parent.parent] if parent != parent.parent else [])
-    return any((f / "exception.txt").as_posix().removeprefix("./") in present for f in folders)
+    near = _near(PurePosixPath(entry.path), ["exception.txt"])
+    return any(p.as_posix() in listing.paths for p in near)
 
 
-# Besides matching trajectories, the small files the scan reads next to them.
-SYNC_NAMES = frozenset({"result.json", "config.json", "reward.txt", "reward.json", "exception.txt"})
+# Besides matching trajectories, the small files the scan reads next to them, and the
+# largest size synced for each (exception.txt is only checked for presence).
+SYNC_CAPS = {
+    "result.json": RESULT_BYTES,
+    "config.json": RESULT_BYTES,
+    "reward.txt": REWARD_BYTES,
+    "reward.json": REWARD_BYTES,
+    "exception.txt": RESULT_BYTES,
+}
+SYNC_NAMES = frozenset(SYNC_CAPS)
 
 
 def default_sync_root() -> Path:
@@ -450,20 +473,24 @@ def sync_remote(
         raise SourceError("not_a_remote_input")
     if not listing.directory:
         name = PurePosixPath(normalize(value)).name
-        wanted = [(listing.entries[0], dest / name)]
-        scan_path = dest / name
+        scan_path = confined(dest, name)
+        if scan_path is None:
+            raise SourceError("invalid_hf_path")
+        wanted = [(listing.entries[0], scan_path, MAX_BYTES)]
     else:
-        wanted = [
-            (e, dest / e.path)
-            for e in listing.entries
-            if fnmatchcase(PurePosixPath(e.path).name, pattern)
-            or PurePosixPath(e.path).name in SYNC_NAMES
-        ]
+        wanted = []
+        for e in listing.entries:
+            name = PurePosixPath(e.path).name
+            cap = MAX_BYTES if fnmatchcase(name, pattern) else SYNC_CAPS.get(name)
+            if cap is not None:
+                wanted.append((e, confined(dest, e.path), cap))
         scan_path = dest
     counts = {"files": len(wanted), "downloaded": 0, "up_to_date": 0, "failed": 0}
 
-    def one(item: tuple[Entry, Path]) -> str:
-        entry, path = item
+    def one(item: tuple[Entry, Path | None, int]) -> str:
+        entry, path, cap = item
+        if path is None or (entry.size or 0) > cap:
+            return "failed"  # would leave `dest`, or too large to read: never written
         if (
             not refresh
             and path.is_file()
@@ -510,6 +537,7 @@ def resolve(
     """
     sources: list[Source] = []
     for value in values:
+        value = normalize(value)
         listing = list_input(value, fs)
         if runs is not None:
             runs.extend(job_runs(listing))
@@ -519,15 +547,11 @@ def resolve(
         for entry in entries:
             label = label_for(entry, pattern) or f"input-{len(sources) + 1:04d}"
             reward = reward_lookup(listing, entry, value)
-            hint = "/".join(p for p in (normalize(value).rstrip("/"), entry.path) if p)
+            hint = "/".join(p for p in (value.rstrip("/"), entry.path) if p)
             meta = {"error_type": "exception"} if errored(listing, entry) else {}
-            fingerprint = (
-                local_fingerprint(listing.local_path(entry))
-                if listing.local_path is not None
-                else (lambda: None)
-            )
-            details = trial_details(listing, entry, value)
             local = listing.local_path(entry) if listing.local_path is not None else None
+            fingerprint = local_fingerprint(local) if local is not None else (lambda: None)
+            details = trial_details(listing, entry, value)
             sources.append(
                 Source(
                     label, listing.opener(entry), reward, hint, meta, fingerprint, details, local

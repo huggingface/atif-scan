@@ -14,13 +14,13 @@ from collections import Counter
 from .estimates import cost_estimate, missing_activity
 from .harbor_files import override_kind
 from .questions import tally
-from .report import RANK, _m, overview
+from .report import RANK, STYLE, _m, is_counted, overview
 
 OK, WARN, BAD, INFO = "✓", "⚠", "✗", "·"
 
 
 def _counted(item: dict) -> list[dict]:
-    return [a for a in item["assessments"] if a.get("score") is not None]
+    return [a for a in item["assessments"] if is_counted(a)]
 
 
 def output_ratios(items: list[dict]) -> dict | None:
@@ -69,11 +69,13 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
             if check == "integrity.cost_missing" and item.get("cost_usd") is not None:
                 continue  # the trajectory lacks cost, but the source (e.g. Hub) has it
             (integrity if check.startswith("integrity.") else behaviour)[check] += 1
-        worst = max(
-            (RANK[a["severity"]] for a in counted if not a["id"].startswith("integrity.")),
-            default=None,
-        )
-        by_severity[next((k for k, v in RANK.items() if v == worst), "none")] += 1
+        by_severity[
+            max(
+                (a["severity"] for a in counted if not a["id"].startswith("integrity.")),
+                key=RANK.__getitem__,
+                default="none",
+            )
+        ] += 1
     severity_of = {
         a["id"]: a["severity"] for item in items for a in item["assessments"] if a.get("severity")
     }
@@ -100,7 +102,8 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "output_ratio": output_ratios(items),
         "recording": {
             check: integrity[check]
-            for check in sorted(integrity, key=lambda c: (-RANK[severity_of[c]], -integrity[c]))
+            # Ties by ID: counting order follows set iteration (string hashing).
+            for check in sorted(integrity, key=lambda c: (-RANK[severity_of[c]], -integrity[c], c))
         },
         "findings": {
             "traces_by_highest_severity": {
@@ -111,7 +114,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
             "checks": {
                 c: {"severity": severity_of[c], "traces": n}
                 for c, n in sorted(
-                    behaviour.items(), key=lambda kv: (-RANK[severity_of[kv[0]]], -kv[1])
+                    behaviour.items(), key=lambda kv: (-RANK[severity_of[kv[0]]], -kv[1], kv[0])
                 )
             },
         },
@@ -443,14 +446,7 @@ def brief_text(b: dict) -> str:
 # Styles are applied to the plain text by pattern, so the coloured and plain views can
 # never say different things. rich honours NO_COLOR and disables colour when piped.
 
-SEVERITY_STYLE = {
-    "critical": "bold red",
-    "high": "red",
-    "medium": "yellow",
-    "low": "cyan",
-    "info": "dim",
-    "none": "dim",
-}
+SEVERITY_STYLE = {**STYLE, "none": "dim"}
 PATTERNS = [
     (r"^atif-scan .*$", "bold"),
     (
@@ -472,22 +468,22 @@ PATTERNS = [
     (r"\((?:estimates for review, not verdicts)\)", "dim italic"),
     (r"^more: .*$", "dim"),
 ]
+COMPILED = [(re.compile(pattern), style) for pattern, style in PATTERNS] + [
+    # Severity words where they are severities: "critical 38" and "✗ high  check".
+    (re.compile(rf"(?<=[✗⚠] ){word}\b|\b{word}(?= \d)"), style)
+    for word, style in SEVERITY_STYLE.items()
+]
 
 
 def colourise(text: str):
     """The brief as a rich Text with styles applied by pattern."""
-    import re
-
     from rich.text import Text
 
     out = Text()
     for line in text.splitlines(keepends=True):
         styled = Text(line)
-        for pattern, style in PATTERNS:
-            styled.highlight_regex(re.compile(pattern), style)
-        for word, style in SEVERITY_STYLE.items():
-            # Severity words where they are severities: "critical 38" and "✗ high  check".
-            styled.highlight_regex(re.compile(rf"(?<=[✗⚠] ){word}\b|\b{word}(?= \d)"), style)
+        for pattern, style in COMPILED:
+            styled.highlight_regex(pattern, style)
         out.append_text(styled)
     return out
 

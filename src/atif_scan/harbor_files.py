@@ -47,6 +47,9 @@ CANONICAL_DATASETS = re.compile(
     r"terminal-bench[\w.-]*?(?:\.git)?)$",
     re.I,
 )
+# Free-text Harbor labels (names, refs, display strings): printable words and
+# punctuation only, never a URL or control characters.
+TEXT = re.compile(r"[\w .,:@/()$%+~#-]+")
 GIT_REPO = re.compile(
     r"^(?:https?://)?(github\.com/[\w.-]+/[\w.-]+?)(?:\.git)?(?:@([0-9a-f]{7,40}))?$"
 )
@@ -57,23 +60,49 @@ def override_kind(path: str) -> str:
     return "infrastructure" if INFRA_OVERRIDE.search(path) else "scoring"
 
 
+def text_label(value: object, limit: int = 200) -> str | None:
+    """The one validator for free-text labels from Harbor files or the Hub (truncated)."""
+    if not isinstance(value, str) or "://" in value or not TEXT.fullmatch(value[:limit]):
+        return None
+    return value[:limit]
+
+
+def number(value: object, low: float | None = None) -> float | None:
+    """A finite int/float (not bool), optionally at least `low`; anything else is None."""
+    if type(value) in (int, float) and math.isfinite(value) and (low is None or value >= low):
+        return float(value)
+    return None
+
+
+def count(value: object) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def duration(record: Mapping) -> float | None:
+    """Seconds from `started_at` to `finished_at` (ISO timestamps), else None."""
+    try:
+        start = datetime.fromisoformat(str(record["started_at"]))
+        end = datetime.fromisoformat(str(record["finished_at"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return max((end - start).total_seconds(), 0.0)
+
+
 def dataset_source(entry: Mapping) -> tuple[str | None, str | None, bool | None]:
     """(name, ref, canonical) for a job config dataset: a registry name, or a git repo
     (`repo: https://github.com/OWNER/REPO.git@COMMIT`, `path: tasks`)."""
     name = entry.get("name")
     if isinstance(name, str) and name:
-        return (
-            name,
-            entry.get("ref") if isinstance(entry.get("ref"), str) else None,
-            bool(CANONICAL_DATASETS.match(name)),
-        )
+        if text_label(name) is None:
+            return None, None, None
+        return name, text_label(entry.get("ref")), bool(CANONICAL_DATASETS.match(name))
     repo = entry.get("repo")
     if isinstance(repo, str):
         m = GIT_REPO.match(repo.strip())
         if m:
             path = entry.get("path") if isinstance(entry.get("path"), str) else ""
             label = m.group(1) + (f"/{path.strip('/')}" if path else "")
-            if not re.fullmatch(r"[\w.:@/-]{1,200}", label):
+            if text_label(label) != label:
                 return None, None, None
             return label, m.group(2), bool(CANONICAL_DATASETS.match(m.group(1)))
     return None, None, None
@@ -96,19 +125,9 @@ def _json(data: bytes | None) -> dict:
         return {}
     try:
         value = json.loads(data.decode("utf-8"))
-    except (UnicodeError, ValueError):
+    except (UnicodeError, ValueError, RecursionError):
         return {}
     return value if isinstance(value, dict) else {}
-
-
-def _number(value: object) -> float | None:
-    if type(value) in (int, float) and math.isfinite(value) and value >= 0:
-        return float(value)
-    return None
-
-
-def _count(value: object) -> int | None:
-    return value if type(value) is int and value >= 0 else None
 
 
 def _label(value: object) -> str | None:
@@ -122,13 +141,13 @@ def _label(value: object) -> str | None:
 
 def primary_reward(rewards: object) -> float | None:
     """Harbor's rewards dict: the `reward` key, else a single numeric value."""
-    if _number(rewards) is not None:
-        return _number(rewards)
+    if number(rewards) is not None:
+        return number(rewards)
     if not isinstance(rewards, dict):
         return None
     if "reward" in rewards:
-        return _number(rewards["reward"])
-    values = [_number(v) for v in rewards.values()]
+        return number(rewards["reward"])
+    values = [number(v) for v in rewards.values()]
     return values[0] if len(values) == 1 else None
 
 
@@ -141,26 +160,28 @@ def trial_result(data: bytes | None) -> dict:
     verifier = d.get("verifier_result") if isinstance(d.get("verifier_result"), dict) else {}
     exception = d.get("exception_info") if isinstance(d.get("exception_info"), dict) else None
     task = str(d.get("task_name") or "").rsplit("/", 1)[-1]
-    duration = None
-    try:
-        start = datetime.fromisoformat(str(d["started_at"]))
-        end = datetime.fromisoformat(str(d["finished_at"]))
-        duration = max((end - start).total_seconds(), 0.0)
-    except (KeyError, TypeError, ValueError):
-        pass
     meta = {
         "task": _label(task),
         "reward": primary_reward(verifier.get("rewards")),
         "error_type": (_label(exception.get("exception_type")) or "exception")
         if exception
         else None,
-        "cost_usd": _number(agent.get("cost_usd")),
-        "input_tokens": _count(agent.get("n_input_tokens")),
-        "cache_tokens": _count(agent.get("n_cache_tokens")),
-        "output_tokens": _count(agent.get("n_output_tokens")),
-        "duration_sec": duration,
+        "cost_usd": number(agent.get("cost_usd"), 0),
+        "input_tokens": count(agent.get("n_input_tokens")),
+        "cache_tokens": count(agent.get("n_cache_tokens")),
+        "output_tokens": count(agent.get("n_output_tokens")),
+        "duration_sec": duration(d),
     }
     return {k: v for k, v in meta.items() if v is not None}
+
+
+def configured_agents(cfg: dict) -> int | None:
+    """How many agent/model entries a job config plans (a comparison job runs several,
+    so several models are expected rather than a substitution)."""
+    agents = cfg.get("agents")
+    if not isinstance(agents, list):
+        return None
+    return len([a for a in agents if isinstance(a, dict)]) or None
 
 
 def job_meta(config: bytes | None, result: bytes | None) -> dict | None:
@@ -172,16 +193,15 @@ def job_meta(config: bytes | None, result: bytes | None) -> dict | None:
     datasets = [d for d in cfg.get("datasets") or [] if isinstance(d, dict)]
     task_names = [n for d in datasets for n in (d.get("task_names") or [])]
     sources = [dataset_source(d) for d in datasets]
-    name = str(cfg.get("job_name") or "")
-    completed = _count(stats.get("n_completed_trials"))
+    completed = count(stats.get("n_completed_trials"))
     return {
         "source": "harbor_job_folder",
         "job_id": _label(str(res.get("id") or "")),
-        "job_name": name if re.fullmatch(r"[\w.:@/-]{1,200}", name) else None,
-        "planned_trials": _count(res.get("n_total_trials")),
-        "total_trials": _count(res.get("n_total_trials")),
+        "job_name": text_label(cfg.get("job_name")),
+        "planned_trials": count(res.get("n_total_trials")),
+        "total_trials": count(res.get("n_total_trials")),
         "completed_trials": completed,
-        "errored_trials": _count(stats.get("n_errored_trials")),
+        "errored_trials": count(stats.get("n_errored_trials")),
         "listed_trials": None,
         "datasets": [n for n, _, _ in sources if n],
         "dataset_refs": [r for _, r, _ in sources if r],
@@ -193,7 +213,8 @@ def job_meta(config: bytes | None, result: bytes | None) -> dict | None:
             else all(c for _, _, c in sources)
         ),
         "config_task_names": len(task_names) or None,
-        "n_attempts": _count(cfg.get("n_attempts")),
-        "cost_usd": _number(stats.get("cost_usd")),
+        "n_attempts": count(cfg.get("n_attempts")),
+        "configured_agents": configured_agents(cfg),
+        "cost_usd": number(stats.get("cost_usd"), 0),
         "overrides": overrides(cfg),
     }

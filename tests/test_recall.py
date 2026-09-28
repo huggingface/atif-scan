@@ -239,3 +239,89 @@ def test_tbench_is_primed_by_terminal_bench():
     prompt = {"source": "user", "message": 'Given the query "terminal-bench" rank /app/data.txt.'}
     r = statuses([prompt, agent(reasoning="Terminal-Bench (tbench) tasks are shell tasks.")])
     assert r["recall.benchmark_unprompted"] == Status.NO_MATCH
+
+
+@pytest.mark.parametrize(
+    "image_result",
+    [
+        "[{'type': 'input_image', 'image_url': 'data:image/png;base64,iVBORw0KGgo='}]",
+        "[Image: original 800x600, displayed at 800x600. "
+        "Multiply coordinates by 1.00 to map to original image.]",
+        '{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "QQ"}}',
+    ],
+)
+def test_benchmark_name_after_a_viewed_image_is_not_unprompted(image_result):
+    # Regression (TB2.1 code-from-image, Codex): the salt `TBENCH-SALT` was printed in the
+    # task's image; the view_image result is a string holding a base64 data URI.
+    from atif_scan.checks import Context
+    from atif_scan.detectors.builtin import builtin_detectors
+    from atif_scan.loader import parse_trace
+
+    raw = {
+        "schema_version": "ATIF-v1.7",
+        "steps": [
+            {"step_id": 1, "source": "user", "message": "Run the pseudocode in /app/code.png."},
+            {
+                "step_id": 2,
+                "source": "agent",
+                "message": "Viewing it.",
+                "tool_calls": [
+                    {
+                        "tool_call_id": "v",
+                        "function_name": "view_image",
+                        "arguments": {"path": "/app/code.png"},
+                    }
+                ],
+                "observation": {"results": [{"source_call_id": "v", "content": image_result}]},
+            },
+            {"step_id": 3, "source": "agent", "message": "The salt is TBENCH-SALT."},
+        ],
+    }
+    check = next(d for d in builtin_detectors() if d.spec.id == "recall.benchmark_unprompted")
+    result = check.evaluate(parse_trace(raw), Context())
+    assert result.status != "match" and not result.evidence
+
+
+def _search_trace(result: str | None) -> dict:
+    search = {
+        "step_id": 2,
+        "source": "agent",
+        "message": "Searching the phrase.",
+        "tool_calls": [
+            {"tool_call_id": "s", "function_name": "web_search", "arguments": {"query": "gblock"}}
+        ],
+    }
+    if result is not None:
+        search["observation"] = {"results": [{"source_call_id": "s", "content": result}]}
+    return {
+        "schema_version": "ATIF-v1.7",
+        "steps": [
+            {"step_id": 1, "source": "user", "message": "Design a gBlock in /app/gblock.txt."},
+            search,
+            {
+                "step_id": 3,
+                "source": "agent",
+                "message": "Done ([tbench.ai](https://tbench.ai/x)).",
+            },
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("result", "status"),
+    [
+        (None, "unknown"),  # Codex hosted search: no result recorded, so it may have primed it
+        ("", "unknown"),
+        ("Results: a gBlock design guide", "match"),  # recorded and without the name
+        ("Results: tbench.ai registry page", "no_match"),  # recorded and priming it
+    ],
+)
+def test_recall_after_an_unrecorded_web_result_is_unknown(result, status):
+    # Regression (TB2.1 protein-assembly, Codex): the instruction's sentence was searched,
+    # no result was recorded, and the answer then cited tbench.ai: not proof of recall.
+    from atif_scan.checks import Context
+    from atif_scan.detectors.builtin import builtin_detectors
+    from atif_scan.loader import parse_trace
+
+    check = next(d for d in builtin_detectors() if d.spec.id == "recall.benchmark_unprompted")
+    assert check.evaluate(parse_trace(_search_trace(result)), Context()).status == status

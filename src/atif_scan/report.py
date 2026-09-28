@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from collections.abc import Sequence
 from typing import IO
 
@@ -17,6 +18,19 @@ from .engine import Assessment
 # 3: evidence and citations carry `step_id` (the ATIF step number shown in text views).
 SCHEMA_VERSION = 3
 EVIDENCE_SHOWN = 3
+# Report severity names -> Severity values, for ordering and thresholds.
+RANK = {s.name.lower(): int(s) for s in Severity}
+STYLE = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan", "info": "dim"}
+
+
+def is_counted(a: dict) -> bool:
+    """A reported assessment that is an unexcused finding (`Assessment.counts`)."""
+    return a.get("score") is not None
+
+
+def ranked(counter: Counter) -> dict:
+    """Most frequent first; ties keep first-seen order."""
+    return dict(counter.most_common())
 
 
 def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | None = None) -> dict:
@@ -115,13 +129,12 @@ def where(evidence: list[dict]) -> str:
 
 def sections(item: dict) -> dict[str, list[dict]]:
     """Group a per-input report for display. Findings sort by severity, then ID."""
-    rank = {s.name.lower(): int(s) for s in Severity}
     checks = [a for a in item["assessments"] if a["kind"] in ("detector", "rule")]
     matched = [a for a in checks if a["status"] == Status.MATCH]
     return {
         "findings": sorted(
             (a for a in matched if not a["expected_by"]),
-            key=lambda a: (-rank[a["severity"]], a["id"]),
+            key=lambda a: (-RANK[a["severity"]], a["id"]),
         ),
         "expected": [a for a in matched if a["expected_by"]],
         "unresolved": [
@@ -186,10 +199,10 @@ def to_text(doc: dict) -> str:
     """Plain-text view (no optional dependencies)."""
     lines = [f"atif-scan {doc['scanner_version']}", ""]
     for item in doc["inputs"]:
-        group = sections(item)
+        group, shape = sections(item), counts(item)
         lines.append(f"== {item['input_id']}: {headline(item)}")
-        if counts(item):
-            lines.append(f"   {counts(item)}")
+        if shape:
+            lines.append(f"   {shape}")
         for a in group["findings"]:
             lines.append(f"   {a['severity']:<8} {a['id']:<36} {where(a['evidence'])}")
             lines.extend(_citation_text(item, a["id"], "            "))
@@ -197,15 +210,9 @@ def to_text(doc: dict) -> str:
             lines.append(f"   {'expected':<8} {a['id']:<36} by {', '.join(a['expected_by'])}")
         for a in group["unresolved"]:
             lines.append(f"   {a['status']:<8} {a['id']}")
-        lines.append(
-            f"   {len(group['no_match'])} no match · {len(group['not_applicable'])} not applicable"
-        )
-        lines.append("")
+        lines += [f"   {tally(group)}", ""]
     lines.append(footer(doc))
     return "\n".join(lines) + "\n"
-
-
-STYLE = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan", "info": "dim"}
 
 
 def render_rich(doc: dict, file: IO[str] | None = None) -> None:
@@ -217,14 +224,14 @@ def render_rich(doc: dict, file: IO[str] | None = None) -> None:
     console = Console(file=file, highlight=False)
     console.print(f"[bold]atif-scan[/] {doc['scanner_version']}")
     for item in doc["inputs"]:
-        group = sections(item)
+        group, shape = sections(item), counts(item)
         style = STYLE.get(item["severity"] or "", "green")
         if item["input_status"] != "available":
             style = "bold magenta"
         console.print()
         console.print(Text(item["input_id"], style="bold"), Text(headline(item), style=style))
-        if counts(item):
-            console.print(Text(counts(item), style="dim"))
+        if shape:
+            console.print(Text(shape, style="dim"))
         table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
         table.add_column("status")
         table.add_column("check")
@@ -244,8 +251,7 @@ def render_rich(doc: dict, file: IO[str] | None = None) -> None:
             for c in _cited(item, a["id"]):
                 for label, text in citation_lines(c):
                     if label == ">":
-                        before, _, rest = text.partition("⟦")
-                        match, _, after = rest.rpartition("⟧")
+                        before, match, after = text
                         console.print(
                             Text("    │ ", style="dim"),
                             Text(before),
@@ -325,13 +331,14 @@ def _flat(text: str) -> str:
     return re.sub(r"[ \t]*\r?\n[ \t]*", " ⏎ ", text)
 
 
-def citation_lines(c: dict) -> list[tuple[str, str]]:
-    """(label, text) rows for one citation; the match row is `>`."""
+def citation_lines(c: dict) -> list[tuple[str, str | tuple[str, str, str]]]:
+    """(label, text) rows for one citation. The match row is `>` with a (before, match,
+    after) triple, so each renderer marks the match its own way."""
     where_ = f"step {step_label(c)} · {c['channel']}" + (f" · {c['tool']}" if c.get("tool") else "")
     rows = [("@", where_)]
     if c.get("context_before"):
         rows.append(("before", _one_line(c["context_before"])))
-    rows.append((">", _flat(c["before"]) + "⟦" + _flat(c["match"]) + "⟧" + _flat(c["after"])))
+    rows.append((">", (_flat(c["before"]), _flat(c["match"]), _flat(c["after"]))))
     if c.get("context_after"):
         rows.append(("after", _one_line(c["context_after"])))
     return rows
@@ -341,36 +348,40 @@ def _cited(item: dict, check: str) -> list[dict]:
     return (item.get("citations") or {}).get(check, [])
 
 
-def _row(label: str, text: str) -> str:
+def _row(label: str, text: str | tuple[str, str, str]) -> str:
     """`┌ @ where`, `│ > …⟦match⟧…`, `│ before: …`."""
+    if isinstance(text, tuple):
+        before, match, after = text
+        text = f"{before}⟦{match}⟧{after}"
     mark = "┌" if label == "@" else "│"
     tag = label if label in ("@", ">") else label + ":"
     return f"{mark} {tag} {text}"
 
 
+def _citation_rows(c: dict, indent: str) -> list[str]:
+    return [indent + _row(label, text) for label, text in citation_lines(c)]
+
+
 def _citation_text(item: dict, check: str, indent: str) -> list[str]:
-    return [
-        indent + _row(label, text) for c in _cited(item, check) for label, text in citation_lines(c)
-    ]
+    return [row for c in _cited(item, check) for row in _citation_rows(c, indent)]
 
 
 # --- Summary ----------------------------------------------------------------------------
 
 DETAIL = ("high", "medium", "critical")
-RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 
 
 def summary(doc: dict) -> dict:
     """Cross-input rollup: counts for info/low, per-trace details for medium and above."""
     items = doc["inputs"]
-    highest: dict[str, int] = {}
+    highest: Counter = Counter()
     checks: dict[str, dict] = {}
-    expected: dict[str, int] = {}
-    unresolved: dict[str, int] = {}
+    expected: Counter = Counter()
+    unresolved: Counter = Counter()
     details: dict[str, dict] = {}
     for item in items:
         key = "unavailable" if item["input_status"] != "available" else item["severity"] or "none"
-        highest[key] = highest.get(key, 0) + 1
+        highest[key] += 1
         group = sections(item)
         for a in group["findings"]:
             entry = checks.setdefault(a["id"], {"severity": a["severity"], "traces": 0})
@@ -388,10 +399,8 @@ def summary(doc: dict) -> dict:
                 if _cited(item, a["id"]):
                     row["citations"] = _cited(item, a["id"])
                 detail["traces"].append(row)
-        for a in group["expected"]:
-            expected[a["id"]] = expected.get(a["id"], 0) + 1
-        for a in group["unresolved"]:
-            unresolved[a["id"]] = unresolved.get(a["id"], 0) + 1
+        expected.update(a["id"] for a in group["expected"])
+        unresolved.update(a["id"] for a in group["unresolved"])
     order = sorted(checks, key=lambda k: (-RANK[checks[k]["severity"]], -checks[k]["traces"], k))
     return {
         "schema_version": SCHEMA_VERSION,
@@ -405,8 +414,8 @@ def summary(doc: dict) -> dict:
         },
         "checks": {k: checks[k] for k in order},
         "details": sorted(details.values(), key=lambda d: (-RANK[d["severity"]], d["check"])),
-        "expected": dict(sorted(expected.items(), key=lambda kv: -kv[1])),
-        "unresolved": dict(sorted(unresolved.items(), key=lambda kv: -kv[1])),
+        "expected": ranked(expected),
+        "unresolved": ranked(unresolved),
     }
 
 
@@ -439,9 +448,7 @@ def summary_text(s: dict) -> str:
                     f"         {t['input_id']:<{width}}  {reward:<10} {where(t['evidence'])}"
                 )
                 for c in t.get("citations", []):
-                    lines += [
-                        "           " + _row(label, text) for label, text in citation_lines(c)
-                    ]
+                    lines += _citation_rows(c, "           ")
     if s["expected"]:
         lines += ["", "expected: " + " · ".join(f"{k} {v}" for k, v in s["expected"].items())]
     if s["unresolved"]:
@@ -496,7 +503,7 @@ NOT_CLEARED_BECAUSE = {
 def uncleared_reasons(items: list[dict]) -> dict[str, int]:
     """Why each rewarded trial can't be cleared: a missing trace (by error code) or the
     recording defects it has; anything else is a tool input the scanner couldn't read."""
-    reasons: dict[str, int] = {}
+    reasons: Counter = Counter()
     for i in items:
         if i["input_status"] != "available":
             found = [f"no trajectory ({i.get('input_error') or 'unknown'})"]
@@ -504,28 +511,28 @@ def uncleared_reasons(items: list[dict]) -> dict[str, int]:
             matched = {a["id"] for a in i["assessments"] if a["status"] == Status.MATCH}
             found = [label for c, label in NOT_CLEARED_BECAUSE.items() if c in matched]
             found = found or ["tool input not readable"]
-        for reason in found:
-            reasons[reason] = reasons.get(reason, 0) + 1
-    return dict(sorted(reasons.items(), key=lambda kv: -kv[1]))
+        reasons.update(found)
+    return ranked(reasons)
 
 
-def model_mismatch(items: list[dict]) -> dict | None:
+def model_mismatch(items: list[dict], planned_models: int = 1) -> dict | None:
     """Trials whose recorded model isn't the run's main model: a safety-classifier fallback
     or substitution. Their rewards and costs belong to another model, so rewarded ones are
-    critical DQ candidates (TB4: 12 trials of a Fable 5.1 row ran Opus 5)."""
-    counts: dict[str, int] = {}
-    for i in items:
-        if i.get("model_name"):
-            counts[i["model_name"]] = counts.get(i["model_name"], 0) + 1
-    if len(counts) < 2:
+    critical DQ candidates (TB4: 12 trials of a Fable 5.1 row ran Opus 5).
+
+    A job that plans several agent/model entries (a comparison job) expects that many
+    models: the `planned_models` most common are the run's, and only others are flagged
+    (TB2.1: a 5-agent job read as 1,347 substitutions)."""
+    counts = ranked(Counter(i["model_name"] for i in items if i.get("model_name")))
+    planned = set(list(counts)[: max(planned_models, 1)])
+    if len(counts) <= len(planned):
         return None
-    expected = max(counts, key=lambda m: counts[m])
-    other = [i for i in items if i.get("model_name") and i["model_name"] != expected]
+    expected = next(iter(counts))
+    other = [i for i in items if i.get("model_name") and i["model_name"] not in planned]
     return {
         "expected": expected,
-        "other_models": {
-            m: n for m, n in sorted(counts.items(), key=lambda kv: -kv[1]) if m != expected
-        },
+        "planned_models": sorted(planned) if len(planned) > 1 else None,
+        "other_models": {m: n for m, n in counts.items() if m not in planned},
         "trial_ids": [i["input_id"] for i in other],
         "rewarded_ids": [i["input_id"] for i in other if _outcome(i)],
         "cost_usd": round(sum(i.get("cost_usd") or 0 for i in other), 2),
@@ -551,7 +558,7 @@ def overview(
     for i in items:
         if not _outcome(i):
             continue
-        counted = [a for a in i["assessments"] if a.get("score") is not None]
+        counted = [a for a in i["assessments"] if is_counted(a)]
         relevant_unknown = [
             a
             for a in i["assessments"]
@@ -564,10 +571,13 @@ def overview(
         elif i["input_status"] == "unavailable_or_invalid" or relevant_unknown:
             # Can't be cleared: not scanned, or a DQ-level check couldn't decide.
             uncleared.append(i["input_id"])
-    models = model_mismatch(items)
-    if models:
-        dq_ids += [x for x in models["rewarded_ids"] if x not in dq_ids]
+    models = model_mismatch(
+        items, sum(r.get("configured_agents") or 1 for r in runs) if runs else 1
+    )
     flagged = set(dq_ids)
+    if models:
+        dq_ids += [x for x in models["rewarded_ids"] if x not in flagged]
+        flagged.update(dq_ids)
     disqualified: dict[str, list[bool]] = {}
     for i in scored:
         ok = bool(_outcome(i)) and i["input_id"] not in flagged
@@ -586,18 +596,17 @@ def overview(
         max((i.get("input_tokens") or 0) - (i.get("cache_tokens") or 0), 0) for i in items
     )
     has_tokens = any(i.get("input_tokens") is not None for i in items)
-    errors: dict[str, int] = {}
-    for i in items:
-        if i.get("error_type"):
-            errors[i["error_type"]] = errors.get(i["error_type"], 0) + 1
+    errors = Counter(i["error_type"] for i in items if i.get("error_type"))
+    not_cleared = set(uncleared)
     return {
         "runs": runs,
         "trials": {
             "present": len(items),
             "planned": planned,
-            "missing": planned - len(items) if planned is not None else None,
+            # Clamped: a job can hold more trials than planned (retries, merged runs).
+            "missing": max(planned - len(items), 0) if planned is not None else None,
             "errored": sum(errors.values()),
-            "error_types": dict(sorted(errors.items(), key=lambda kv: -kv[1])),
+            "error_types": ranked(errors),
             "without_trajectory": sum(i["input_status"] == "unavailable_or_invalid" for i in items),
             "incomplete_scans": sum(bool(i["incomplete"]) for i in items),
             "compacted": sum(bool(i.get("compacted")) for i in items),
@@ -626,7 +635,7 @@ def overview(
             "rewarded_not_cleared": len(uncleared),
             "rewarded_not_cleared_ids": uncleared,
             "not_cleared_reasons": uncleared_reasons(
-                [i for i in items if i["input_id"] in set(uncleared)]
+                [i for i in items if i["input_id"] in not_cleared]
             ),
         },
         "model_mismatch": models,
@@ -653,15 +662,14 @@ def overview(
 
 
 def _m(value: int) -> str:
-    if value >= 1e9:
-        return f"{value / 1e9:.2f}B"
-    return (
-        f"{value / 1e6:.1f}M"
-        if value >= 1e6
-        else f"{value / 1e3:.0f}k"
-        if value >= 1e3
-        else str(value)
-    )
+    """Token counts: 950, 12k, 3.4M, 1.25B. The unit is picked after rounding."""
+    if value < 1e3:
+        return str(value)
+    for scale, unit, digits in ((1e3, "k", ".0f"), (1e6, "M", ".1f")):
+        text = f"{value / scale:{digits}}"
+        if float(text) < 1e3:
+            return text + unit
+    return f"{value / 1e9:.2f}B"
 
 
 def _ids(ids: list[str], limit: int = 5) -> str:
@@ -681,6 +689,8 @@ def overview_text(ov: dict) -> list[str]:
     if t["planned"] is not None:
         parts[0] += f" / {t['planned']} planned"
         parts.append(f"{t['missing']} missing")
+        if t["present"] > t["planned"]:
+            parts.append(f"{t['present'] - t['planned']} more than planned")
     parts.append(
         f"{t['errored']} errored"
         + (
@@ -713,7 +723,10 @@ def overview_text(ov: dict) -> list[str]:
         lines.append(line)
     if ov["accuracy"]:
         acc, se = ov["accuracy"]
-        lines.append(f"  accuracy   {acc:.1f}% ± {se:.1f} (successes / all trials; errored = 0)")
+        lines.append(
+            f"  accuracy   {acc:.1f}% ± {se:.1f}"
+            " (successes / all trials; errored without a reward = 0)"
+        )
     d = ov["disqualification"]
     if d is not None and d["rate_pct"] is not None:
         line = f"  DQ         {d['candidates']} candidate(s) = {d['rate_pct']:.1f}% of trials"

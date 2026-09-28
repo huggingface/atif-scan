@@ -23,27 +23,28 @@ import re
 import shutil
 import subprocess
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from .checks import identifier
-from .harbor_files import overrides
+from .harbor_files import configured_agents, count, duration, number, overrides, text_label
 from .loader import TraceError, load_trace
 from .sources import Source, SourceError, local_fingerprint
 
+UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 JOB = re.compile(
-    r"^(?:harbor://jobs/|https?://hub\.harborframework\.com/jobs/)"
-    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
-    r"(?:[/?#].*)?$"
+    r"^(?:harbor://jobs/|https?://hub\.harborframework\.com/jobs/)(" + UUID + r")(?:[/?#].*)?$"
 )
-UUID = r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
 # Leaderboard rows: harbor://rows/<uuid> or any hub URL ending in .../rows/<uuid>.
 ROW = re.compile(
-    r"^(?:harbor://rows/|https?://hub\.harborframework\.com/\S*?/rows/)" + UUID + r"(?:[/?#].*)?$"
+    r"^(?:harbor://rows/|https?://hub\.harborframework\.com/\S*?/rows/)(" + UUID + r")(?:[/?#].*)?$"
 )
+# Hub values that become CLI arguments or folder names are validated first: an ID must be
+# a UUID (never an option like `-o...`), a name a single path segment (no `/`, no `..`).
+TRIAL_ID = re.compile(UUID)
+TRIAL_NAME = re.compile(r"[A-Za-z0-9][\w.-]{0,127}")
 ACCEPTED = (
     "harbor://jobs/<uuid>, harbor://rows/<uuid>, "
     "https://hub.harborframework.com/jobs/<uuid>, "
@@ -52,6 +53,7 @@ ACCEPTED = (
 # The Hub serves up to 1000 trials per page (a 2,225-trial job is 3 calls, not 23). A
 # smaller server cap still pages correctly: `total_pages` drives the loop.
 PAGE_SIZE = 1000
+MAX_PAGES = 1000
 MAX_JOB_LOOKUPS = 50
 
 # Progress callbacks receive fixed text plus counts only: never IDs, names or URLs.
@@ -93,7 +95,12 @@ class HarborCLI:
     def run(self, *args: str) -> str:
         try:
             done = subprocess.run(
-                [self.exe, *args], capture_output=True, text=True, timeout=self.timeout
+                [self.exe, *args],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout,
             )
         except (OSError, subprocess.TimeoutExpired):
             raise SourceError("harbor_command_failed") from None
@@ -109,21 +116,22 @@ class HarborCLI:
             raise SourceError("harbor_returned_invalid_json") from None
 
 
-def _number(value: object) -> float | None:
-    return float(value) if type(value) in (int, float) else None
+def _pages(cli: HarborCLI, *args: str) -> Iterator[tuple[int, int, Mapping]]:
+    """(page, total_pages, data) for a paged `--json` listing, at most MAX_PAGES."""
+    for page in range(1, MAX_PAGES + 1):
+        data = cli.json(*args, "--limit", str(PAGE_SIZE), "--page", str(page))
+        if not isinstance(data, Mapping):
+            raise SourceError("harbor_returned_invalid_json")
+        pages = data.get("total_pages")
+        pages = pages if type(pages) is int and pages > 0 else 1
+        yield page, pages, data
+        if page >= pages:
+            return
 
 
-def _count(value: object) -> int | None:
-    return value if type(value) is int and value >= 0 else None
-
-
-def _duration(row: Mapping) -> float | None:
-    try:
-        start = datetime.fromisoformat(str(row["started_at"]))
-        end = datetime.fromisoformat(str(row["finished_at"]))
-    except (KeyError, TypeError, ValueError):
-        return None
-    return max((end - start).total_seconds(), 0.0)
+def valid_row(row: Mapping) -> bool:
+    """A trial row whose ID is safe to pass to the CLI (see TRIAL_ID)."""
+    return bool(TRIAL_ID.fullmatch(str(row.get("id") or "")))
 
 
 def trial_meta(row: Mapping) -> dict:
@@ -133,14 +141,14 @@ def trial_meta(row: Mapping) -> dict:
     meta = {
         "hub_trial_id": str(row.get("id") or "") or None,
         "task": task,
-        "reward": _number(row.get("reward")),
+        "reward": number(row.get("reward")),
         "error_type": str(error) if error else None,
         "status": str(row.get("status") or "") or None,
-        "cost_usd": _number(row.get("cost_usd")),
-        "input_tokens": _count(row.get("input_tokens")),
-        "cache_tokens": _count(row.get("cache_tokens")),
-        "output_tokens": _count(row.get("output_tokens")),
-        "duration_sec": _duration(row),
+        "cost_usd": number(row.get("cost_usd"), 0),
+        "input_tokens": count(row.get("input_tokens")),
+        "cache_tokens": count(row.get("cache_tokens")),
+        "output_tokens": count(row.get("output_tokens")),
+        "duration_sec": duration(row),
         "overrides": overrides(row.get("config_values") or {}),
     }
     for key in ("task", "error_type", "status", "hub_trial_id"):
@@ -156,21 +164,21 @@ def run_meta(job: str, show: Mapping, rows: list[Mapping]) -> dict:
     config = show.get("config") if isinstance(show.get("config"), Mapping) else {}
     datasets = [d for d in config.get("datasets") or [] if isinstance(d, Mapping)]
     task_names = [n for d in datasets for n in (d.get("task_names") or [])]
-    name = str(show.get("name") or "")
     return {
         "source": "harbor_hub",
         "job_id": job,
-        "job_name": name if re.fullmatch(r"[\w.:@/-]{1,200}", name) else None,
-        "planned_trials": _count(show.get("n_planned_trials")),
-        "total_trials": _count(show.get("n_total_trials")),
-        "completed_trials": _count(show.get("n_completed_trials")),
-        "errored_trials": _count(show.get("n_errors")),
+        "job_name": text_label(show.get("name")),
+        "planned_trials": count(show.get("n_planned_trials")),
+        "total_trials": count(show.get("n_total_trials")),
+        "completed_trials": count(show.get("n_completed_trials")),
+        "errored_trials": count(show.get("n_errors")),
         "listed_trials": len(rows),
-        "datasets": [str(d.get("name")) for d in datasets if d.get("name")],
-        "dataset_refs": [str(d.get("ref")) for d in datasets if d.get("ref")],
+        "datasets": [n for d in datasets if (n := text_label(d.get("name")))],
+        "dataset_refs": [r for d in datasets if (r := text_label(d.get("ref")))],
         "config_task_names": len(task_names) or None,
-        "n_attempts": _count(config.get("n_attempts")),
-        "cost_usd": _number(show.get("cost_usd")),
+        "n_attempts": count(config.get("n_attempts")),
+        "configured_agents": configured_agents(dict(config)),
+        "cost_usd": number(show.get("cost_usd"), 0),
         "overrides": overrides(config),
     }
 
@@ -190,28 +198,21 @@ def listing(
     if not isinstance(show, Mapping):
         raise SourceError("harbor_returned_invalid_json")
     rows: dict[str, dict] = {}
-    page = 1
-    while True:
-        data = cli.json("hub", "job", "trials", job, "--limit", str(PAGE_SIZE), "--page", str(page))
-        if not isinstance(data, Mapping):
-            raise SourceError("harbor_returned_invalid_json")
+    for page, pages, data in _pages(cli, "hub", "job", "trials", job):
         for row in data.get("items") or []:
             if isinstance(row, Mapping) and row.get("id"):
                 rows[str(row["id"])] = dict(row)
-        pages = int(data.get("total_pages") or 1)
         progress(f"listing {label} trials · page {page}/{pages} · {len(rows)} trials")
-        if page >= pages or (want is not None and want <= rows.keys()):
+        if want is not None and want <= rows.keys():
             break
-        page += 1
     ordered = sorted(rows.values(), key=lambda r: str(r.get("name") or r["id"]))
     return run_meta(job, show, ordered), ordered
 
 
 def _label(row: Mapping) -> str:
-    try:
-        return identifier(str(row.get("name")))
-    except ValueError:
-        return str(row["id"])
+    """The trial's folder and report label: its name if a safe segment, else its UUID."""
+    name = str(row.get("name") or "")
+    return name if TRIAL_NAME.fullmatch(name) else str(row["id"])
 
 
 def _loader(path: Path) -> Callable:
@@ -282,7 +283,7 @@ def fetch(
         # Harbor names the folder after the trial; move it if it differs from our label.
         if not path.is_file():
             name = str(row.get("name") or "")
-            candidate = dest / name / "trajectory.json" if name else None
+            candidate = dest / name / "trajectory.json" if TRIAL_NAME.fullmatch(name) else None
             if candidate is not None and candidate.is_file() and candidate != path:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 candidate.replace(path)
@@ -296,27 +297,12 @@ def fetch(
 
 
 def row_trials(cli: HarborCLI, row: str) -> list[str]:
-    ids: list[str] = []
-    page = 1
-    while True:
-        data = cli.json(
-            "hub",
-            "leaderboard",
-            "row",
-            "trial",
-            "list",
-            row,
-            "--limit",
-            "1000",
-            "--page",
-            str(page),
-        )
-        if not isinstance(data, Mapping):
-            raise SourceError("harbor_returned_invalid_json")
-        ids += [str(t["trial_id"]) for t in data.get("items") or [] if isinstance(t, Mapping)]
-        if page >= int(data.get("total_pages") or 1):
-            return ids
-        page += 1
+    return [
+        str(t["trial_id"])
+        for _, _, data in _pages(cli, "hub", "leaderboard", "row", "trial", "list", row)
+        for t in data.get("items") or []
+        if isinstance(t, Mapping) and TRIAL_ID.fullmatch(str(t.get("trial_id") or ""))
+    ]
 
 
 def row_listing(
@@ -359,7 +345,7 @@ def row_listing(
     def label(key: str) -> str | None:
         v = meta.get(key)
         v = v.get("label") if isinstance(v, Mapping) else v
-        return str(v)[:80] if isinstance(v, str) and v else None
+        return text_label(v, 80)
 
     run = {
         "source": "harbor_leaderboard_row",
@@ -376,21 +362,19 @@ def row_listing(
         "dataset_refs": sorted({d for r in job_runs for d in r.get("dataset_refs") or []}),
         "config_task_names": None,
         "n_attempts": max((r.get("n_attempts") or 0 for r in job_runs), default=0) or None,
-        "cost_usd": _number(metrics.get("total_cost_usd")),
+        "cost_usd": number(metrics.get("total_cost_usd"), 0),
         "overrides": sorted({o for r in job_runs for o in r.get("overrides") or []}),
         "unresolved_trials": len(unresolved),
         "leaderboard": {
-            "rank": _count(show.get("rank")),
+            "rank": count(show.get("rank")),
             "agent": label("agent_display"),
             "model": label("model_display"),
             "reasoning_effort": label("reasoning_effort"),
-            "reported_accuracy": _number(metrics.get("accuracy")),
-            "reported_n_trials": _count(metrics.get("n_trials")),
-            "reported_cost_usd": _number(metrics.get("total_cost_usd")),
-            "reported_reward_hacks_pct": _number(metrics.get("reward_hacks")),
-            "display_cost": str(metrics.get("display_cost"))[:60]
-            if metrics.get("display_cost")
-            else None,
+            "reported_accuracy": number(metrics.get("accuracy")),
+            "reported_n_trials": count(metrics.get("n_trials")),
+            "reported_cost_usd": number(metrics.get("total_cost_usd"), 0),
+            "reported_reward_hacks_pct": number(metrics.get("reward_hacks")),
+            "display_cost": text_label(metrics.get("display_cost"), 60),
             "jobs": [j for j, _ in jobs],
         },
     }
@@ -398,6 +382,7 @@ def row_listing(
 
 
 def _trial_sources(cli, job, rows, dest, full, workers, refresh, progress=_quiet) -> list[Source]:
+    rows = [r for r in rows if valid_row(r)]
     paths = fetch(cli, job, rows, dest / job, full, workers, refresh, progress)
     sources = []
     for row in rows:
@@ -446,4 +431,5 @@ def inspect_job(value: str, cli: HarborCLI | None = None) -> dict:
         rows = [r for _, job_rows in jobs for r in job_rows]
     else:
         run, rows = listing(cli, job_id(value))
-    return {"run": run, "trials": [dict(trial_meta(r), input_id=_label(r)) for r in rows]}
+    trials = [dict(trial_meta(r), input_id=_label(r)) for r in rows if valid_row(r)]
+    return {"run": run, "trials": trials}

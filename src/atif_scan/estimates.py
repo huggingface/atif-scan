@@ -46,65 +46,67 @@ def _median(values: list[float]) -> float:
     return ordered[len(ordered) // 2] if ordered else 0.0
 
 
+TOKEN_KINDS = ("uncached_input", "cached_input", "output")
+
+
+def _price(rates: list[float], row: list[float]) -> float:
+    """Cost of one trial's (uncached, cached, output) tokens at $/M `rates`."""
+    return sum(r * v / 1e6 for r, v in zip(rates, row, strict=True))
+
+
 def cost_estimate(items: list[dict], price: tuple[float, float, float] | None = None) -> dict:
-    has_tokens = [i for i in items if i.get("input_tokens") or i.get("output_tokens")]
-    unpriced = [i for i in has_tokens if not i.get("cost_usd")]
-    priced = [i for i in has_tokens if i.get("cost_usd")]
+    has_tokens = [
+        (i, _features(i)) for i in items if i.get("input_tokens") or i.get("output_tokens")
+    ]
+    unpriced = [row for i, row in has_tokens if not i.get("cost_usd")]
+    priced = [(row, float(i["cost_usd"])) for i, row in has_tokens if i.get("cost_usd")]
     result: dict = {
         "unpriced": len(unpriced),
-        "unpriced_ids": [i["input_id"] for i in unpriced],
-        "no_usage": sum(1 for i in items if not (i.get("input_tokens") or i.get("output_tokens"))),
+        "unpriced_ids": [i["input_id"] for i, _ in has_tokens if not i.get("cost_usd")],
+        "no_usage": len(items) - len(has_tokens),
         "estimate_usd": None,
         "method": None,
         "median_abs_error_usd": None,
         "rates_per_mtok": None,
-    }
-    tokens = [_features(i) for i in has_tokens]
-    result["tokens"] = {
-        "uncached_input": int(sum(t[0] for t in tokens)),
-        "cached_input": int(sum(t[1] for t in tokens)),
-        "output": int(sum(t[2] for t in tokens)),
+        "tokens": {
+            kind: int(sum(row[n] for _, row in has_tokens)) for n, kind in enumerate(TOKEN_KINDS)
+        },
     }
     if not unpriced:
         return result
     if price is not None:
         rates = list(price)
         result["method"] = "given --price"
-        result["rates_per_mtok"] = dict(
-            zip(("uncached_input", "cached_input", "output"), rates, strict=True)
-        )
-        result["estimate_usd"] = round(
-            sum(
-                sum(r * v / 1e6 for r, v in zip(rates, _features(i), strict=True)) for i in unpriced
-            ),
-            2,
-        )
+        result["rates_per_mtok"] = dict(zip(TOKEN_KINDS, rates, strict=True))
+        result["estimate_usd"] = round(sum(_price(rates, row) for row in unpriced), 2)
         return result
     if len(priced) < MIN_PRICED:
         result["method"] = f"not estimated: fewer than {MIN_PRICED} priced trials"
         return result
-    x = [_features(i) for i in priced]
-    y = [float(i["cost_usd"]) for i in priced]
+    x = [row for row, _ in priced]
+    y = [cost for _, cost in priced]
     # Scale columns to per-million tokens for a well-conditioned 3x3 system.
     xs = [[v / 1e6 for v in row] for row in x]
     xtx = [[sum(r[a] * r[b] for r in xs) for b in range(3)] for a in range(3)]
     xty = [sum(r[a] * t for r, t in zip(xs, y, strict=True)) for a in range(3)]
     rates = _solve(xtx, xty)
     if rates is not None and all(r >= 0 for r in rates):
-        predict = lambda row: sum(r * v / 1e6 for r, v in zip(rates, row, strict=True))  # noqa: E731
+
+        def predict(row: list[float]) -> float:
+            return _price(rates, row)
+
         result["method"] = f"per-token fit on {len(priced)} priced trials"
-        result["rates_per_mtok"] = {
-            "uncached_input": round(rates[0], 4),
-            "cached_input": round(rates[1], 4),
-            "output": round(rates[2], 4),
-        }
+        result["rates_per_mtok"] = {k: round(r, 4) for k, r in zip(TOKEN_KINDS, rates, strict=True)}
     else:
         rate = sum(y) / max(sum(sum(row) for row in x), 1.0)
-        predict = lambda row: rate * sum(row)  # noqa: E731
+
+        def predict(row: list[float]) -> float:
+            return rate * sum(row)
+
         result["method"] = f"average $/token over {len(priced)} priced trials"
-    errors = [abs(predict(row) - t) for row, t in zip(x, y, strict=True)]
+    errors = [abs(predict(row) - t) for row, t in priced]
     result["median_abs_error_usd"] = round(_median(errors), 3)
-    result["estimate_usd"] = round(sum(max(predict(_features(i)), 0.0) for i in unpriced), 2)
+    result["estimate_usd"] = round(sum(max(predict(row), 0.0) for row in unpriced), 2)
     return result
 
 

@@ -54,7 +54,7 @@ def outline(trace: Trace) -> list[str]:
             if text:
                 sizes.append(f"{name} {len(text)}")
         if step.observations:
-            total = sum(len(o.content.text or "") for o in step.observations)
+            total = sum(len(o.content.text) for o in step.observations)
             sizes.append(f"results {len(step.observations)}×/{total}")
         flags = []
         if step.index in trace.compacted:
@@ -84,7 +84,7 @@ def step_record(trace: Trace, index: int, parts, limit: int, known) -> dict:
                 "category": call.tool,
                 "id": call.id,
                 "arguments": {
-                    f"{channel.value}{i}": _cut(mask(c.text or "", known), limit)
+                    f"{channel.value}{i}": _cut(mask(c.text, known), limit)
                     for i, (channel, c) in enumerate(call.fields)
                     if c.text
                 },
@@ -95,7 +95,7 @@ def step_record(trace: Trace, index: int, parts, limit: int, known) -> dict:
         out["results"] = [
             {
                 "call_id": o.source_call_id,
-                "text": _cut(mask(o.content.text or "", known), limit),
+                "text": _cut(mask(o.content.text, known), limit),
                 **({"media": True} if o.content.media else {}),
             }
             for o in step.observations

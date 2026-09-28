@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Protocol
@@ -87,6 +88,15 @@ class Detection:
             raise ValueError("incomplete_negative_must_be_unknown")
         if self.status in {Status.UNKNOWN, Status.ERROR} and self.complete:
             raise ValueError("unknown_or_error_cannot_be_complete")
+
+    @classmethod
+    def of(cls, hits: Iterable[Locator], complete: bool) -> Detection:
+        """Match on any hit (deduplicated, order kept); otherwise no_match only when the
+        search was complete, else unknown."""
+        evidence = tuple(dict.fromkeys(hits))
+        if evidence:
+            return cls(Status.MATCH, evidence, complete)
+        return cls(Status.NO_MATCH if complete else Status.UNKNOWN, (), complete)
 
 
 class Detector(Protocol):

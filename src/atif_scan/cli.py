@@ -17,7 +17,7 @@ from .checks import Context, Severity, Status, identifier
 from .cite import citations
 from .detectors import builtin_detectors
 from .detectors.integrity import output_ratio
-from .engine import Engine
+from .engine import Engine, effective_context
 from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
 from .loader import TraceError
@@ -56,9 +56,11 @@ def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
     Local paths resolve relative to the manifest; `hf://` paths are used as given.
     """
     value = json.loads(path.read_text())
-    if not isinstance(value, dict) or set(value) != {"inputs"}:
-        raise ValueError("invalid_input_manifest")
-    if not isinstance(value["inputs"], list):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"inputs"}
+        or not isinstance(value["inputs"], list)
+    ):
         raise ValueError("invalid_input_manifest")
     result = []
     for raw in value["inputs"]:
@@ -172,9 +174,50 @@ def price(value: str | None) -> tuple[float, float, float] | None:
     return parts
 
 
-def run_facts(meta: dict, trace) -> dict:
-    """Per-trial run facts: recorded metadata (Hub, Harbor result.json), else final_metrics."""
-    usage = trace.usage if trace is not None else None
+def trace_facts(trace) -> dict:
+    """Run facts derived from the trajectory alone (cacheable with its results)."""
+    if trace is None:
+        return dict.fromkeys(TRACE_FACTS)
+    ratio = output_ratio(trace)
+    usage = trace.usage
+    return {
+        "agent_name": trace.agent[0],
+        "agent_version": trace.agent[1],
+        "model_name": trace.agent[2],
+        "llm_calls": trace.llm_calls or trace.agent_steps,
+        # A number and a fixed code only: authored characters per reported completion token.
+        "chars_per_output_token": round(ratio.value, 2) if ratio else None,
+        "output_ratio_basis": None
+        if ratio is None
+        else "answer_only"
+        if ratio.answer_only
+        else "all_text",
+        "usage": None
+        if usage is None
+        else {
+            "cost_usd": usage.cost_usd,
+            "input_tokens": usage.prompt_tokens,
+            "cache_tokens": usage.cached_tokens,
+            "output_tokens": usage.completion_tokens,
+        },
+    }
+
+
+TRACE_FACTS = (
+    "agent_name",
+    "agent_version",
+    "model_name",
+    "llm_calls",
+    "chars_per_output_token",
+    "output_ratio_basis",
+    "usage",
+)
+
+
+def run_facts(meta: dict, traced: dict) -> dict:
+    """Per-trial run facts: recorded metadata (Hub, Harbor result.json), else final_metrics.
+
+    `meta` is read fresh on every scan (never cached); `traced` is `trace_facts`."""
     facts = {
         "error_type": meta.get("error_type"),
         "status": meta.get("status"),
@@ -185,25 +228,34 @@ def run_facts(meta: dict, trace) -> dict:
         "input_tokens": meta.get("input_tokens"),
         "cache_tokens": meta.get("cache_tokens"),
         "output_tokens": meta.get("output_tokens"),
-        "agent_name": trace.agent[0] if trace is not None else None,
-        "agent_version": trace.agent[1] if trace is not None else None,
-        "model_name": trace.agent[2] if trace is not None else None,
-        "llm_calls": (trace.llm_calls or trace.agent_steps) if trace is not None else None,
+        **{k: v for k, v in traced.items() if k != "usage"},
     }
-    ratio = output_ratio(trace) if trace is not None else None
-    # A number and a fixed code only: authored characters per reported completion token.
-    facts["chars_per_output_token"] = round(ratio.value, 2) if ratio else None
-    facts["output_ratio_basis"] = (
-        None if ratio is None else "answer_only" if ratio.answer_only else "all_text"
-    )
-    if meta.get("input_tokens") is None and usage is not None:
-        facts.update(
-            cost_usd=usage.cost_usd,
-            input_tokens=usage.prompt_tokens,
-            cache_tokens=usage.cached_tokens,
-            output_tokens=usage.completion_tokens,
-        )
+    if meta.get("input_tokens") is None and traced["usage"] is not None:
+        facts.update(traced["usage"])
     return facts
+
+
+# Trace-derived item fields reported after the run facts (the JSON layout's order).
+TAIL = ("partial", "agent_steps", "tool_calls", "unrecognized_tool_calls")
+
+
+def assemble(scanned: dict, facts: dict) -> dict:
+    """The report item: cacheable scan results with fresh run facts in their place."""
+    head = {k: v for k, v in scanned.items() if k not in TAIL}
+    return {**head, **facts, **{k: scanned[k] for k in TAIL}}
+
+
+def outcome(item: dict, threshold: Severity | None) -> tuple[bool, bool]:
+    """(invalid, failed) for one report item. A Hub trial without a trajectory (e.g. it
+    errored first) is a reported run fact, not bad input; unreadable files exit 2."""
+    invalid = any(a["status"] == Status.ERROR for a in item["assessments"]) or (
+        item["input_status"] != "available"
+        and item.get("input_error") != "no_trajectory_downloaded"
+    )
+    failed = threshold is not None and any(
+        a.get("score") is not None and a["score"] >= int(threshold) for a in item["assessments"]
+    )
+    return invalid, failed
 
 
 def load_checks(args: argparse.Namespace) -> list:
@@ -218,32 +270,32 @@ def load_checks(args: argparse.Namespace) -> list:
     return checks
 
 
-def emit(doc: dict, args: argparse.Namespace) -> None:
-    fmt = args.format
-    if fmt == "auto":
-        fmt = "text" if sys.stdout.isatty() else "json"
-    many = len(doc["inputs"]) > 1
-    default_brief = (
-        fmt == "text" and many and not (args.detail or args.summary or args.overview or args.cite)
-    )
-    if args.brief or default_brief:
-        report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
-        if fmt == "json":
-            print(to_json(report_))
-        else:
-            print_brief(brief_text(report_))
-        return
-    if args.overview or args.summary:
-        scorecard = overview(doc, args.dq_on, args.min_trials, expect_tasks=args.expect_tasks)
-        if args.overview:
-            out = {"kind": "overview", "scanner_version": doc["scanner_version"], **scorecard}
-            print(to_json(out) if fmt == "json" else "\n".join(overview_text(scorecard)))
-            return
-        rolled = dict(summary(doc), overview=scorecard)
-        print(to_json(rolled) if fmt == "json" else summary_text(rolled), end="")
-        if fmt == "json":
-            print()
-        return
+def _brief(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+    report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
+    if fmt == "json":
+        print(to_json(report_))
+    else:
+        print_brief(brief_text(report_))
+
+
+def _scorecard(doc: dict, args: argparse.Namespace) -> dict:
+    return overview(doc, args.dq_on, args.min_trials, expect_tasks=args.expect_tasks)
+
+
+def _overview(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+    scorecard = _scorecard(doc, args)
+    out = {"kind": "overview", "scanner_version": doc["scanner_version"], **scorecard}
+    print(to_json(out) if fmt == "json" else "\n".join(overview_text(scorecard)))
+
+
+def _summary(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+    rolled = dict(summary(doc), overview=_scorecard(doc, args))
+    print(to_json(rolled) if fmt == "json" else summary_text(rolled), end="")
+    if fmt == "json":
+        print()
+
+
+def _detail(doc: dict, args: argparse.Namespace, fmt: str) -> None:
     if fmt == "json":
         print(to_json(doc))
         return
@@ -251,6 +303,21 @@ def emit(doc: dict, args: argparse.Namespace) -> None:
         render_rich(doc)
     except ImportError:
         sys.stdout.write(to_text(doc))
+
+
+VIEWS = {"brief": _brief, "overview": _overview, "summary": _summary, "detail": _detail}
+
+
+def emit(doc: dict, args: argparse.Namespace) -> None:
+    fmt = args.format
+    if fmt == "auto":
+        fmt = "text" if sys.stdout.isatty() else "json"
+    view = args.view
+    if view is None:
+        # Default: the brief for a run's text view (unless citing), else the detail.
+        many = len(doc["inputs"]) > 1
+        view = "brief" if fmt == "text" and many and not args.cite else "detail"
+    VIEWS[view](doc, args, fmt)
 
 
 def inspect(args: argparse.Namespace) -> int:
@@ -366,21 +433,14 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
         help="auto: text on a terminal, JSON when piped",
     )
-    parser.add_argument(
-        "--summary",
-        action="store_true",
-        help="one rollup across inputs: counts for info/low, per-trace details for medium+",
-    )
-    parser.add_argument(
-        "--brief",
-        action="store_true",
-        help="one-screen run integrity report (default text view for several inputs)",
-    )
-    parser.add_argument(
-        "--detail",
-        action="store_true",
-        help="per-trace listing (default text view for a single input)",
-    )
+    views = parser.add_mutually_exclusive_group()
+    for flag, help_ in (
+        ("summary", "one rollup across inputs: counts for info/low, per-trace details for medium+"),
+        ("brief", "one-screen run integrity report (default text view for several inputs)"),
+        ("detail", "per-trace listing (default text view for a single input)"),
+        ("overview", "only the run scorecard: coverage, accuracy, DQ candidates, cost"),
+    ):
+        views.add_argument(f"--{flag}", dest="view", action="store_const", const=flag, help=help_)
     parser.add_argument(
         "--cache",
         type=Path,
@@ -388,11 +448,6 @@ def main(argv: list[str] | None = None) -> int:
         help="per-trace result cache (default: <sync dir>/results; --no-cache disables)",
     )
     parser.add_argument("--no-cache", action="store_true", help="disable the result cache")
-    parser.add_argument(
-        "--overview",
-        action="store_true",
-        help="only the run scorecard: coverage, accuracy, DQ candidates, cost",
-    )
     parser.add_argument(
         "--dq-on",
         choices=[s.name.lower() for s in Severity if s >= Severity.LOW],
@@ -450,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 for an unexcused finding at/above this review severity",
     )
     args = parser.parse_args(argv)
-    if args.cite and (args.brief or args.overview or args.inspect):
+    if args.cite and (args.view in ("brief", "overview") or args.inspect):
         parser.error("--cite requires detail or summary output, not brief/overview/inspect")
     args.price_rates = price(args.price)  # validate early, whatever the output format
     if args.inspect:
@@ -486,8 +541,7 @@ def scan(args: argparse.Namespace) -> int:
     # Citations and questions carry trace text, and answers need the trace: never cached.
     if not args.no_cache and not args.cite and writer is None and answers is None:
         directory = args.cache or args.sync_root / "results"
-        if directory is not None:
-            cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
+        cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
     progress = sys.stderr.isatty() and len(records) > 1
     for number, (source, context) in enumerate(records, 1):
         if progress:
@@ -503,66 +557,50 @@ def scan(args: argparse.Namespace) -> int:
         key = cache.key(fingerprint, context) if fingerprint else None
         cached = cache.get(key) if key else None
         if cached is not None and cached.get("input_id") == source.label:
-            output.append(cached)
-            rows = cached["assessments"]
-            invalid = (
-                invalid
-                or any(a["status"] == "error" for a in rows)
-                or (
-                    cached["input_status"] != "available"
-                    and cached.get("input_error") != "no_trajectory_downloaded"
-                )
+            item = assemble(cached["scan"], run_facts(meta, cached["trace_facts"]))
+        else:
+            error = None
+            try:
+                trace = source.load()
+            except TraceError as exc:
+                trace = None
+                # TraceError carries fixed codes only (e.g. trace_too_large); re-check anyway.
+                error = str(exc) if re.fullmatch(r"[a-z_]{1,64}", str(exc)) else "unreadable_trace"
+            # Reported as partial when part of the session isn't recorded (Engine applies
+            # the same rule itself).
+            context = effective_context(trace, context)
+            assessments = engine.evaluate(trace, context)
+            scanned = report(assessments, trace.step_numbers if trace is not None else None)
+            scanned.update(
+                input_id=source.label,
+                input_status="available" if trace is not None else "unavailable_or_invalid",
+                input_error=error,
+                compacted=bool(trace is not None and trace.compacted),
+                task=context.task,
+                reward=context.reward,
+                partial=context.partial,
+                agent_steps=trace.agent_steps if trace is not None else None,
+                # Counts only: tool names and arguments never enter the report.
+                tool_calls=trace.tool_calls if trace is not None else None,
+                unrecognized_tool_calls=trace.unrecognized_tool_calls
+                if trace is not None
+                else None,
             )
-            failed = failed or (
-                threshold is not None
-                and any(a.get("score") is not None and a["score"] >= int(threshold) for a in rows)
-            )
-            continue
-        error = None
-        try:
-            trace = source.load()
-        except TraceError as exc:
-            trace = None
-            # TraceError carries fixed codes only (e.g. trace_too_large); re-check anyway.
-            error = str(exc) if re.fullmatch(r"[a-z_]{1,64}", str(exc)) else "unreadable_trace"
-            # A Hub trial without a trajectory (e.g. it errored first) is a reported run
-            # fact, not bad input; unreadable local/hf files still exit 2.
-            invalid = invalid or error != "no_trajectory_downloaded"
-        if trace is not None and trace.recording_gaps and not context.partial:
-            # Part of the session isn't recorded (compacted history, status-only results,
-            # unrecorded tool calls, missing start): negatives must not read as clean.
-            context = Context(context.task, True, context.reward)
-        assessments = engine.evaluate(trace, context)
-        item = report(assessments, trace.step_numbers if trace is not None else None)
-        item.update(
-            input_id=source.label,
-            input_status="available" if trace is not None else "unavailable_or_invalid",
-            input_error=error,
-            compacted=bool(trace is not None and trace.compacted),
-            task=context.task,
-            reward=context.reward,
-            **run_facts(meta, trace),
-            partial=context.partial,
-            agent_steps=trace.agent_steps if trace is not None else None,
-            # Counts only: tool names and arguments never enter the report.
-            tool_calls=trace.tool_calls if trace is not None else None,
-            unrecognized_tool_calls=trace.unrecognized_tool_calls if trace is not None else None,
-        )
-        if key is not None:
-            cache.put(key, item)
-        if writer is not None and trace is not None:
-            writer.add(trace, assessments, context, source.label, source.local)
-        if answers is not None:
-            item["answers"] = answers.annotate(source.label, trace)
-        if args.cite and trace is not None:
-            # Opt-in trace text; the only report field that isn't allowlisted metadata.
-            item["citations"] = citations(trace, assessments, Severity[args.cite.upper()])
+            traced = trace_facts(trace)
+            if key is not None:
+                # Only trace-derived data: result.json / Hub facts are merged fresh.
+                cache.put(key, {"input_id": source.label, "scan": scanned, "trace_facts": traced})
+            item = assemble(scanned, run_facts(meta, traced))
+            if writer is not None and trace is not None:
+                writer.add(trace, assessments, context, source.label, source.local)
+            if answers is not None:
+                item["answers"] = answers.annotate(source.label, trace)
+            if args.cite and trace is not None:
+                # Opt-in trace text; the only report field that isn't allowlisted metadata.
+                item["citations"] = citations(trace, assessments, Severity[args.cite.upper()])
         output.append(item)
-        invalid = invalid or any(a.result.status == Status.ERROR for a in assessments)
-        failed = failed or (
-            threshold is not None
-            and any(a.counts and a.spec.severity >= threshold for a in assessments)
-        )
+        bad, fail = outcome(item, threshold)
+        invalid, failed = invalid or bad, failed or fail
     if progress:
         print("\r\033[K", end="", file=sys.stderr)
     if writer is not None:

@@ -19,9 +19,17 @@ import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
+# The leading lookahead lists every alternative's first character (`-----BEGIN`, sk/pk/rk,
+# hf_, gh*_/github_pat_, xox*, AKIA/AIza, eyJ, LLM|): it adds nothing to the match, but lets
+# the regex engine skip to candidate positions (3-4x faster). Update it with any new
+# alternative (tests/test_detectors_review.py checks it against the alternatives).
+_PRIVATE_KEY = r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
+PRIVATE_KEY = re.compile(_PRIVATE_KEY, re.S)
 TOKEN_SHAPES = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)|"
-    r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|"
+    r"(?=[-sprhgxAeL])(?:" + _PRIVATE_KEY + "|"
+    # Real keys carry a digit (`sk-proj-…`, `sk-ant-api03-…`); `rk-free-variables-list`
+    # in Lisp code doesn't.
+    r"\b(?:sk|pk|rk)-(?=[\w-]*\d)[A-Za-z0-9_-]{16,}|"
     r"\bhf_[A-Za-z0-9]{20,}|"
     r"\bgh[pousr]_[A-Za-z0-9]{20,}|"
     r"\bgithub_pat_[A-Za-z0-9_]{20,}|"
@@ -30,7 +38,7 @@ TOKEN_SHAPES = re.compile(
     r"\bAIza[0-9A-Za-z_-]{35}|"
     r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|"
     # Harness-issued model keys (`LLM|<numeric id>|<token>`), seen in leaderboard sandboxes.
-    r"\bLLM\|\d{6,}\|[A-Za-z0-9_-]{12,}",
+    r"\bLLM\|\d{6,}\|[A-Za-z0-9_-]{12,})",
     re.S,
 )
 
@@ -43,7 +51,9 @@ _KEYED = re.compile(
 )
 # --api-key VALUE / --token=VALUE / x-api-key: VALUE (headers, CLI flags).
 _FLAG = re.compile(
-    r"(?i)(?:--?(?P<flag>api[_-]?key|token|password|secret)[= ]\s*|"
+    # Not inside a hyphenated word: "per-token probabilities", "multi-token approach".
+    # The lookahead (first characters of both alternatives) only speeds up scanning.
+    r"(?i)(?=[-xa])(?:(?<![\w-])--?(?P<flag>api[_-]?key|token|password|secret)[= ]\s*|"
     r"\b(?P<header>x-api-key|api-key)\s*:\s*)(?P<q>['\"]?)(?P<value>[^\s'\"]+)"
 )
 _SECRET_PART = re.compile(
@@ -52,7 +62,11 @@ _SECRET_PART = re.compile(
 )
 _NOT_SECRET_PART = re.compile(
     r"(?:^|_)(?:path|file|dir|url|uri|host|port|name|type|cache|len|length|size|count|"
-    r"max|min|limit|env|header|field|prefix|id|ids|format|mode|var|vars|fn|func)(?:_|$)"
+    r"max|min|limit|env|header|field|prefix|id|ids|format|mode|var|vars|fn|func|"
+    # `KeyError: 'x'`, `"apiKeySource": "…"`, public site/captcha/Stripe keys in page HTML.
+    r"error|source|public|publishable|site|captcha|"
+    # keyUsage, past_key_values, src_key_padding_mask, token_owner, secret_oid, token_chars
+    r"usage|values?|mask|padding|owner|oid|chars?)(?:_|$)"
 )
 _PLACEHOLDER = re.compile(
     r"(?i)^(?:\*+|x+|\.+|<[^>]*>|\$\{?\w+\}?|%\w+%|your[\w-]*|changeme|none|null|nil|"
@@ -61,10 +75,17 @@ _PLACEHOLDER = re.compile(
 )
 
 
+# Code, not secrets: attribute access (`scores.get`, `cv2.contourArea`) and references to
+# an environment variable by name (`-password=KEY_PASSWORD`).
+_CODE_VALUE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?:=\S*)?")
+
+
 def secret_name(name: str) -> bool:
     """Does an assignment name say it holds a secret? Components split on _ - and camelCase."""
     parts = re.split(r"[_\-]+|(?<=[a-z0-9])(?=[A-Z])", name)
     joined = "_".join(p.lower() for p in parts if p)
+    if joined == "key":  # `sorted(x, key=len)`, `const key = "OP_"`: code, not secrets
+        return False
     return bool(_SECRET_PART.search(joined)) and not _NOT_SECRET_PART.search(joined)
 
 
@@ -73,6 +94,8 @@ def plausible_value(value: str) -> bool:
     if len(value) < 8 or _PLACEHOLDER.match(value) or value.isdigit():
         return False
     if value[0] in "/~." or "://" in value or value.startswith(("$(", "`")):
+        return False
+    if any(c in value for c in "()[]{}<>\\") or value.endswith(",") or _CODE_VALUE.fullmatch(value):
         return False
     return any(c.isalpha() for c in value)
 

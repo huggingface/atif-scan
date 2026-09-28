@@ -341,6 +341,33 @@ def test_trials_on_another_model_are_critical_dq_candidates():
     assert "(1 DQ candidates: 1 ran another model)" in text
 
 
+def test_comparison_job_models_are_planned_not_substitutions():
+    # Regression (TB2.1 5-agent job c8fcaaeb): each configured agent/model is ~20% of the
+    # trials; reading the most common as "the" model made 1,347 rewarded trials critical.
+    from atif_scan.brief import brief
+
+    items = [_item(i, "model-a", 1.0) for i in range(4)]
+    items += [_item(i, "model-b", 1.0) for i in range(4, 8)]
+    items += [_item(8, "fallback-model", 1.0)]
+    runs = [{"source": "harbor_hub", "job_id": "j", "configured_agents": 2}]
+    b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": runs})
+    mm, d = b["overview"]["model_mismatch"], b["overview"]["disqualification"]
+    assert mm["planned_models"] == ["model-a", "model-b"] and mm["trial_ids"] == ["t8"]
+    assert mm["other_models"] == {"fallback-model": 1}
+    assert d["candidate_ids"] == ["t8"]
+    two = [dict(r, configured_agents=3) for r in runs]  # every model planned: no mismatch
+    b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": two})
+    assert b["overview"]["model_mismatch"] is None
+
+
+def test_configured_agents_from_job_config():
+    from atif_scan.harbor_files import configured_agents
+
+    agents = [{"name": "terminus-2", "model_name": m} for m in ("a/x", "b/y")]
+    assert configured_agents({"agents": agents}) == 2
+    assert configured_agents({"agents": "bad"}) is None and configured_agents({}) is None
+
+
 def test_brief_says_why_trials_cannot_be_cleared_and_which_errors_occurred():
     from atif_scan.brief import brief, brief_text
 

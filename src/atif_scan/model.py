@@ -7,6 +7,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from functools import cached_property
 
 
 class Channel(StrEnum):
@@ -30,7 +31,7 @@ class Channel(StrEnum):
 TOOL_INPUT_CHANNELS = frozenset({Channel.COMMAND, Channel.PATH, Channel.QUERY, Channel.URL})
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True)
 class Locator:
     step: int
     channel: Channel
@@ -42,7 +43,9 @@ class Locator:
     span: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
-        for value in (self.step, self.call, self.observation, self.field):
+        if type(self.step) is not int or self.step < 0:
+            raise ValueError("invalid locator index")
+        for value in (self.call, self.observation, self.field):
             if value is not None and (type(value) is not int or value < 0):
                 raise ValueError("invalid locator index")
         if not isinstance(self.channel, Channel):
@@ -117,6 +120,35 @@ class Step:
     # metrics.completion_tokens when recorded as a non-negative integer.
     completion_tokens: int | None = None
 
+    @property
+    def authored(self) -> bool:
+        """The agent's own step in this session (not context copied from elsewhere)."""
+        return self.source == "agent" and not self.copied
+
+    def authored_surfaces(self) -> Iterator[Surface]:
+        """Message, reasoning and every classified call argument, in that order."""
+        yield Surface(Locator(self.index, Channel.MESSAGE), self.message)
+        yield Surface(Locator(self.index, Channel.REASONING), self.reasoning)
+        for call in self.calls:
+            for field_index, (channel, content) in enumerate(call.fields):
+                at = Locator(self.index, channel, call.index, field=field_index)
+                yield Surface(at, content, call.tool, call.name)
+
+    def observation_surfaces(self) -> Iterator[Surface]:
+        for index, observation in enumerate(self.observations):
+            at = Locator(self.index, Channel.OBSERVATION, observation=index)
+            yield Surface(at, observation.content)
+
+    def results_for(self, call: ToolCall) -> list[tuple[int, Observation]]:
+        """(index, observation) recorded for `call`: those linked by its result key, else,
+        when this is the step's only call, the unlinked ones (no source_call_id)."""
+        key = call.result_key
+        found = list(enumerate(self.observations))
+        linked = [(j, o) for j, o in found if key and o.source_call_id == key]
+        if linked or len(self.calls) != 1:
+            return linked
+        return [(j, o) for j, o in found if o.source_call_id is None]
+
 
 @dataclass(frozen=True)
 class Usage:
@@ -171,15 +203,13 @@ class Trace:
     # Bare `[REDACTED]` JSON values the loader read as null (a publisher redaction defect).
     redacted_values: int = 0
 
-    @property
+    @cached_property
     def results_unrecorded(self) -> bool:
         """Tool results were exported as bare status words ("success"/"failure") instead of
         output (ACE on TB2.1: every one of 12k results): checks on what the agent received
         can't be answered."""
         texts = [
-            (o.content.text or "").strip().strip('"').lower()
-            for s in self.steps
-            for o in s.observations
+            o.content.text.strip().strip('"').lower() for s in self.steps for o in s.observations
         ]
         return len(texts) >= 5 and sum(t in STATUS_ONLY for t in texts) >= 0.9 * len(texts)
 
@@ -189,11 +219,7 @@ class Trace:
         exported 105 rewarded traces as the instruction plus "Done. Files created: …")."""
         if self.tool_calls or not self.agent_steps:
             return False
-        return any(
-            ACTION_CLAIM.search(s.message.text or "")
-            for s in self.steps
-            if s.source == "agent" and not s.copied
-        )
+        return any(ACTION_CLAIM.search(s.message.text) for s in self.steps if s.authored)
 
     @property
     def head_missing(self) -> bool:
@@ -213,42 +239,32 @@ class Trace:
         (`head_missing` isn't one: many exporters simply don't record the prompt.)"""
         return bool(self.compacted) or self.results_unrecorded or self.actions_unrecorded
 
-    @property
+    @cached_property
     def reasoning_hidden(self) -> bool:
         """Reasoning tokens were reported but no reasoning text was recorded."""
         return bool(self.usage and self.usage.reasoning_tokens) and not any(
-            s.reasoning.text for s in self.steps if s.source == "agent" and not s.copied
+            s.reasoning.text for s in self.steps if s.authored
         )
 
     def agent_surfaces(self) -> Iterator[Surface]:
         """Never recursively walks a step: observations and prompt text stay separate."""
         for step in self.steps:
-            if step.source != "agent" or step.copied:
-                continue
-            yield Surface(Locator(step.index, Channel.MESSAGE), step.message)
-            yield Surface(Locator(step.index, Channel.REASONING), step.reasoning)
-            for call in step.calls:
-                for field_index, (channel, content) in enumerate(call.fields):
-                    at = Locator(step.index, channel, call.index, field=field_index)
-                    yield Surface(at, content, call.tool, call.name)
+            if step.authored:
+                yield from step.authored_surfaces()
 
     def agent_calls(self) -> Iterator[tuple[Step, ToolCall]]:
         for step in self.steps:
-            if step.source == "agent" and not step.copied:
+            if step.authored:
                 for call in step.calls:
                     yield step, call
 
     def observation_surfaces(self) -> Iterator[Surface]:
         """Explicit opt-in for plugins verifying outcomes, never default authored evidence."""
         for step in self.steps:
-            if step.copied:
-                continue
-            for index, observation in enumerate(step.observations):
-                yield Surface(
-                    Locator(step.index, Channel.OBSERVATION, observation=index), observation.content
-                )
+            if not step.copied:
+                yield from step.observation_surfaces()
 
-    @property
+    @cached_property
     def step_numbers(self) -> tuple[int, ...]:
         """The step number a reviewer looks up: the recorded ATIF `step_id` (1..n), or the
         1-based position when it's absent/invalid. Locators keep 0-based positions."""
@@ -257,11 +273,11 @@ class Trace:
             for s in self.steps
         )
 
-    @property
+    @cached_property
     def agent_steps(self) -> int:
-        return sum(s.source == "agent" and not s.copied for s in self.steps)
+        return sum(s.authored for s in self.steps)
 
-    @property
+    @cached_property
     def tool_calls(self) -> int:
         return sum(1 for _ in self.agent_calls())
 

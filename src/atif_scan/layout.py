@@ -71,21 +71,25 @@ def _name(value: str) -> str:
         return "<unlisted-name>"
 
 
+def _folder(path: str) -> str:
+    return _name(path) if path else "."
+
+
 def inspect_listing(listing: Listing, pattern: str, number: int) -> dict:
     entries = listing.entries
     chosen = selected(listing, pattern)
     chosen_paths = {e.path for e in chosen}
     tree = _children(entries) if listing.directory else {"": set()}
     trials = {d for d, names in tree.items() if _is_trial(names)}
+    trial_parents = {t.rpartition("/")[0] for t in trials if t}
     jobs = {
         d
         for d, names in tree.items()
-        if "job.log" in names
-        or ({"config.json", "result.json"} <= names and any(_is_child(t, d) for t in trials))
+        if "job.log" in names or ({"config.json", "result.json"} <= names and d in trial_parents)
     } - trials
 
     def label(entry: Entry) -> str:
-        return label_for(entry, pattern) or entry.path or "<file>"
+        return label_for(entry, pattern) or (_name(entry.path) if entry.path else "<file>")
 
     roles: Counter[str] = Counter()
     per_trial: dict[str, list[Entry]] = {t: [] for t in trials}
@@ -114,14 +118,14 @@ def inspect_listing(listing: Listing, pattern: str, number: int) -> dict:
     flag(
         "trials_without_agent_trajectory",
         sorted(
-            t or "."
+            _folder(t)
             for t, found in per_trial.items()
             if all(_role(_within(e.path, t)) == "simulated_user" for e in found)
         ),
     )
     flag(
         "trials_with_multiple_scanned_trajectories",
-        sorted(t or "." for t, found in per_trial.items() if len(found) > 1),
+        sorted(_folder(t) for t, found in per_trial.items() if len(found) > 1),
     )
     loose = [e for e in chosen if not any(d in trials for d in _parents(e.path))]
     depths = Counter(e.path.count("/") for e in loose)
@@ -130,18 +134,18 @@ def inspect_listing(listing: Listing, pattern: str, number: int) -> dict:
         flag("mixed_depths", [label(e) for e in loose if e.path.count("/") != usual])
     flag("oversize_files", [label(e) for e in chosen if (e.size or 0) > MAX_BYTES])
     if listing.directory:
-        flag("positional_labels", [e.path for e in chosen if label_for(e, pattern) is None])
+        flag("positional_labels", [_name(e.path) for e in chosen if label_for(e, pattern) is None])
     flag(
         "unscanned_trajectory_like_files",
         [
-            e.path
+            _name(e.path)
             for e in entries
             if e.path not in chosen_paths
             and "trajectory" in PurePosixPath(e.path).name
             and e.path.endswith(".json")
         ],
     )
-    flag("trials_with_exception", sorted(t or "." for t in trials if "exception.txt" in tree[t]))
+    flag("trials_with_exception", sorted(_folder(t) for t in trials if "exception.txt" in tree[t]))
     other = Counter(
         _name(PurePosixPath(e.path).name) for e in entries if e.path not in chosen_paths
     )
@@ -195,10 +199,6 @@ def inspect_listing(listing: Listing, pattern: str, number: int) -> dict:
 
 def _join(folder: str, name: str) -> str:
     return f"{folder}/{name}" if folder else name
-
-
-def _is_child(path: str, parent: str) -> bool:
-    return path != parent and PurePosixPath(path).parent.as_posix() == (parent or ".")
 
 
 def document(listings: list[Listing], pattern: str) -> dict:
