@@ -98,6 +98,21 @@ def observation_pairing_reconstructed(trace: Trace) -> Detection:
     )
 
 
+def observation_pairing_unresolved(trace: Trace) -> Detection:
+    """Results of a multi-call step that couldn't be paired with their calls (counts
+    differ, call IDs missing or repeated, contradicting links): left unlinked, so checks
+    that depend on which call produced them are unresolved there, never cleared."""
+    return _result(
+        [
+            Locator(step.index, Channel.METADATA, observation=j)
+            for step in trace.steps
+            for j, observation in enumerate(step.observations)
+            if observation.pairing_unresolved
+        ],
+        complete=True,
+    )
+
+
 def call_id_reused(trace: Trace) -> Detection:
     """A tool_call_id already used by an earlier (non-copied) step: an exporter defect.
     Harmless for linking (observations link within their step), but IDs aren't unique."""
@@ -324,6 +339,10 @@ def integrity_detectors() -> list[Detector]:
         TraceCheck(
             CheckSpec("integrity.observation_pairing_reconstructed", Severity.LOW),
             observation_pairing_reconstructed,
+        ),
+        TraceCheck(
+            CheckSpec("integrity.observation_pairing_unresolved", Severity.LOW),
+            observation_pairing_unresolved,
         ),
         TraceCheck(CheckSpec("integrity.agent_only_fields", Severity.LOW), agent_only_fields),
         TraceCheck(CheckSpec("integrity.call_id_reused", Severity.INFO), call_id_reused),

@@ -523,16 +523,27 @@ def _reconstruct_observation_links(
     explicit links must agree with the positional mapping; never silently reorder
     or discard observations. Missing output altogether remains missing evidence.
     `calls` excludes synthetic calls extracted from code-mode programs.
+
+    When the order can't be trusted (counts differ, call IDs missing or repeated, explicit
+    links contradicting it), unlinked results stay unlinked and are marked unresolved
+    (`integrity.observation_pairing_unresolved`). The trace is still scanned: rejecting it
+    dropped 112 of 330 TB4 Codex traces, whose hosted web-search calls carry no ID.
     """
     if len(calls) < 2 or not any(o.source_call_id is None for o in observations):
         return observations
-    if len(calls) != len(observations):
-        raise TraceError("observation_pairing_count_mismatch")
     ids = [c.id for c in calls]
-    if any(not cid for cid in ids) or len(set(ids)) != len(ids):
-        raise TraceError("observation_pairing_ambiguous_call_ids")
-    if any(o.source_call_id not in (None, c.id) for c, o in zip(calls, observations, strict=True)):
-        raise TraceError("observation_pairing_link_conflict")
+    if (
+        len(calls) != len(observations)
+        or any(not cid for cid in ids)
+        or len(set(ids)) != len(ids)
+        or any(
+            o.source_call_id not in (None, c.id) for c, o in zip(calls, observations, strict=True)
+        )
+    ):
+        return [
+            replace(o, pairing_unresolved=True) if o.source_call_id is None else o
+            for o in observations
+        ]
     return [
         replace(o, source_call_id=c.id, pairing_reconstructed=True)
         if o.source_call_id is None

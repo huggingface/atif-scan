@@ -7,7 +7,7 @@ import importlib
 
 import pytest
 
-from atif_scan import Context, Engine, Status, TraceError, builtin_detectors, parse_trace
+from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 
 SOLUTION = " ".join(f"step{i} alpha beta gamma delta epsilon zeta eta theta" for i in range(40))
 PROMPT = {"source": "user", "message": "Sort the records in /app/data.csv."}
@@ -124,8 +124,9 @@ def test_hidden_content_unlinked_multi_call_result_is_not_visible(reference):
         results=[(None, SOLUTION)],
     )
     used = agent("", calls=[write("/app/solve.sh", SOLUTION)])
-    with pytest.raises(TraceError, match="observation_pairing_count_mismatch"):
-        status([PROMPT, both, used], [*builtin_detectors(), *reference.checks()])
+    assert (
+        status([PROMPT, both, used], [*builtin_detectors(), *reference.checks()]) == Status.UNKNOWN
+    )
     # A linked local read still counts as visible.
     local = agent("", calls=[bash("cat /app/vendor.py")], results=[("c1", SOLUTION)])
     assert (

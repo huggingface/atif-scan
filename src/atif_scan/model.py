@@ -101,6 +101,10 @@ class Observation:
     content: Content = field(repr=False)
     # The loader inferred this link from recorded order, not an exported call ID.
     pairing_reconstructed: bool = False
+    # Unlinked in a multi-call step whose order couldn't be trusted (counts differ, call IDs
+    # missing or repeated, explicit links contradict the order): left unlinked, so checks
+    # that need to know which call produced it treat it as unresolved.
+    pairing_unresolved: bool = False
 
 
 @dataclass(frozen=True)

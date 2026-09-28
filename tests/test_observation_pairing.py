@@ -6,11 +6,12 @@ import re
 
 import pytest
 
-from atif_scan import Context, Engine, Status, TraceError, builtin_detectors, parse_trace
+from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.cli import main
 from atif_scan.extract import grep, outline, render, step_record
 from atif_scan.questions import BY_ID, Answers, Writer, build, trace_digest
 
+UNRESOLVED = "integrity.observation_pairing_unresolved"
 WARNING = "integrity.observation_pairing_reconstructed"
 
 
@@ -74,9 +75,12 @@ def test_matching_counts_reconstruct_and_warn_without_mutating_input():
         [{"source_call_id": "a", "content": "one"}, {"content": "two"}, {"content": "three"}],
     ],
 )
-def test_count_mismatch_is_a_fixed_code_error(results):
-    with pytest.raises(TraceError, match="^observation_pairing_count_mismatch$"):
-        parse_trace(raw(results))
+def test_count_mismatch_leaves_results_unlinked_and_reported(results):
+    t = parse_trace(raw(results))
+    obs = t.steps[1].observations
+    assert all(o.pairing_unresolved for o in obs if o.source_call_id is None)
+    assert not any(o.pairing_reconstructed for o in obs)
+    assert assessments(t)[UNRESOLVED].result.status == Status.MATCH
 
 
 @pytest.mark.parametrize("ids", [("a", None), (None, "b"), ("", "b")])
@@ -88,8 +92,10 @@ def test_mixed_compatible_links_only_mark_inferred_observations(ids):
 
 @pytest.mark.parametrize("ids", [("b", None), (None, "a"), ("foreign", None)])
 def test_contradictory_explicit_links_are_not_reordered(ids):
-    with pytest.raises(TraceError, match="^observation_pairing_link_conflict$"):
-        parse_trace(raw([{"source_call_id": cid, "content": "synthetic"} for cid in ids]))
+    t = parse_trace(raw([{"source_call_id": cid, "content": "synthetic"} for cid in ids]))
+    obs = t.steps[1].observations
+    assert [o.source_call_id for o in obs] == list(ids)  # nothing reordered or re-linked
+    assert [o.pairing_unresolved for o in obs] == [cid is None for cid in ids]
 
 
 def test_explicit_links_override_order_and_support_multiple_output_chunks():
@@ -118,15 +124,17 @@ def test_single_call_multichunk_fallback_unchanged():
 
 
 def test_empty_call_id_cannot_be_reconstructed():
-    with pytest.raises(TraceError, match="observation_pairing_ambiguous_call_ids"):
-        parse_trace(raw(calls=[call(""), call("b")]))
+    # TB4 Codex: hosted web-search calls without an ID. The trace is still scanned.
+    t = parse_trace(raw(calls=[call(""), call("b")]))
+    assert all(o.pairing_unresolved and o.source_call_id is None for o in t.steps[1].observations)
+    assert assessments(t)[UNRESOLVED].result.status == Status.MATCH
 
 
 def test_copied_duplicate_ids_cannot_be_reconstructed():
     r = raw(calls=[call("a"), call("a")])
     r["steps"][1]["is_copied_context"] = True
-    with pytest.raises(TraceError, match="observation_pairing_ambiguous_call_ids"):
-        parse_trace(r)
+    t = parse_trace(r)
+    assert all(o.pairing_unresolved for o in t.steps[1].observations)
 
 
 def test_code_mode_synthetic_calls_do_not_change_recorded_count():
@@ -183,15 +191,17 @@ def test_question_prompt_carries_real_reconstruction_warning(tmp_path):
     assert answers.annotate("synthetic", parse_trace(explicit))[0]["status"] == "stale"
 
 
-def test_cli_mismatch_is_nonzero_and_no_raw_text_emitted(tmp_path, capsys):
+def test_cli_mismatch_is_scanned_and_no_raw_text_emitted(tmp_path, capsys):
     p = tmp_path / "synthetic.json"
     p.write_text(json.dumps(raw([{"content": "DO_NOT_ECHO_SYNTHETIC"}])))
-    assert main([str(p), "--format", "json"]) == 2
+    main([str(p), "--format", "json"])
     output = capsys.readouterr()
     assert "DO_NOT_ECHO_SYNTHETIC" not in output.out + output.err
     doc = json.loads(output.out)
-    assert doc["coverage"]["available"] == 0
-    assert doc["inputs"][0]["input_error"] == "observation_pairing_count_mismatch"
+    assert doc["coverage"]["available"] == 1
+    item = doc["inputs"][0]
+    assert item["incomplete"]  # checks that need the pairing can't clear this step
+    assert next(a for a in item["assessments"] if a["id"] == UNRESOLVED)["status"] == "match"
 
 
 def test_citations_keep_reconstruction_provenance():
