@@ -35,9 +35,11 @@
 - The result cache (`--cache`, default `<sync dir>/results`) stores a subset of the
   allowlisted JSON report (the trace-derived results; run facts are re-read each scan),
   never citations or trace text.
-- Besides trajectories, the scanner reads only small listed reward files
-  (`verifier/reward.{json,txt}`, at most 4 KiB) to record the reward. `--inspect` reads no
-  file contents.
+- Besides trajectories, the scanner reads only small, size-capped run files: reward files
+  (`verifier/reward.{json,txt}`, at most 4 KiB), Harbor's `result.json`/`config.json`,
+  `trials.jsonl`, and harbor-hf's `run.json` (declared prices) and
+  `attempt-costs/*.json` (at most 4 KiB). Only allowlisted numbers, codes and labels are
+  extracted from them. `--inspect` reads no file contents.
 - Harbor Hub jobs are read through the user's own `harbor` CLI: no shell, fixed
   arguments, a validated UUID, stderr withheld. Downloaded trajectories are real traces;
   `--sync-to` puts them where you choose, otherwise they go to a temporary folder that's

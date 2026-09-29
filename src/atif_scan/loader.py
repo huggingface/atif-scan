@@ -678,6 +678,7 @@ def parse_trace(value: object) -> Trace:
         if isinstance(raw, dict) and raw.get("source") == "agent"
     ]
     counted = [c for c in calls if _count(c) is not None]
+    per_step, unmetered = step_usage(value["steps"])
     return Trace(
         version,
         tuple(steps),
@@ -690,7 +691,42 @@ def parse_trace(value: object) -> Trace:
         ),
         llm_calls=sum(counted) if counted else None,
         agent=agent_info(value.get("agent")),
+        step_usage=per_step,
+        calls_without_usage=unmetered if per_step is not None else 0,
     )
+
+
+def step_usage(raw_steps: list) -> tuple[Usage | None, int]:
+    """(summed per-step token usage, LLM calls without usage). Steps record
+    `metrics.{prompt,completion,cached}_tokens`; the sum is the fallback when
+    final_metrics has no totals (e.g. the harness died before writing them). A step
+    without metrics leaves all its calls (`llm_call_count`, else 1) unmetered; a step
+    with metrics but several calls is read as metering one of them (a retry's usage is
+    often lost), so the sum is a lower bound. None when no agent step recorded usage."""
+    totals = [0, 0, 0]
+    seen = missing = 0
+    recorded = [False, False, False]  # a kind no step records stays unknown, not 0
+    for raw in raw_steps:
+        if not isinstance(raw, dict) or raw.get("source") != "agent":
+            continue
+        m = raw.get("metrics")
+        calls = _count(raw.get("llm_call_count"))
+        values = (
+            [_count(m.get(k)) for k in ("prompt_tokens", "completion_tokens", "cached_tokens")]
+            if isinstance(m, dict)
+            else [None, None, None]
+        )
+        if values[0] is None and values[1] is None:
+            missing += 1 if calls is None else calls
+            continue
+        seen += 1
+        missing += max((calls or 1) - 1, 0)
+        totals = [t + (v or 0) for t, v in zip(totals, values, strict=True)]
+        recorded = [r or v is not None for r, v in zip(recorded, values, strict=True)]
+    if not seen:
+        return None, missing
+    kinds = [t if r else None for t, r in zip(totals, recorded, strict=True)]
+    return Usage(None, *kinds), missing
 
 
 def _count(value: object) -> int | None:

@@ -38,7 +38,7 @@ def test_recorded_result_and_unique_review_candidates():
     assert "if 1 flagged success is zeroed (not a verdict)" in text
     assert "1 unique rewarded DQ candidate(s) (threshold high+" in text
     assert "1 rewarded trial(s) with evidence gaps, not cleared" in text
-    assert "review priority, not a verdict; findings overlap" in text
+    assert "review priority, not a verdict" in text and "overlap" not in text
     assert "--judge-prompts DIR" in text
     assert "✗" not in text
     assert "accuracy" not in text.split("ADJUSTMENTS", 1)[1]

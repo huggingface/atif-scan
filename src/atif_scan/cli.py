@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tempfile
+from dataclasses import replace
 from importlib.metadata import version
 from pathlib import Path
 
@@ -192,6 +193,13 @@ def trace_facts(trace) -> dict:
         return dict.fromkeys(TRACE_FACTS)
     ratio = output_ratio(trace)
     usage = trace.usage
+    usage_basis = "final_metrics" if usage is not None else None
+    tokens = usage is not None and (usage.prompt_tokens, usage.completion_tokens) != (None, None)
+    steps_match = step_tokens_match(trace) if tokens else None
+    if not tokens and trace.step_usage is not None:
+        # No totals (e.g. the harness died before writing them): the steps' own usage.
+        usage = replace(trace.step_usage, cost_usd=usage.cost_usd if usage else None)
+        usage_basis = "steps_partial" if trace.calls_without_usage else "steps"
     return {
         "agent_name": trace.agent[0],
         "agent_version": trace.agent[1],
@@ -216,7 +224,31 @@ def trace_facts(trace) -> dict:
             "cache_tokens": usage.cached_tokens,
             "output_tokens": usage.completion_tokens,
         },
+        # A fixed code: where the trajectory's tokens come from (final_metrics totals, or
+        # summed step metrics, `steps_partial` when some agent steps recorded none).
+        "usage_basis": usage_basis,
+        "calls_without_usage": trace.calls_without_usage if usage_basis == "steps_partial" else 0,
+        "step_tokens_match": steps_match,
     }
+
+
+def step_tokens_match(trace) -> bool | None:
+    """Do the trajectory's final_metrics token totals equal the sum of its steps' own
+    usage? None when they can't be compared like for like: no step usage, LLM calls
+    without usage, or compacted history (the steps cover only the last context)."""
+    totals, steps = trace.usage, trace.step_usage
+    if totals is None or steps is None or trace.calls_without_usage or trace.compacted:
+        return None
+    pairs = [
+        (a, b)
+        for a, b in (
+            (totals.prompt_tokens, steps.prompt_tokens),
+            (totals.completion_tokens, steps.completion_tokens),
+            (totals.cached_tokens, steps.cached_tokens),
+        )
+        if a is not None and b is not None
+    ]
+    return all(a == b for a, b in pairs) if pairs else None
 
 
 TRACE_FACTS = (
@@ -229,6 +261,9 @@ TRACE_FACTS = (
     "chars_per_output_token",
     "output_ratio_basis",
     "usage",
+    "usage_basis",
+    "calls_without_usage",
+    "step_tokens_match",
 )
 
 
@@ -248,11 +283,43 @@ def run_facts(meta: dict, traced: dict) -> dict:
         "input_tokens": meta.get("input_tokens"),
         "cache_tokens": meta.get("cache_tokens"),
         "output_tokens": meta.get("output_tokens"),
-        **{k: v for k, v in traced.items() if k != "usage"},
+        **{k: v for k, v in traced.items() if k not in ("usage", "usage_basis")},
+        # Fixed codes: where the tokens come from ("run" = the run's own records), and
+        # whether they agree with the trajectory's (None when there's nothing to compare).
+        "usage_basis": "run" if meta.get("input_tokens") is not None else traced.get("usage_basis"),
+        "tokens_match_trajectory": tokens_match(meta, traced),
+        # harbor-hf's attempt-costs record, when it and the trial's own record both
+        # have a cost (None otherwise): a cost recorded twice must agree.
+        "cost_records_agree": None,
     }
     if meta.get("input_tokens") is None and traced["usage"] is not None:
         facts.update(traced["usage"])
+    elif meta.get("input_tokens") is None:
+        facts["usage_basis"] = None
+    beside = meta.get("attempt_cost_usd")
+    if beside is not None:
+        if facts["cost_usd"] is None:
+            facts["cost_usd"] = beside
+        else:
+            facts["cost_records_agree"] = abs(facts["cost_usd"] - beside) <= max(
+                0.01, 0.01 * max(facts["cost_usd"], beside)
+            )
     return facts
+
+
+def tokens_match(meta: dict, traced: dict) -> bool | None:
+    """Do the run's recorded token totals (result.json, Hub, ledger) equal the
+    trajectory's final_metrics totals? None unless both are complete totals."""
+    usage = traced.get("usage")
+    if (
+        meta.get("input_tokens") is None
+        or usage is None
+        or traced.get("usage_basis") not in ("final_metrics", "steps")
+    ):
+        return None
+    pairs = [(meta.get(k), usage.get(k)) for k in ("input_tokens", "cache_tokens", "output_tokens")]
+    pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
+    return all(a == b for a, b in pairs) if pairs else None
 
 
 # Trace-derived item fields reported after the run facts (the JSON layout's order).

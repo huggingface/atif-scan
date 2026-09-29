@@ -472,9 +472,7 @@ def review_text(ov: dict, review: dict | None = None, dq: str = "high") -> list[
             f" (threshold {dq}+, or model mismatch)"
             f" · {gaps} rewarded trial(s) with evidence gaps, not cleared"
         )
-        lines.append(
-            f"{'':<10} review priority, not a verdict; findings overlap (do not sum check counts)"
-        )
+        lines.append(f"{'':<10} review priority, not a verdict")
         if review is None:
             scope = " --judge-scope rewarded" if gaps and not candidates else ""
             lines.append(f"{'':<10} generate review prompts: --judge-prompts DIR{scope}")

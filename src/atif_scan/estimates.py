@@ -17,7 +17,11 @@ Both are fitted on the run's own data and stay estimates; the brief labels them 
   total cost silently omits them, so they are counted and their cost is estimated from
   recorded LLM calls: cost ~ a*calls + b*calls^2 over the run's priced, uncompacted
   trials (each call resends a growing context). That is rough per trial but close to
-  unbiased in aggregate; a single $/call ratio if the fit is ill-posed.
+  unbiased in aggregate; a single $/call ratio if the fit is ill-posed. When the run
+  declares its prices (or --price gives them), trials priced at those rates are
+  references too.
+- declared prices: a run that declares its token prices (harbor-hf's run.json) is priced
+  at them instead of a fit, and any cost it also recorded is checked against them.
 """
 
 from __future__ import annotations
@@ -60,14 +64,19 @@ def _price(rates: list[float], row: list[float]) -> float:
     return sum(r * v / 1e6 for r, v in zip(rates, row, strict=True))
 
 
+PRICE_SOURCES = {"given": "given --price", "declared": "at the run's declared prices, run.json"}
+
+
 def cost_estimate(
     items: list[dict],
     price: tuple[float, float, float] | None = None,
     other_model: frozenset[str] = frozenset(),
+    price_source: str = "given",
 ) -> dict:
     """`other_model`: input IDs of trials that ran another model than the run's (e.g. a
     fallback). Their prices are another model's, so they never train the fit: a run
-    whose only priced trials were fallbacks gets no estimate rather than a wrong one."""
+    whose only priced trials were fallbacks gets no estimate rather than a wrong one.
+    `price`: $/M (uncached, cached, output) rates, from `price_source` (PRICE_SOURCES)."""
     has_tokens = [
         (i, _features(i)) for i in items if i.get("input_tokens") or i.get("output_tokens")
     ]
@@ -100,7 +109,8 @@ def cost_estimate(
         return result
     if price is not None:
         rates = list(price)
-        result["method"] = "given --price"
+        result["method"] = PRICE_SOURCES[price_source]
+        result["price_source"] = price_source
         result["rates_per_mtok"] = dict(zip(TOKEN_KINDS, rates, strict=True))
         result["estimate_usd"] = round(sum(_price(rates, row) for row in unpriced), 2)
         return result
@@ -138,13 +148,62 @@ def cost_estimate(
     return result
 
 
+def price_check(items: list[dict], price: tuple[float, float, float] | None) -> dict | None:
+    """Recorded costs against the run's declared prices: a recorded cost that the
+    trial's own tokens at those prices don't explain (beyond 2% and $0.01) is a
+    mismatch. None without prices; `compared` 0 when no trial recorded both."""
+    if price is None:
+        return None
+    rows = [
+        (float(i["cost_usd"]), _price(list(price), _features(i)))
+        for i in items
+        if i.get("cost_usd") and (i.get("input_tokens") or i.get("output_tokens"))
+    ]
+    mismatched = [(c, p) for c, p in rows if abs(c - p) > max(0.01, 0.02 * max(c, p))]
+    return {
+        "compared": len(rows),
+        "mismatched": len(mismatched),
+        "recorded_usd": round(sum(c for c, _ in rows), 2),
+        "at_prices_usd": round(sum(p for _, p in rows), 2),
+    }
+
+
+def partial_usage(items: list[dict], price: tuple[float, float, float] | None = None) -> dict:
+    """Trials whose tokens come from step metrics with some LLM calls unmetered: their
+    tokens (and cost) are lower bounds. With prices (recorded cost, else `price`), the
+    unmetered calls are estimated at the trial's own metered cost per call (rough)."""
+    rows = [i for i in items if i.get("usage_basis") == "steps_partial"]
+    estimate, priced = 0.0, 0
+    for i in rows:
+        missing = i.get("calls_without_usage") or 0
+        metered = (i.get("llm_calls") or 0) - missing
+        cost = i.get("cost_usd") or (_price(list(price), _features(i)) if price else None)
+        if cost and metered > 0:
+            estimate += cost * missing / metered
+            priced += 1
+    return {
+        "trials": len(rows),
+        "ids": [i["input_id"] for i in rows],
+        "calls_without_usage": sum(i.get("calls_without_usage") or 0 for i in rows),
+        "rewarded": sum(1 for i in rows if (i.get("reward") or 0) > 0),
+        # Only when every such trial could be priced: a partial sum would read as whole.
+        "estimate_usd": round(estimate, 4) if rows and priced == len(rows) else None,
+    }
+
+
 def _work(item: dict) -> bool:
     return bool(item.get("llm_calls") or item.get("tool_calls"))
 
 
-def unmetered_work(items: list[dict], other_model: frozenset[str] = frozenset()) -> dict:
+def unmetered_work(
+    items: list[dict],
+    other_model: frozenset[str] = frozenset(),
+    price: tuple[float, float, float] | None = None,
+) -> dict:
     """Trials with recorded agent work but no usage (tokens) and no cost at all.
-    `other_model` trials (another model's prices) are left out of the reference fit."""
+    `other_model` trials (another model's prices) are left out of the reference fit.
+    With `price` ($/M rates: declared or given), trials with tokens but no recorded cost
+    are priced at those rates and serve as references too."""
     rows = [
         i
         for i in items
@@ -166,13 +225,22 @@ def unmetered_work(items: list[dict], other_model: frozenset[str] = frozenset())
     }
     if not rows:
         return result
+
+    def cost(i: dict) -> float | None:
+        if i.get("cost_usd"):
+            return float(i["cost_usd"])
+        if price is not None and (i.get("input_tokens") or i.get("output_tokens")):
+            return _price(list(price), _features(i))
+        return None
+
     refs = [
-        (float(i["llm_calls"]), float(i["cost_usd"]))
+        (float(i["llm_calls"]), c)
         for i in items
-        if i.get("cost_usd")
-        and (i.get("llm_calls") or 0) >= 5
+        if (i.get("llm_calls") or 0) >= 5
         and not i.get("compacted")
+        and i.get("usage_basis") != "steps_partial"
         and i["input_id"] not in other_model
+        and (c := cost(i))
     ]
     if len(refs) < MIN_PRICED:
         result["method"] = f"not estimated: fewer than {MIN_PRICED} priced trials with LLM calls"

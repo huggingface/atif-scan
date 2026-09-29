@@ -11,8 +11,14 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .estimates import cost_estimate, missing_activity, unmetered_work
-from .harbor_files import override_kind
+from .estimates import (
+    cost_estimate,
+    missing_activity,
+    partial_usage,
+    price_check,
+    unmetered_work,
+)
+from .harbor_files import PRICE_KINDS, override_kind
 from .packs import BUNDLED
 from .questions import tally
 from .report import (
@@ -98,6 +104,10 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
     items = doc["inputs"]
     ov = overview(doc, dq, min_trials, expect_tasks=expect_tasks)
     other_model = frozenset((ov.get("model_mismatch") or {}).get("trial_ids") or [])
+    declared = declared_prices(ov["runs"])
+    declared_rates = tuple(declared.values()) if declared else None  # PRICE_KINDS order
+    rates = price or declared_rates
+    source = "given" if price else "declared"
     agents = Counter(
         " / ".join(
             p for p in (i.get("agent_name"), i.get("agent_version"), i.get("model_name")) if p
@@ -109,8 +119,10 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
     behaviour_events = Counter()  # check -> distinct evidence locations over those traces
     integrity = Counter()
     by_severity = Counter()
+    flagged_trials = 0  # trials with at least one behaviour finding
     for item in items:
         counted = _counted(item)
+        flagged_trials += any(not a["id"].startswith("integrity.") for a in counted)
         for a in counted:
             check = a["id"]
             if check == "integrity.cost_missing" and item.get("cost_usd") is not None:
@@ -155,8 +167,23 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "agents": dict(agents.most_common()),
         "overview": ov,
         "dq_threshold": dq,
-        "cost_estimate": cost_estimate(items, price, other_model),
-        "unmetered_work": unmetered_work(items, other_model),
+        "cost_estimate": cost_estimate(items, rates, other_model, source),
+        "unmetered_work": unmetered_work(items, other_model, rates),
+        # Token accounting first: every cost figure is priced from these tokens.
+        "usage": {
+            "trials_with_tokens": sum(1 for i in items if _has_tokens(i)),
+            # Where each trial's tokens come from: the run's records (result.json, Hub,
+            # ledger), the trajectory's totals, or its steps' own usage.
+            "basis": dict(Counter(i.get("usage_basis") or "none" for i in items if _has_tokens(i))),
+            "run_vs_trajectory": _agreement(items, "tokens_match_trajectory"),
+            "trajectory_vs_steps": _agreement(items, "step_tokens_match"),
+            "partial": partial_usage(items, rates),
+        },
+        "cost_integrity": {
+            "declared_prices": declared,
+            "price_check": price_check(items, declared_rates),
+            "cost_records": _agreement(items, "cost_records_agree"),
+        },
         "tasks_known": sum(1 for i in items if i.get("task")),
         "missing_activity": missing_activity(items),
         "output_ratio": output_ratios(items),
@@ -167,6 +194,9 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
             for check in sorted(integrity, key=lambda c: (-RANK[severity_of[c]], -integrity[c], c))
         },
         "findings": {
+            # Each check's distinct evidence locations, summed: one finding per location.
+            "total": sum(behaviour_events.values()),
+            "trials": flagged_trials,
             "traces_by_highest_severity": {
                 k: by_severity[k]
                 for k in ("critical", "high", "medium", "low", "info", "none", "unavailable")
@@ -180,6 +210,34 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
             },
         },
     }
+
+
+def declared_prices(runs: list[dict]) -> dict | None:
+    """The token prices the run declares (harbor-hf's run.json), when every run that
+    declares any declares the same; None when absent or conflicting."""
+    found = {
+        tuple(r["declared_prices"].get(k) for k in PRICE_KINDS)
+        for r in runs
+        if r.get("declared_prices")
+    }
+    if len(found) != 1 or None in (rates := next(iter(found))):
+        return None
+    return dict(zip(PRICE_KINDS, rates, strict=True))
+
+
+def _has_tokens(item: dict) -> bool:
+    return bool(item.get("input_tokens") or item.get("output_tokens"))
+
+
+def _usd(value: float) -> str:
+    """Dollars to the cent; a positive amount under a cent reads `<$0.01`, not $0.00."""
+    return "<$0.01" if 0 < value < 0.005 else f"${value:,.2f}"
+
+
+def _agreement(items: list[dict], key: str) -> dict:
+    """{compared, mismatched} over trials where `key` is True/False (None: not compared)."""
+    values = [i.get(key) for i in items if i.get(key) is not None]
+    return {"compared": len(values), "mismatched": sum(1 for v in values if not v)}
 
 
 def _pct(n: int, total: int) -> str:
@@ -209,6 +267,99 @@ RECORDING_LABELS = {
     "integrity.redacted_values": "bare [REDACTED] values (invalid JSON, read as unknown)",
     "integrity.agent_steps_missing": "no agent steps recorded",
 }
+
+
+def usage_lines(b: dict, n: int) -> list[str]:
+    """Token accounting: how many trials have token counts, where they come from, and
+    whether independent records of them agree. Cost is priced from these tokens."""
+    u, um = b.get("usage") or {}, b["unmetered_work"]
+    tk = b["cost_estimate"].get("tokens") or {}
+    pad = f"{'':<10}"
+    pu, rt, ts = u.get("partial") or {}, u.get("run_vs_trajectory"), u.get("trajectory_vs_steps")
+    rt, ts = rt or {}, ts or {}
+    bad = um["trials"] or pu.get("trials") or rt.get("mismatched") or ts.get("mismatched")
+    k = u.get("trials_with_tokens", 0)
+    lines = [
+        f"USAGE      {WARN if bad else OK} tokens for {k}/{n} trials:"
+        f" {_m(tk.get('uncached_input', 0) + tk.get('cached_input', 0))} input"
+        f" ({_m(tk.get('cached_input', 0))} cached) · {_m(tk.get('output', 0))} output"
+    ]
+    checks = []
+    for agree, what in (
+        (rt, "run records = trajectory totals"),
+        (ts, "trajectory totals = sum of step usage"),
+    ):
+        if agree.get("mismatched"):
+            checks.append(f"{WARN} {what}: {agree['mismatched']} of {agree['compared']} differ")
+        elif agree.get("compared"):
+            checks.append(f"{OK} {what} ({agree['compared']} trials)")
+    lines.append(
+        f"{pad} " + " · ".join(checks)
+        if checks
+        else f"{pad} {INFO} no second record of the tokens to check them against"
+    )
+    if pu.get("trials"):
+        lines.append(
+            f"{pad} {WARN} {pu['trials']} trial(s) report no usage totals"
+            + (f" ({pu['rewarded']} rewarded)" if pu["rewarded"] else "")
+            + f": their steps' usage is summed, {pu['calls_without_usage']} LLM call(s)"
+            " without usage (a lower bound)"
+        )
+    if um["trials"]:
+        why = ", ".join(
+            f"{v} {k}" for k, v in (("errored", um["errored"]), ("rewarded", um["rewarded"])) if v
+        )
+        lines.append(
+            f"{pad} {WARN} {um['trials']} trial(s) did work but report no usage"
+            + (f" ({why})" if why else "")
+            + f": {um['llm_calls']:,} LLM calls, {um['tool_calls']:,} tool calls,"
+            f" {um['duration_sec'] / 60:,.1f} min"
+        )
+    return lines
+
+
+def cost_integrity_lines(b: dict, total: float) -> list[str]:
+    """Costs for the usage gaps, and whether recorded costs hold together: against the
+    run's declared prices, and against each other."""
+    ci, um = b.get("cost_integrity") or {}, b["unmetered_work"]
+    pu = (b.get("usage") or {}).get("partial") or {}
+    lines, pad = [], f"{'':<10}"
+    if pu.get("trials") and pu.get("estimate_usd") is not None:
+        lines.append(
+            f"{pad} {WARN} {pu['calls_without_usage']} LLM call(s) without usage → est."
+            f" +{_usd(pu['estimate_usd'])} (at each trial's own cost per call)"
+        )
+    if um["trials"]:
+        if um["estimate_usd"] is not None:
+            whole = total + um["estimate_usd"]
+            share = 100 * um["estimate_usd"] / whole if whole else 0
+            lines.append(
+                f"{pad} {WARN} {um['trials']} trial(s) without usage → est."
+                f" +${um['estimate_usd']:,.2f} (≈ ${whole:,.2f}, +{share:.1f}%) not in the total"
+            )
+        else:
+            lines.append(
+                f"{pad} {WARN} {um['trials']} trial(s) without usage: not in the total"
+                f" ({um['method']})"
+            )
+    pc = ci.get("price_check")
+    if pc and pc["mismatched"]:
+        lines.append(
+            f"{pad} {WARN} {pc['mismatched']} of {pc['compared']} recorded cost(s) don't fit"
+            f" the declared prices (${pc['recorded_usd']:,.2f} recorded vs"
+            f" ${pc['at_prices_usd']:,.2f} at those prices)"
+        )
+    elif pc and pc["compared"]:
+        lines.append(f"{pad} {OK} recorded costs fit the declared prices ({pc['compared']} trials)")
+    elif pc:
+        lines.append(f"{pad} {INFO} no recorded cost to check the declared prices against")
+    cr = ci.get("cost_records") or {}
+    if cr.get("mismatched"):
+        lines.append(
+            f"{pad} {WARN} {cr['mismatched']} of {cr['compared']} trial(s): result.json and"
+            " attempt-costs record different costs (result.json used)"
+        )
+    return lines
 
 
 def brief_text(b: dict) -> str:
@@ -418,23 +569,24 @@ def brief_text(b: dict) -> str:
             f"{'':<10} → {d['rewarded_not_cleared']} rewarded trial(s) can't be cleared: {why}"
         )
 
-    # COST
+    # USAGE (token accounting), then COST priced from it
+    lines += usage_lines(b, n)
     cost_notes: list[str] = []
     line = f"COST       ${c['total_usd']:,.2f} reported"
-    tk = ce.get("tokens") or {}
     if ce["unpriced"] and ce["unpriced"] == n - ce["no_usage"] and ce["estimate_usd"] is None:
         line = (
-            f"COST       {WARN} no cost recorded for any trial (trajectories or run metadata)\n"
-            f"{'':<10} {INFO} tokens: {_m(tk.get('uncached_input', 0) + tk.get('cached_input', 0))}"
-            f" input ({_m(tk.get('cached_input', 0))} cached) · {_m(tk.get('output', 0))} output"
-            " · estimate with --price U,C,O ($/M)"
+            f"COST       {WARN} no cost recorded for any trial (trajectories or run metadata)"
+            " · estimate from the tokens with --price U,C,O ($/M)"
         )
-    elif ce["unpriced"] and not c["total_usd"] and ce["method"] == "given --price":
+    elif ce["unpriced"] and not c["total_usd"] and ce.get("price_source"):
         r = ce["rates_per_mtok"]
+        rates = f"${r['uncached_input']:g}/${r['cached_input']:g}/${r['output']:g} per M"
         line = (
-            f"COST       {WARN} no cost recorded · est. ${ce['estimate_usd']:,.2f} at the given"
-            f" --price ${r['uncached_input']:g}/${r['cached_input']:g}/${r['output']:g} per M"
-            " (uncached/cached/output)"
+            f"COST       {WARN} no cost recorded · ${ce['estimate_usd']:,.2f} at the run's"
+            f" declared prices {rates} (uncached/cached/output, run.json)"
+            if ce["price_source"] == "declared"
+            else f"COST       {WARN} no cost recorded · est. ${ce['estimate_usd']:,.2f} at the"
+            f" given --price {rates} (uncached/cached/output)"
         )
     elif ce["unpriced"]:
         mm = ov.get("model_mismatch") or {}
@@ -459,7 +611,8 @@ def brief_text(b: dict) -> str:
         elif ce["estimate_usd"] is not None:
             corrected = c["total_usd"] + ce["estimate_usd"]
             share = 100 * ce["estimate_usd"] / corrected if corrected else 0
-            line += f" → est. +${ce['estimate_usd']:,.2f} (≈ ${corrected:,.2f}, +{share:.1f}%)"
+            how = " at the run's declared prices" if ce.get("price_source") == "declared" else ""
+            line += f" → est. +${ce['estimate_usd']:,.2f}{how} (≈ ${corrected:,.2f}, +{share:.1f}%)"
         else:
             line += f" ({ce['method']})"
     elif um["trials"]:
@@ -471,40 +624,21 @@ def brief_text(b: dict) -> str:
         line += f" · {idle} without usage data (no recorded work)"
     lines.append(line)
     lines += cost_notes
-    if um["trials"]:
-        # Real work the reported total silently leaves out.
-        why = ", ".join(
-            f"{v} {k}" for k, v in (("errored", um["errored"]), ("rewarded", um["rewarded"])) if v
-        )
-        line = (
-            f"{'':<10} {WARN} {um['trials']} trial(s) did work but report no usage or cost"
-            + (f" ({why})" if why else "")
-            + f": {um['llm_calls']:,} LLM calls, {um['tool_calls']:,} tool calls,"
-            f" {um['duration_sec'] / 60:,.1f} min"
-        )
-        if um["estimate_usd"] is not None:
-            total = c["total_usd"] + um["estimate_usd"]
-            share = 100 * um["estimate_usd"] / total if total else 0
-            line += (
-                f" → est. +${um['estimate_usd']:,.2f} (≈ ${total:,.2f}, +{share:.1f}%)"
-                " not in the total"
-            )
-        else:
-            line += f" · not in the total ({um['method']})"
-        lines.append(line)
+    lines += cost_integrity_lines(b, c["total_usd"])
 
     # FINDINGS
     f = b["findings"]
     sev = " · ".join(f"{s} {v}" for s, v in f["traces_by_highest_severity"].items())
     lines.append(
-        f"FINDINGS   traces by highest review priority: {sev or 'none'}; check counts overlap"
+        f"FINDINGS   {f['total']:,} finding(s) across {f['trials']:,} trial(s)"
+        f" · trials by highest review priority: {sev or 'none'}"
     )
     if ix := ov.get("finding_index"):
         lines.append(f"{'':<10} index: {index_text(ix)} (review load, not a verdict)")
     top = [(cid, v) for cid, v in f["checks"].items() if RANK[v["severity"]] >= RANK["medium"]]
     for cid, v in top[:6]:
-        spread = f"{v['events']} event(s) across " if "events" in v else ""
-        lines.append(f"{'':<10} {WARN} {v['severity']:<8} {cid} · {spread}{v['traces']} trace(s)")
+        spread = f"{v['events']:,} finding(s) across " if "events" in v else ""
+        lines.append(f"{'':<10} {WARN} {v['severity']:<8} {cid} · {spread}{v['traces']} trial(s)")
     if len(top) > 6:
         lines.append(f"{'':<10}   +{len(top) - 6} more medium+ checks (see --summary)")
 
@@ -558,7 +692,12 @@ def brief_text(b: dict) -> str:
 
     # ADJUSTMENTS summary
     adj = []
-    if ce["estimate_usd"]:
+    if ce["estimate_usd"] and ce.get("price_source") == "declared":
+        adj.append(
+            f"cost ${ce['estimate_usd']:,.2f} for {ce['unpriced']} trial(s) without a recorded"
+            " cost, at the run's declared prices (run.json)"
+        )
+    elif ce["estimate_usd"]:
         adj.append(
             f"cost +${ce['estimate_usd']:,.2f} for {ce['unpriced']} unpriced trials"
             f" ({ce['method']}"
@@ -582,6 +721,12 @@ def brief_text(b: dict) -> str:
                 if um["rewarded"]
                 else ""
             )
+        )
+    pu = (b.get("usage") or {}).get("partial") or {}
+    if pu.get("estimate_usd") is not None:
+        adj.append(
+            f"cost +{_usd(pu['estimate_usd'])} for {pu['calls_without_usage']} LLM call(s)"
+            f" without usage in {pu['trials']} trial(s) (rough: each trial's own cost per call)"
         )
     if ma["missing_calls_pct"] and ma["missing_calls_pct"][1] >= 1:
         lo, hi = ma["missing_calls_pct"]

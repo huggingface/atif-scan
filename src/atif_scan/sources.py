@@ -32,8 +32,14 @@ from urllib.parse import unquote, urlsplit
 
 from .checks import identifier
 from .harbor_files import (
+    ATTEMPT_COST_BYTES,
+    ATTEMPT_COSTS,
     LEDGER_BYTES,
+    RUN_MANIFEST,
+    RUN_MANIFEST_BYTES,
     TRIAL_LEDGER,
+    attempt_cost,
+    declared_prices,
     job_listed_trials,
     job_meta,
     number,
@@ -415,7 +421,7 @@ def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], di
                 except Exception:
                     continue
                 if facts:
-                    return facts
+                    return with_attempt_cost(listing, path, facts)
             return {}
 
         return listed
@@ -432,6 +438,41 @@ def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], di
         return {}
 
     return local
+
+
+def with_attempt_cost(listing: Listing, result_path: str, facts: dict) -> dict:
+    """Trial facts plus the cost harbor-hf recorded beside the trial
+    (`<run>/attempt-costs/<attempt id>.json`, the job folder being `<run>/job/`) as
+    `attempt_cost_usd`. The attempt id is a lookup key only and is dropped."""
+    facts = dict(facts)
+    attempt = facts.pop("attempt_id", None)
+    if attempt is None or listing.reader is None:
+        return facts
+    trial = PurePosixPath(result_path).parent
+    for run in (trial.parent.parent, trial.parent):
+        path = (run / ATTEMPT_COSTS / f"{attempt}.json").as_posix()
+        if path in listing.paths:
+            try:
+                cost = attempt_cost(listing.reader(path, ATTEMPT_COST_BYTES), attempt, trial.name)
+            except Exception:
+                return facts  # unreadable: unknown, never a zero
+            if cost is not None:
+                facts["attempt_cost_usd"] = cost
+            return facts
+    return facts
+
+
+def run_prices(listing: Listing, folder: str) -> dict | None:
+    """Prices declared by harbor-hf's `run.json` beside (or inside) a job folder."""
+    job = PurePosixPath(folder)
+    for run in (job.parent, job) if folder != "." else (job,):
+        path = (run / RUN_MANIFEST).as_posix()
+        if path in listing.paths and listing.reader is not None:
+            try:
+                return declared_prices(listing.reader(path, RUN_MANIFEST_BYTES))
+            except Exception:
+                return None
+    return None
 
 
 def job_runs(listing: Listing) -> list[dict]:
@@ -477,6 +518,8 @@ def job_folders(listing: Listing) -> tuple[list[dict], dict[str, bool]]:
             continue
         if (run := job_meta(config, result)) is None:
             continue
+        if (prices := run_prices(listing, folder)) is not None:
+            run["declared_prices"] = prices
         listed = job_listed_trials(result)
         if listed is not None:
             trials, traced = set(), set()
@@ -566,8 +609,18 @@ SYNC_CAPS = {
     "reward.json": REWARD_BYTES,
     "exception.txt": RESULT_BYTES,
     TRIAL_LEDGER: LEDGER_BYTES,
+    RUN_MANIFEST: RUN_MANIFEST_BYTES,
 }
 SYNC_NAMES = frozenset(SYNC_CAPS)
+
+
+def sync_cap(relative: str) -> int | None:
+    """Largest size synced for a listed file that isn't a matching trajectory, or None
+    when the scan never reads it."""
+    path = PurePosixPath(relative)
+    if path.parent.name == ATTEMPT_COSTS and path.suffix == ".json":
+        return ATTEMPT_COST_BYTES
+    return SYNC_CAPS.get(path.name)
 
 
 def default_sync_root() -> Path:
@@ -757,9 +810,7 @@ def sync_remote(
         relative = entry.path if listing.directory else single
         name = PurePosixPath(relative).name
         cap = (
-            MAX_BYTES
-            if not listing.directory or fnmatchcase(name, pattern)
-            else SYNC_CAPS.get(name)
+            MAX_BYTES if not listing.directory or fnmatchcase(name, pattern) else sync_cap(relative)
         )
         if cap is not None:
             path = confined(dest, relative)
@@ -781,7 +832,11 @@ def sync_remote(
             relative = path.relative_to(dest).as_posix()
             if (
                 relative not in state
-                and (relative in previous or name in SYNC_NAMES or fnmatchcase(name, pattern))
+                and (
+                    relative in previous
+                    or sync_cap(relative) is not None
+                    or fnmatchcase(name, pattern)
+                )
                 and name != SYNC_STATE
             ):
                 private_sync_path(dest, path)

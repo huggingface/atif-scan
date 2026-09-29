@@ -218,6 +218,11 @@ class Trace:
     agent: tuple[str | None, str | None, str | None] = (None, None, None)
     # Bare `[REDACTED]` JSON values the loader read as null (a publisher redaction defect).
     redacted_values: int = 0
+    # Token usage summed over agent steps' own metrics (None when no step recorded any),
+    # and LLM calls without usage (loader.step_usage): the fallback when final_metrics
+    # has no totals.
+    step_usage: Usage | None = None
+    calls_without_usage: int = 0
 
     @cached_property
     def step_models(self) -> dict[str, int]:

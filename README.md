@@ -29,7 +29,7 @@ PYTHONPATH=examples uv run atif-scan examples/synthetic.json \
 
 Remote inputs (`hf://`, huggingface.co URLs, `harbor://jobs/…`) are **synced by default**.
 Only the files the scan needs are downloaded (matching trajectories plus `result.json`,
-`config.json`, reward files, `exception.txt` and a `trials.jsonl` run ledger), in parallel, and the local copy is
+`config.json`, reward files, `exception.txt`, a `trials.jsonl` run ledger, and harbor-hf's `run.json` and `attempt-costs/*.json`), in parallel, and the local copy is
 scanned. Later Hugging Face scans reuse a file only when its provider content identity
 (Xet hash, blob ID or ETag) and local fingerprint are unchanged. Files without a provider
 identity are downloaded again; size alone is never proof of freshness. Per-trace results
@@ -90,8 +90,10 @@ TRACES     ⚠ 209 (63.3%) compacted history — est. 67–74% of the run's LLM 
            · reasoning: withheld (tokens only) 330 (100.0%); withheld or summarised reasoning is by design for many models, and checks read the recorded text
            · chars/output token: median 0.96 (p5–p95 0.42–1.64) over 330 traces, no reasoning text recorded: reasoning models read low by design
            → 86 rewarded trial(s) can't be cleared (partial or missing traces)
+USAGE      ✓ tokens for 330/330 trials: …B input (…B cached) · …M output
+           ✓ run records = trajectory totals (330 trials)
 COST       $3,683.29 reported · ⚠ 6 unpriced trial(s) (1.8%) → est. +$91.03 (≈ $3,774.32, +2.4%)
-FINDINGS   traces by highest severity: medium 39 · low 127 · info 65 · none 99
+FINDINGS   1,204 finding(s) across 231 trial(s) · trials by highest review priority: medium 39 · low 127 · info 65 · none 99
 SETTINGS   ✓ no leaderboard-forbidden overrides
 
 ADJUSTMENTS (estimates for review, not verdicts)
@@ -121,16 +123,42 @@ ADJUSTMENTS (estimates for review, not verdicts)
   `<synthetic>` are ignored. Those trials' costs never train the cost fit for the run's
   own model. If they are the only priced trials, the brief gives no estimate and shows
   the unpriced tokens for `--price` instead.
-- **Missing cost** is estimated from the run's own prices: a least-squares fit of cost
-  against uncached, cached and output tokens over its priced trials. If no trial
-  recorded a cost at all, the brief says so and shows the token totals; `--price U,C,O`
-  ($ per million uncached-input, cached-input, output tokens) then gives an estimate.
+- **Cost recorded beside the trace.** Harnesses often leave cost out of the trajectory
+  and `result.json`. Runs published by harbor-hf wrap the job folder
+  (`<run>/job/`) with `<run>/run.json`, whose `pricing` declares the run's $ per million
+  uncached-input (`input_usd_per_million`), cached-input and output tokens, and
+  `<run>/attempt-costs/<attempt id>.json`, one recorded cost per trial (keyed by the
+  trial `result.json`'s `id`). A trial's own recorded cost comes first, then its
+  attempt-costs record. Trials without either are priced at the declared prices
+  (`$30.59 at the run's declared prices …`). Scan the run folder, not `job/`, so both
+  are in scope; they're synced with the trajectories.
+- **Token accounting comes first** (USAGE, above COST): every cost figure is priced from
+  these tokens, so a cost can't be trusted more than they are. The line counts the trials
+  with token counts and checks independent records of the same tokens against each other:
+  the run's records (result.json, Hub, ledger) against each trajectory's `final_metrics`
+  totals, and those totals against the sum of the trajectory's per-step usage (skipped
+  for compacted history, whose steps cover only the last context). Trials whose usage
+  is partial, or missing despite recorded work, are listed here too.
+- **Cost integrity** follows (COST): every recorded cost is checked against the declared
+  prices (beyond 2% and $0.01 is a mismatch), and result.json against attempt-costs when
+  both record a cost (result.json is used).
+- **Missing cost** without declared prices is estimated from the run's own prices: a
+  least-squares fit of cost against uncached, cached and output tokens over its priced
+  trials. If no trial recorded a cost at all, the brief says so and shows the token
+  totals; `--price U,C,O` ($ per million uncached-input, cached-input, output tokens)
+  then gives an estimate (and overrides declared prices).
+- **Usage from steps.** When a trajectory has no usage totals (the harness didn't write
+  them) but its agent steps record `metrics.{prompt,completion,cached}_tokens`, the
+  steps' sum is used. LLM calls without usage (a step without metrics, or a step whose
+  `llm_call_count` exceeds the one call its metrics cover, e.g. a lost retry) make that
+  sum a lower bound; the brief counts them and estimates them at each trial's own cost
+  per metered call.
 - **Work without usage** is flagged, not dropped. A trial whose trajectory records LLM or
   tool calls but that reports neither tokens nor cost (typically an agent process that
   died before writing usage) is missing from the reported total. The COST line shows how
   many such trials there are, their calls and time, how many errored or were rewarded,
-  and a rough estimate: cost ≈ a·calls + b·calls² fitted on the run's priced,
-  uncompacted trials (each call resends a growing context). Per trial that's rough, but
+  and a rough estimate: cost ≈ a·calls + b·calls² fitted on the run's priced (recorded,
+  or at the declared/`--price` prices), uncompacted trials (each call resends a growing context). Per trial that's rough, but
   in aggregate it's close to unbiased. A rewarded trial here counts in RESULT with no cost.
 - **Missing activity** is estimated for trials with compacted history: token totals ÷
   the typical prompt tokens per call of uncompacted trials, as a median–p90 range. On
@@ -597,9 +625,11 @@ a by-check table of every finding type with its **events** and **traces** (e.g.
 `tamper.reward_write · 17 event(s) across 3 trace(s)`), and medium-and-above findings
 listed per trace with evidence (and task/reward when known). An event is a distinct
 evidence location (step, channel, call, result, argument): two matches in one command
-are one event, and a whole-trace finding with no location counts once. Counts overlap
-across checks (a rule re-cites its dependencies' evidence), so don't sum them. The
-brief's medium+ FINDINGS lines show the same `events across traces` figure. `--format
+are one event, and a whole-trace finding with no location counts once. A rule re-cites
+its dependencies' evidence, so per-check counts can share locations. The brief counts
+each event as a finding: its FINDINGS line gives the run's total (`N finding(s) across M
+trial(s)`, M = trials with at least one), and each medium+ line the same figure per
+check (`78 finding(s) across 39 trial(s)`). `--format
 json` gives the same as a compact `"kind": "summary"` document (`checks.<id>.events`).
 
 `--cite [SEVERITY]` (default `medium`) shows only finding rows at or above that
@@ -635,7 +665,7 @@ input/config/plugin.
 
 The normal run brief now separates **RESULT** (recorded rewards), **SCENARIO**
 (hypothetical zeroing of flagged successes), and **REVIEW** (unique candidates and
-evidence gaps). Severity means review priority; check counts overlap. The scenario is
+evidence gaps). Severity means review priority. The scenario is
 not an adjudicated correction, and evidence gaps are not either violations or clean bills.
 
 For example, a synthetic run with 8 successes in 10 trials and 2 flagged successes:
@@ -644,7 +674,7 @@ For example, a synthetic run with 8 successes in 10 trials and 2 flagged success
 RESULT     80.0% (8/10)
 SCENARIO   60.0% if 2 flagged successes are zeroed (not a verdict)
 REVIEW     2 unique rewarded DQ candidate(s) (threshold high+, or model mismatch) · 0 rewarded trial(s) with evidence gaps, not cleared
-           review priority, not a verdict; findings overlap (do not sum check counts)
+           review priority, not a verdict
            generate review prompts: --judge-prompts DIR
 ```
 

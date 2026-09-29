@@ -6,6 +6,12 @@ datasets with digests, n_attempts, timeout/resource settings) and `<job>/result.
 (trial counts, token/cost totals). These are recorded run facts, like the Hub listing,
 so they take precedence over inferences from folder names or trajectories. Only
 allowlisted numbers, codes and identifiers are extracted.
+
+Runs published by harbor-hf wrap the job folder: `<run>/run.json` declares the run's
+token prices (`pricing`, $ per million input/cached/output tokens), and
+`<run>/attempt-costs/<attempt id>.json` records each trial's cost next to the trace
+(`attempt_id` is the trial result.json's `id`). Harnesses often leave cost out of the
+trajectory and result.json, so these are where a run's cost is recorded.
 """
 
 from __future__ import annotations
@@ -171,6 +177,11 @@ def trial_result(data: bytes | None) -> dict:
         "cache_tokens": count(agent.get("n_cache_tokens")),
         "output_tokens": count(agent.get("n_output_tokens")),
         "duration_sec": duration(d),
+        # Harbor's trial id (a UUID): the key of harbor-hf's attempt-costs file. Used for
+        # that lookup only, never reported.
+        "attempt_id": d["id"]
+        if isinstance(d.get("id"), str) and ATTEMPT_ID.fullmatch(d["id"])
+        else None,
     }
     return {k: v for k, v in meta.items() if v is not None}
 
@@ -222,6 +233,40 @@ def trial_ledger(data: bytes | None) -> dict[str, dict]:
         }
         found[name] = {k: v for k, v in meta.items() if v is not None}
     return {k: v for k, v in found.items() if k not in repeated}
+
+
+RUN_MANIFEST = "run.json"  # harbor-hf: <run>/run.json next to <run>/job/
+RUN_MANIFEST_BYTES = 256 * 1024
+ATTEMPT_COSTS = "attempt-costs"  # harbor-hf: <run>/attempt-costs/<attempt id>.json
+ATTEMPT_COST_BYTES = 4096
+ATTEMPT_ID = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+PRICE_KINDS = ("uncached_input", "cached_input", "output")
+
+
+def declared_prices(data: bytes | None) -> dict | None:
+    """{uncached_input, cached_input, output} $/M tokens a harbor-hf `run.json` declares
+    (`pricing.{input,cached,output}_usd_per_million`), or None. `input` is the price of
+    uncached input: cached tokens have their own rate. Only USD (or no currency) and
+    finite, non-negative numbers; anything else is unknown, never a zero price."""
+    d = _json(data) if data and len(data) <= RUN_MANIFEST_BYTES else {}
+    pricing = d.get("pricing")
+    if not isinstance(pricing, dict) or pricing.get("currency", "USD") != "USD":
+        return None
+    rates = [number(pricing.get(f"{k}_usd_per_million"), 0) for k in ("input", "cached", "output")]
+    if any(r is None for r in rates):
+        return None
+    return dict(zip(PRICE_KINDS, rates, strict=True))
+
+
+def attempt_cost(data: bytes | None, attempt_id: str, trial: str) -> float | None:
+    """The cost a harbor-hf `attempt-costs/<attempt id>.json` records for this trial, or
+    None (absent, null, malformed, or naming another attempt or trial folder)."""
+    d = _json(data) if data and len(data) <= ATTEMPT_COST_BYTES else {}
+    if d.get("attempt_id") != attempt_id or d.get("trial_name") != trial:
+        return None
+    return number(d.get("cost_usd"), 0)
 
 
 def configured_agents(cfg: dict) -> int | None:
