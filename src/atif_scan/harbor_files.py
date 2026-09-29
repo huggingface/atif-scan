@@ -17,12 +17,12 @@ trajectory and result.json, so these are where a run's cost is recorded.
 from __future__ import annotations
 
 import json
-import math
 import re
 from collections.abc import Iterator, Mapping
 from datetime import datetime
 
 from .checks import identifier
+from .jsonval import JsonObject, count, load_object, number
 
 MAX_BYTES = 1024 * 1024
 # Leaderboard static rules: these settings must be unset (multipliers may be 1.0).
@@ -73,17 +73,6 @@ def text_label(value: object, limit: int = 200) -> str | None:
     return value[:limit]
 
 
-def number(value: object, low: float | None = None) -> float | None:
-    """A finite int/float (not bool), optionally at least `low`; anything else is None."""
-    if type(value) in (int, float) and math.isfinite(value) and (low is None or value >= low):
-        return float(value)
-    return None
-
-
-def count(value: object) -> int | None:
-    return value if type(value) is int and value >= 0 else None
-
-
 def duration(record: Mapping) -> float | None:
     """Seconds from `started_at` to `finished_at` (ISO timestamps), else None."""
     try:
@@ -126,14 +115,8 @@ def overrides(config: object) -> list[str]:
     return sorted(set(found))
 
 
-def _json(data: bytes | None) -> dict:
-    if not data or len(data) > MAX_BYTES:
-        return {}
-    try:
-        value = json.loads(data.decode("utf-8"))
-    except (UnicodeError, ValueError, RecursionError):
-        return {}
-    return value if isinstance(value, dict) else {}
+def _json(data: bytes | None) -> JsonObject:
+    return load_object(data, MAX_BYTES)
 
 
 def _label(value: object) -> str | None:

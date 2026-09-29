@@ -16,13 +16,76 @@ atif-scan = "atif_scan.cli:main"
 atif-inspect = "atif_scan.extract:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.11"]
+dev = ["pytest==9.1.1", "ruff==0.16.9", "ty==0.0.84"]
 
 [tool.ruff]
 line-length = 100
+target-version = "py311"
+extend-exclude = [".fast-agent", "reports"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "TC",   # type-checking imports
+    "B",    # flake8-bugbear
+    "BLE",  # blind except
+    "C4",   # flake8-comprehensions
+    "C90",  # mccabe complexity
+    "PL",   # pylint-derived checks
+    "RET",  # flake8-return
+    "RUF",  # Ruff-specific checks
+    "S",    # flake8-bandit security checks
+    "SIM",  # flake8-simplify
+    "UP",   # pyupgrade
+]
+ignore = [
+    # Output text uses typographic characters on purpose (×, –, →, ≈).
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 7
+
+[tool.ruff.lint.pylint]
+max-args = 9
+max-branches = 8
+max-returns = 4
+max-statements = 40
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "PLR2004",  # Literal values are fine in focused assertions.
+    "S101",     # pytest uses assert statements.
+    "S108",     # Synthetic fixture paths such as /tmp/x are data, not temp files.
+    "S105",     # Fake credentials are masking fixtures.
+    "S603",     # Tests run this package's own CLI with fixed arguments.
+    "PLC0415",  # Tests import what they exercise locally.
+]
+"tools/**/*.py" = [
+    "S603",     # Developer tools run fixed commands (uv, git, atif-scan), never trace text.
+    "S607",     # ...found on PATH, as a developer would.
+    "S311",     # Pilot sampling, not cryptography.
+]
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.ty.environment]
+python-version = "3.11"
+root = ["./src"]
+
+[tool.ty.src]
+include = ["src", "tests", "tools"]
+respect-ignore-files = true
+
+[tool.ty.rules]
+all = "error"
+
+[tool.ty.terminal]
+error-on-warning = true
+output-format = "full"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

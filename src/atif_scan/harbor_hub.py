@@ -33,12 +33,11 @@ from .harbor_files import (
     OVERRIDE,
     _flatten,
     configured_agents,
-    count,
     duration,
-    number,
     overrides,
     text_label,
 )
+from .jsonval import count, number
 from .loader import TraceError, load_trace
 from .sources import Source, SourceError, local_fingerprint, private_directory, private_tree
 

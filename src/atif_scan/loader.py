@@ -12,6 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from . import jslit
+from .jsonval import count
 from .model import Channel, Content, Observation, Step, ToolCall, Trace, Usage
 
 # TB4 leaderboard traces reach ~192 MiB (legacy-utility-triage: ~900 base64 screenshots).
@@ -677,7 +678,7 @@ def parse_trace(value: object) -> Trace:
         for raw in value["steps"]
         if isinstance(raw, dict) and raw.get("source") == "agent"
     ]
-    counted = [c for c in calls if _count(c) is not None]
+    counted = [c for c in calls if count(c) is not None]
     per_step, unmetered = step_usage(value["steps"])
     return Trace(
         version,
@@ -710,9 +711,9 @@ def step_usage(raw_steps: list) -> tuple[Usage | None, int]:
         if not isinstance(raw, dict) or raw.get("source") != "agent":
             continue
         m = raw.get("metrics")
-        calls = _count(raw.get("llm_call_count"))
+        calls = count(raw.get("llm_call_count"))
         values = (
-            [_count(m.get(k)) for k in ("prompt_tokens", "completion_tokens", "cached_tokens")]
+            [count(m.get(k)) for k in ("prompt_tokens", "completion_tokens", "cached_tokens")]
             if isinstance(m, dict)
             else [None, None, None]
         )
@@ -729,13 +730,8 @@ def step_usage(raw_steps: list) -> tuple[Usage | None, int]:
     return Usage(None, *kinds), missing
 
 
-def _count(value: object) -> int | None:
-    """A recorded count: a non-negative int (not a bool or float), else None."""
-    return value if type(value) is int and value >= 0 else None
-
-
 def step_completion_tokens(metrics: object) -> int | None:
-    return _count(metrics.get("completion_tokens")) if isinstance(metrics, dict) else None
+    return count(metrics.get("completion_tokens")) if isinstance(metrics, dict) else None
 
 
 def model_label(v: object) -> str | None:
@@ -778,10 +774,10 @@ def usage(metrics: object) -> Usage | None:
     cost = float(cost) if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None
     found = Usage(
         cost,
-        _count(metrics.get("total_prompt_tokens")),
-        _count(metrics.get("total_completion_tokens")),
-        _count(metrics.get("total_cached_tokens")),
-        _count(reasoning),
+        count(metrics.get("total_prompt_tokens")),
+        count(metrics.get("total_completion_tokens")),
+        count(metrics.get("total_cached_tokens")),
+        count(reasoning),
     )
     return None if found == Usage() else found
 
@@ -794,16 +790,16 @@ def _unredact(text: str) -> tuple[str, int]:
     """Some published trajectories replace values (token counts) with a bare, unquoted
     `[REDACTED]`, which is invalid JSON (TB4 on the Harbor Hub). Read those values as null
     (unknown) and count them; redacted text inside strings is left as it is."""
-    count = 0
+    found = 0
 
     def value(m: re.Match[str]) -> str:
-        nonlocal count
+        nonlocal found
         if m[0][0] != "[":
             return m[0]
-        count += 1
+        found += 1
         return "null"
 
-    return _STRING_OR_REDACTED.sub(value, text), count
+    return _STRING_OR_REDACTED.sub(value, text), found
 
 
 def load_bytes(data: bytes) -> Trace:

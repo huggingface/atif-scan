@@ -14,8 +14,9 @@ from pathlib import Path
 import pytest
 
 from atif_scan import harbor_hub, layout, sources
-from atif_scan.harbor_files import dataset_source, job_meta, number, primary_reward, trial_result
+from atif_scan.harbor_files import dataset_source, job_meta, primary_reward, trial_result
 from atif_scan.harbor_hub import HarborCLI, harbor_sources, inspect_job, run_meta, trial_meta
+from atif_scan.jsonval import number
 from atif_scan.sources import Entry, Listing, confined, list_input, resolve, sync_remote
 
 JOB = "1d6abb23-0000-4000-8000-000000000000"

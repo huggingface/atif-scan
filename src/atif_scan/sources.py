@@ -42,10 +42,10 @@ from .harbor_files import (
     declared_prices,
     job_listed_trials,
     job_meta,
-    number,
     trial_ledger,
     trial_result,
 )
+from .jsonval import number
 from .loader import MAX_BYTES, TraceError, load_bytes, load_trace
 from .model import Trace
 
