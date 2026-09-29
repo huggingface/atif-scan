@@ -30,27 +30,46 @@ def summary(*items, dq="high"):
     return brief({"scanner_version": "dev", "inputs": list(items), "coverage": {}}, dq=dq)
 
 
+def section(text, label):
+    """One section of a brief: its label line and the lines under it, up to the blank
+    line that ends it ("" when the section isn't there)."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.split(" ", 1)[0] == label), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines)) if not lines[i]), len(lines))
+    return "\n".join(lines[start:end])
+
+
 def test_recorded_result_and_unique_review_candidates():
     b = summary(item("one", ["match", "match"]), item("two", ["unknown"]))
     text = brief_text(b)
-    result = next(line for line in text.splitlines() if line.startswith("RESULT"))
-    assert "100.0%" in result and "→" not in result and "zeroed" not in result
-    assert "if 1 flagged success is zeroed (not a verdict)" in text
-    assert "1 unique rewarded DQ candidate(s) (threshold high+" in text
-    assert "1 rewarded trial(s) with evidence gaps, not cleared" in text
-    assert "review priority, not a verdict" in text and "overlap" not in text
-    assert "--judge-prompts DIR" in text
+    # The recorded result is stated as recorded; the scenario is a separate line.
+    result = section(text, "SCORE").splitlines()[0]
+    assert "100.0%" in result and "had failed" not in result and "if " not in result
+    assert "50.0% ± 50.0 if the flagged rewarded trial had failed (a scenario, not a verdict)" in (
+        section(text, "SCORE")
+    )
+    # Review candidates are counted once, per rewarded trial, with the threshold named.
+    review = section(text, "REVIEW")
+    assert "1 of 2 rewarded trials (50.0%) has a high or critical finding" in review
+    assert "1 more rewarded trial can't be cleared, as their evidence is incomplete" in review
+    assert "Findings set review priority, not verdicts." in text and "overlap" not in text
+    assert "--judge-prompts DIR" in review
     assert "✗" not in text
-    assert "accuracy" not in text.split("ADJUSTMENTS", 1)[1]
-    assert "COST       $1.00 reported" in text
-    assert "COVERAGE" in text
+    assert "accuracy" not in review
+    assert "COST       $1.00 recorded" in text
+    assert section(text, "EVIDENCE")
 
 
 def test_unknown_is_not_clean_and_threshold_is_explicit():
     text = brief_text(summary(item("one", ["unknown"]), dq="medium"))
-    assert "REVIEW     0 unique rewarded DQ candidate(s) (threshold medium+" in text
-    assert "1 rewarded trial(s) with evidence gaps" in text
-    assert "SCENARIO" not in text
+    review = section(text, "REVIEW")
+    assert "REVIEW     ✓ no rewarded trial has a medium or higher finding" in review
+    # Unknown evidence is not clean: the trial is still named as not cleared.
+    assert "⚠ 1 rewarded trial can't be cleared, as their evidence is incomplete" in review
+    assert "--judge-scope rewarded" in review
+    assert "had failed" not in text
     assert "no DQ candidates" not in text
 
 
@@ -65,30 +84,34 @@ def test_review_metadata_shows_counts_and_only_generic_next_steps():
         "directory": "/private/synthetic-location",
     }
     text = brief_text(b)
-    assert "4 prompt(s) written · 3 selected · 1 skipped/unavailable" in text
+    assert "4 review prompts written for 3 selected trials (scope rewarded); 1 skipped" in text
     assert "scope rewarded" in text
-    assert "no provider calls made" in text
-    assert "tools/ask-fast-agent.sh --model MODEL --questions DIR --inspect-tool --jobs 8" in text
-    assert "rerun same inputs with --answers DIR" in text
+    assert "nothing was sent anywhere" in text
+    assert "tools/ask-fast-agent.sh --model MODEL --questions DIR" in text
+    assert "--inspect-tool --jobs 8, then rerun with --answers DIR" in text
     assert "/private" not in text
     assert colourise(text).plain == text
     styled = colourise(text)
-    for label in ("RESULT", "REVIEW"):
+    for label in ("SCORE", "REVIEW"):
         offset = text.index(label)
         assert any(span.start <= offset < span.end for span in styled.spans)
 
 
 def test_clean_run_does_not_need_review_section():
-    assert "REVIEW" not in brief_text(summary(item("one", [])))
+    # Nothing to review: REVIEW says so in one ✓ line, with no warning or next step.
+    review = section(brief_text(summary(item("one", []))), "REVIEW")
+    assert review == "REVIEW     ✓ no rewarded trial has a high or critical finding"
 
 
 def test_reported_score_does_not_repeat_scenario():
     b = summary(item("one", ["match"]))
     b["runs"] = [{"leaderboard": {"reported_accuracy": 80.0}}]
     text = brief_text(b)
-    assert "REPORTED   80.0%" in text
+    assert "· the leaderboard reports 80.0%" in section(text, "SCORE")
+    # A row without agent or model names: no empty gap where they would be.
+    assert "RUN        Harbor job folder\n           leaderboard row · jobs unknown\n" in text
     assert "scan-adjusted" not in text
-    assert text.count("zeroed") == 1
+    assert text.count("had failed") == 1
     assert colourise(text).plain == text
 
 

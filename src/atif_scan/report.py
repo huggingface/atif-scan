@@ -939,6 +939,7 @@ def overview(
         items, sum(r.get("configured_agents") or 1 for r in runs) if runs else 1
     )
     flagged = set(dq_ids)
+    by_findings = len(dq_ids)
     if models:
         dq_ids += [x for x in models["rewarded_ids"] if x not in flagged]
         flagged.update(dq_ids)
@@ -956,7 +957,12 @@ def overview(
         "tasks": _task_counts(by_task, k, expect_tasks),
         **({"sync_failed_files": sync_failed} if sync_failed else {}),
         "accuracy": accuracy(by_task),
-        "disqualification": _disqualification(items, dq, scored, dq_ids, uncleared)
+        "disqualification": {
+            **_disqualification(items, dq, scored, dq_ids, uncleared),
+            # Why: a finding at the threshold, or only the model (a fallback's reward).
+            "by_findings": by_findings,
+            "by_model_only": len(dq_ids) - by_findings,
+        }
         if scanned
         else None,
         "finding_index": finding_index(items) if scanned else None,

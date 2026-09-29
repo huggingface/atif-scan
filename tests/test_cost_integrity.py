@@ -4,8 +4,10 @@ integrity of usage between result files, trajectories and prices. Synthetic only
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
+from test_brief import section
 
 from atif_scan.brief import brief, brief_text
 from atif_scan.cli import main
@@ -152,20 +154,25 @@ def test_run_priced_at_declared_prices_when_no_cost_is_recorded(tmp_path, capsys
     assert ce["price_source"] == "declared" and ce["estimate_usd"] == round(3 * 2250 / 1e6, 2)
     assert ci["declared_prices"] == {"uncached_input": 2.0, "cached_input": 0.5, "output": 10.0}
     u = b["usage"]
-    assert u["run_vs_trajectory"] == {"compared": 3, "mismatched": 0}
-    assert u["trajectory_vs_steps"] == {"compared": 3, "mismatched": 0}
+    assert u["recorded_vs_trajectory"] == {"same": 3}
+    assert u["steps_vs_totals"] == {"same": 3}
     assert u["trials_with_tokens"] == 3 and u["basis"] == {"run": 3}
-    assert "at the run's declared prices $2/$0.5/$10 per M" in out
+    assert (
+        "COST       $0.01 at the run's declared prices (run.json); no trial recorded a cost" in out
+    )
+    assert "· $2.00 uncached input · $0.50 cached input · $10.00 output, per M tokens" in out
     assert "no cost recorded for any trial" not in out
-    assert "USAGE      ✓ tokens for 3/3 trials" in out
-    assert "run records = trajectory totals (3 trials)" in out
-    assert "trajectory totals = sum of step usage (3 trials)" in out
+    assert "TOKENS     3k input (2k cached) · 300 output, from 3 of 3 trials" in out
+    assert "✓ recorded totals match the trajectories' in 3 of 3 compared trials" in out
+    assert "✓ trajectory totals equal the sum of their steps in 3 of 3 compared trials" in out
     # Token accounting comes first: cost is priced from it.
-    assert out.index("USAGE") < out.index("COST")
-    assert "no recorded cost to check the declared prices against" in out
-    # A given --price still wins over the declared one.
+    assert out.index("TOKENS") < out.index("COST")
+    # No recorded cost to check the prices against: said once, in the headline.
+    assert "no recorded cost to check the declared prices against" not in out
+    # A given --price still wins over the declared one, which then has nothing to check.
     b, out = scan(harbor_hf_run(tmp_path / "g", trials), capsys, "--price", "1,1,1")
-    assert b["cost_estimate"]["price_source"] == "given" and "given --price" in out
+    assert b["cost_estimate"]["price_source"] == "given" and "at the given --price" in out
+    assert "· no recorded cost to check the declared prices against" in out
 
 
 def test_recorded_costs_are_checked_against_declared_prices_and_each_other(tmp_path, capsys):
@@ -181,8 +188,9 @@ def test_recorded_costs_are_checked_against_declared_prices_and_each_other(tmp_p
     assert ci["price_check"]["compared"] == 4 and ci["price_check"]["mismatched"] == 1
     assert ci["cost_records"] == {"compared": 1, "mismatched": 1}
     assert b["cost_estimate"]["unpriced"] == 0  # attempt-costs priced trial 3
-    assert "1 of 4 recorded cost(s) don't fit the declared prices" in out
-    assert "1 of 1 trial(s): result.json and attempt-costs record different costs" in out
+    flat = " ".join(out.split())  # unwrapped: phrases may span lines
+    assert "⚠ 1 of 4 recorded costs don't fit the declared prices ($1.01 recorded" in flat
+    assert "⚠ 1 of 1 trial: result.json and attempt-costs record different costs" in flat
 
 
 def test_result_tokens_that_differ_from_the_trajectory_are_flagged(tmp_path, capsys):
@@ -191,10 +199,10 @@ def test_result_tokens_that_differ_from_the_trajectory_are_flagged(tmp_path, cap
         (result(1), trajectory([step()], (999, 100, 500))),
     ]
     b, out = scan(harbor_hf_run(tmp_path, trials, pricing=None), capsys)
-    assert b["usage"]["run_vs_trajectory"] == {"compared": 2, "mismatched": 1}
+    assert b["usage"]["recorded_vs_trajectory"] == {"same": 1, "differs": 1}
     assert b["cost_integrity"]["declared_prices"] is None
-    assert "USAGE      ⚠" in out
-    assert "run records = trajectory totals: 1 of 2 differ" in out
+    assert "⚠ recorded totals differ from the trajectory's in 1 of 2 trials" in out
+    assert "recorded totals match" not in out
 
 
 def test_trajectory_totals_that_differ_from_step_usage_are_flagged(tmp_path, capsys):
@@ -202,11 +210,19 @@ def test_trajectory_totals_that_differ_from_step_usage_are_flagged(tmp_path, cap
     steps = [step((1000, 100, 500), calls=1)] * 2
     trials = [
         (result(0, tokens=(2000, 1000, 200)), trajectory(steps, (2000, 200, 1000))),
+        # Totals above the steps: 500 prompt tokens from calls not recorded as steps.
         (result(1, tokens=(2500, 1000, 200)), trajectory(steps, (2500, 200, 1000))),
+        # Totals below the steps: they disagree outright.
+        (result(2, tokens=(1500, 1000, 200)), trajectory(steps, (1500, 200, 1000))),
     ]
     b, out = scan(harbor_hf_run(tmp_path, trials, pricing=None), capsys)
-    assert b["usage"]["trajectory_vs_steps"] == {"compared": 2, "mismatched": 1}
-    assert "trajectory totals = sum of step usage: 1 of 2 differ" in out
+    u = b["usage"]
+    assert u["steps_vs_totals"] == {"same": 1, "steps_short": 1, "differs": 1}
+    assert (u["tokens_outside_steps"], u["tokens_of_short_trials"]) == (500, 2700)
+    flat = " ".join(out.split())  # unwrapped: phrases may span lines
+    assert "⚠ 1 of 3 trajectories count 500 tokens (18.5% of theirs) outside their steps" in flat
+    assert "⚠ 1 of 3 trajectories have totals that disagree with their steps" in flat
+    assert "trajectory totals equal the sum of their steps" not in out
     # Steps that never record cached tokens leave them unknown, not a mismatching 0.
     raw = trajectory([step()], (100, 10, 50))
     raw["steps"][0]["metrics"] = {"prompt_tokens": 100, "completion_tokens": 10}
@@ -239,9 +255,10 @@ def test_partial_step_usage_is_priced_as_a_lower_bound(tmp_path, capsys):
     # 4 metered steps at 2250 $/M-tokens each, and one more call at that per-call cost.
     assert pu["estimate_usd"] == pytest.approx(4 * 2250 / 1e6 / 4, abs=1e-4)
     assert b["unmetered_work"]["trials"] == 0  # not "no usage": its steps record it
-    assert "1 trial(s) report no usage totals (1 rewarded)" in out
-    assert "1 LLM call(s) without usage (a lower bound)" in out
-    assert "1 LLM call(s) without usage → est. +<$0.01" in out
+    flat = " ".join(out.split())  # unwrapped: phrases may span lines
+    assert "⚠ 1 trial (1 rewarded) recorded no totals" in flat
+    assert "missing 1 LLM call (a lower bound)" in flat
+    assert "· est. +<$0.01 for the 1 LLM call without usage" in flat
     assert b["usage"]["basis"] == {"run": 3, "steps_partial": 1}
 
 
@@ -305,8 +322,10 @@ def test_findings_headline_counts_findings_and_trials_not_overlap():
     b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": []})
     assert (b["findings"]["total"], b["findings"]["trials"]) == (4, 2)
     text = brief_text(b)
-    assert "FINDINGS   4 finding(s) across 2 trial(s)" in text
-    assert "access.test_path · 3 finding(s) across 2 trial(s)" in text
+    assert "· at any priority: 4 findings in 2 trials" in section(text, "FINDINGS")
+    # Per check: trials (not findings, which overlap across checks) in the table.
+    assert re.search(r"medium +2 +2  access\.test_path\n", text)
+    assert b["findings"]["checks"]["access.test_path"]["events"] == 3
     assert "overlap" not in text
 
 

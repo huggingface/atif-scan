@@ -68,6 +68,8 @@ def test_metadata_failure_is_visible_in_every_view(view, fmt, monkeypatch, capsy
     if fmt == "json":
         json.loads(captured.out)
         assert '"sync_failed_files": 1' in captured.out
+    elif view == "brief":
+        assert "RUN        ⚠ 1 file failed to sync: this report is incomplete" in captured.out
     else:
         assert "file(s) unavailable" in captured.out
 

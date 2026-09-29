@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
+from test_brief import section
 
 from atif_scan.cli import main
 from atif_scan.harbor_hub import job_id, overrides
@@ -384,11 +385,15 @@ def test_leaderboard_row_scans_exactly_its_trials(row_harbor, capsys, value):
 def test_leaderboard_row_brief_compares_with_reported(row_harbor, capsys):
     main([f"harbor://rows/{ROW}", "--format", "text"])
     out = capsys.readouterr().out
-    assert "leaderboard row #9 · row 0000feed" in out
-    assert "leaderboard  Demo CLI / Model X (high)" in out
-    assert "REPORTED   50.0% after the leaderboard's reward-hack DQs (20.0% of trials)" in out
-    assert "⚠ 5 trials" in out  # the row reports 5, the scan found 4
-    assert "1 row trial(s) not found in any job" in out
+    flat = " ".join(out.split())  # unwrapped: phrases may span lines
+    assert "RUN        leaderboard row #9 · id 0000feed" in out
+    assert "leaderboard row Demo CLI / Model X (high) · jobs 1fead079, 2c89a14f" in out
+    assert (
+        "· the leaderboard reports 50.0% after its own reward-hack disqualifications"
+        " (20.0% of trials) over 5 trials"
+    ) in flat
+    assert "(⚠ 4 trials scanned here)" in flat  # the row reports 5, the scan found 4
+    assert "⚠ 1 row trial not found in any job" in section(out, "SCORE")
 
 
 def test_inspect_leaderboard_row(row_harbor, capsys):

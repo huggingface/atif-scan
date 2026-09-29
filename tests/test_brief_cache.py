@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -141,11 +142,16 @@ def test_brief_is_the_default_text_view_for_a_run(tmp_path, capsys):
     root = write_run(tmp_path)
     assert main([str(root), "--task-from", "trial-dir", "--format", "text"]) == 0
     out = capsys.readouterr().out
-    assert "run integrity" in out and "agent  demo-agent / 1.0 / demo/model" in out
-    assert "RESULT     100.0%" in out and "if 1 flagged success is zeroed (not a verdict)" in out
-    assert "TRACES     ⚠ 1 (33.3%) compacted history" in out
-    assert "COST       $2.20 reported" in out and "1 unpriced trial(s)" in out
-    assert "tamper.reward_write · 1 finding(s) across 1 trial(s)" in out
+    assert "run integrity" in out and "RUN        agent demo-agent 1.0 · model demo/model" in out
+    assert "SCORE      100.0% · 3 of 3 scored trials rewarded" in out
+    assert "66.7% if the flagged rewarded trial had failed (a scenario, not a verdict)" in out
+    assert "⚠ 1 trial (33.3%) has compacted history" in out
+    assert "COST       $2.20 recorded" in out
+    assert "⚠ 1 trial (33.3%) with usage but no cost" in out
+    # The reason it isn't estimated is stated once (estimates.py words it "not estimated: …").
+    assert "no cost (not estimated: fewer than 20 priced trials)" in out
+    assert out.count("not estimated") == 1
+    assert re.search(r"high +1 +1  Reward file written\n +tamper\.reward_write\n", out)
     assert SECRET not in out and "echo" not in out
     # --detail restores the per-trace view; a single input defaults to it.
     main([str(root), "--detail", "--format", "text"])
@@ -164,8 +170,19 @@ def test_brief_json(tmp_path, capsys):
     assert b["findings"]["checks"]["tamper.reward_write"] == {
         "severity": "high",
         "traces": 1,
+        "rewarded": 1,
         "events": 1,
     }
+    assert b["agent_rows"] == [
+        {"agent": "demo-agent", "version": "1.0", "model": "demo/model", "trials": 3}
+    ]
+    assert b["titles"]["tamper.reward_write"] == "Reward file written"
+    assert (b["findings"]["medium_plus_trials"], b["findings"]["medium_plus_rewarded"]) == (2, 2)
+    d = b["overview"]["disqualification"]
+    assert (d["by_findings"], d["by_model_only"]) == (1, 0)
+    # No run record or step usage to compare: empty tallies, not zero-count claims.
+    assert b["usage"]["recorded_vs_trajectory"] == {} and b["usage"]["steps_vs_totals"] == {}
+    assert "run_vs_trajectory" not in b["usage"] and "trajectory_vs_steps" not in b["usage"]
     assert "integrity.history_compacted" in b["recording"]
 
 
@@ -283,7 +300,10 @@ def test_brief_names_the_task_pack_for_a_known_dataset_without_loading_it():
 
     b = brief(doc("awareness.benchmark"))
     assert b["suggested_packs"] == ["atif_scan.packs.tb21:checks"]
-    assert "PACKS" in brief_text(b)
+    assert (
+        "SETTINGS   ✓ no override a leaderboard forbids\n"
+        "           ⚠ this dataset's task pack isn't loaded: --plugin atif_scan.packs.tb21:checks"
+    ) in brief_text(b)
     assert brief(doc("tb21.recall.task_catalog"))["suggested_packs"] == []
 
 
@@ -347,8 +367,12 @@ def test_trials_on_another_model_are_critical_dq_candidates():
     assert mm["expected"] == "main-model" and mm["trial_ids"] == ["t8", "t9"]
     assert d["candidate_ids"] == ["t8"]
     text = brief_text(b)
-    assert "MODEL      ⚠ critical  2 trial(s)" in text and "fallback-model 2" in text
-    assert "1 unique rewarded DQ candidate(s)" in text
+    flat = " ".join(text.split())
+    assert "⚠ 1 rewarded trial ran another model than main-model" in flat
+    assert "· 2 trials in all (20.0%) ran another model, costing $4.00: fallback-model 2" in flat
+    # The one rewarded trial on the other model is the only DQ candidate in the scenario.
+    assert "80.0% ± 13.9 if the flagged rewarded trial had failed" in flat
+    assert "✓ no rewarded trial has a high or critical finding" in flat
 
 
 def test_comparison_job_models_are_planned_not_substitutions():
@@ -390,11 +414,12 @@ def test_brief_says_why_trials_cannot_be_cleared_and_which_errors_occurred():
     text = brief_text(
         brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": []})
     )
+    flat = " ".join(text.split())  # unwrapped: the reasons may span lines
     assert (
-        "can't be cleared: web results/URLs not recorded 1 · no trajectory (trace_too_large) 1"
-        in text
-    )
-    assert "2 errored (50.0%): UnknownApiError 1, OutputTokenExceededError 1" in text
+        "⚠ 2 rewarded trials can't be cleared, as their evidence is incomplete: web results/URLs"
+        " not recorded (1), no trajectory (trace_too_large) (1)"
+    ) in flat
+    assert "⚠ 2 trials errored (50.0%): UnknownApiError 1 · OutputTokenExceededError 1" in text
 
 
 def _worked(i, calls, cost=None, tokens=True, reward=0.0, error_type=None, tools=None):
@@ -451,17 +476,19 @@ def test_brief_warns_about_work_without_usage():
     text = brief_text(
         brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": []})
     )
-    assert "every trial priced" not in text
-    assert "every trial with usage priced" in text
-    assert "⚠ 1 trial(s) did work but report no usage (1 errored, 1 rewarded)" in text
-    assert "1 trial(s) without usage → est. +$" in text
-    assert "120 LLM calls" in text and "not in the total" in text
-    assert "1 rewarded, counted in RESULT without a cost" in text
-    # A fully metered run keeps the plain "every trial priced".
+    flat = " ".join(text.split())  # unwrapped: phrases may span lines
+    # Only trials with usage are claimed priced; the one without is named and estimated.
+    assert "every trial has a cost" not in text
+    assert "✓ every trial with usage has a cost" in text
+    assert "⚠ 1 trial (1 errored, 1 rewarded) did work but recorded no usage" in flat
+    assert "⚠ est. +$" in flat and "for the 1 trial without usage, not in the total" in flat
+    assert "120 LLM calls" in flat
+    # A fully metered run has no unmetered-work warning or estimate.
     clean = brief_text(
         brief({"scanner_version": "dev", "inputs": items[:-1], "coverage": {}, "runs": []})
     )
-    assert "every trial priced" in clean and "did work" not in clean
+    assert "✓ every trial with usage has a cost" in clean
+    assert "did work" not in clean and "without usage" not in clean
 
 
 def _served(i, reward, steps, header="anthropic/main-model", cost=None, tokens=True):
@@ -493,11 +520,14 @@ def test_step_models_reveal_a_fallback_the_header_hides():
     # 26 priced trials ran the fallback: no fit on them, even though there are >= 20.
     assert ce["priced_other_model"] == 26 and ce["estimate_usd"] is None
     text = brief_text(b)
-    assert "ran another model than main-model: fallback-model 26" in text
-    assert "1 switched mid-trial" in text
-    assert "(all of it on another model)" in text
-    assert "not estimated: only 26 trial(s) on another model are priced" in text
-    assert "unpriced tokens:" in text and "--price" in text
+    flat = " ".join(text.split())  # unwrapped: phrases may span lines
+    assert "⚠ 25 rewarded trials ran another model than main-model" in flat
+    assert "26 trials in all (46.4%) ran another model, costing $26.00: fallback-model 26" in flat
+    assert "; 1 trial switched mid-trial" in flat
+    assert "COST       $26.00 recorded, all of it on another model" in text
+    assert "not estimated, since only 26 trials on another model recorded a price" in flat
+    assert "their 30.4M input (15.0M cached) and 644k output tokens can be priced" in flat
+    assert "--price U,C,O" in flat
 
 
 def test_model_names_differing_only_in_prefix_date_or_case_are_the_same_model():
@@ -602,4 +632,4 @@ def test_brief_findings_count_traceless_trials_as_unavailable_not_none():
     ]
     b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": []})
     assert b["findings"]["traces_by_highest_severity"] == {"none": 1, "unavailable": 2}
-    assert "trials by highest review priority: none 1 · unavailable 2" in brief_text(b)
+    assert "trials by their highest priority: none 1 · unavailable 2" in brief_text(b)

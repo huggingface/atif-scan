@@ -832,13 +832,14 @@ COMPACTED = re.compile(
 def usage(metrics: object) -> Usage | None:
     if not is_object(metrics):
         return None
-    reasoning = as_object(metrics.get("extra")).get("total_reasoning_tokens")
+    extra = as_object(metrics.get("extra"))
     found = Usage(
         number(metrics.get("total_cost_usd"), low=0),
         count(metrics.get("total_prompt_tokens")),
         count(metrics.get("total_completion_tokens")),
         count(metrics.get("total_cached_tokens")),
-        count(reasoning),
+        count(extra.get("total_reasoning_tokens")),
+        count(extra.get("total_cache_creation_input_tokens")),
     )
     return None if found == Usage() else found
 

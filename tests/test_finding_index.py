@@ -96,7 +96,10 @@ def test_brief_overview_and_tool_show_the_index(tmp_path, capsys, monkeypatch):
         paths.append(str(path))
     main([*paths, "--brief", "--format", "text"])
     out = capsys.readouterr().out
-    assert "index: 50.0% flagged medium+ (1/2)" in out and "not a verdict" in out
+    assert "FINDINGS   ⚠ 1 of 2 trials (50.0%) has a medium or higher finding" in out
+    assert "Findings set review priority, not verdicts." in out
+    # Rewards unknown: the index doesn't claim how many flagged trials were rewarded.
+    assert "of them was rewarded" not in out
     assert "echo" not in out
     main([*paths, "--overview", "--format", "json"])
     assert json.loads(capsys.readouterr().out)["finding_index"]["flagged"] == 1

@@ -43,9 +43,41 @@ def test_recorded_tokens_beat_the_trajectory_and_attempt_cost_fills_a_missing_co
     recorded = {"input_tokens": 5, "output_tokens": 2, "attempt_cost_usd": 0.5}
     facts = run_facts(recorded, traced)
     assert (facts["input_tokens"], facts["cost_usd"], facts["usage_basis"]) == (5, 0.5, "run")
-    assert facts["tokens_match_trajectory"] is False and facts["cost_records_agree"] is None
+    assert facts["recorded_vs_trajectory"] == "differs" and facts["cost_records_agree"] is None
     facts = run_facts({"cost_usd": 1.0, "attempt_cost_usd": 1.005}, traced)
     assert facts["input_tokens"] == 9 and facts["usage_basis"] == "final_metrics"
     # Without recorded tokens the trajectory's cost is reported, and checked against
     # harbor-hf's attempt cost.
     assert facts["cost_usd"] == 9.0 and facts["cost_records_agree"] is False
+
+
+def test_record_counting_uncached_input_is_a_convention_and_is_normalised():
+    # Regression: the Harbor Hub records Claude Code's input_tokens as uncached input only
+    # (prompt minus cache reads and cache writes). It was read as total input, so the brief
+    # showed input smaller than its cached part and the cost fit lost uncached tokens; the
+    # new token check then reported every trial as "differs".
+    traced = {
+        **NO_TRACE,
+        "usage": {
+            "cost_usd": None,
+            "input_tokens": 130928,
+            "cache_tokens": 112440,
+            "output_tokens": 14458,
+        },
+        "usage_basis": "final_metrics",
+        "cache_write_tokens": 18066,
+    }
+    hub = {"input_tokens": 422, "cache_tokens": 112440, "output_tokens": 14458}
+    facts = run_facts(hub, traced)
+    assert facts["recorded_vs_trajectory"] == "uncached_input"
+    assert (facts["input_tokens"], facts["cache_tokens"]) == (130928, 112440)
+    # Without cache writes (e.g. OpenAI-style records), input minus cache reads also fits.
+    no_writes = {**traced, "cache_write_tokens": None}
+    uncached = {**hub, "input_tokens": 130928 - 112440}
+    assert run_facts(uncached, no_writes)["recorded_vs_trajectory"] == "uncached_input"
+    # Anything else is a real disagreement, and the record is kept as it is.
+    other = run_facts({**hub, "input_tokens": 999}, traced)
+    assert (other["recorded_vs_trajectory"], other["input_tokens"]) == ("differs", 999)
+    # An output mismatch is never excused by the input convention.
+    assert run_facts({**hub, "output_tokens": 1}, traced)["recorded_vs_trajectory"] == "differs"
+    assert run_facts({**hub, "input_tokens": 130928}, traced)["recorded_vs_trajectory"] == "same"

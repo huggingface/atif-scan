@@ -98,8 +98,8 @@ def test_local_bundle_scan_uses_the_ledger(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "tasks unknown" not in out and "rewards unknown" not in out
     # One attempt per task: the per-task SE is 0 by construction, so it isn't shown.
-    assert "RESULT     50.0% (1/2)" in out and "± 0.0" not in out
-    assert "$1.00 reported" in out
+    assert "SCORE      50.0% · 1 of 2 scored trials rewarded" in out and "± 0.0" not in out
+    assert "COST       $1.00 recorded" in out
 
 
 def test_remote_bundle_syncs_the_ledger(tmp_path, capsys):

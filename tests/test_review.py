@@ -131,8 +131,14 @@ def test_model_mismatch_is_selected_without_detector_match(tmp_path, capsys):
     assert "attribution/policy question, not proof" in prompt
 
 
-@pytest.mark.parametrize("view", [[], ["--brief"], ["--summary"]])
-def test_review_status_in_normal_text_and_summary(population, tmp_path, capsys, view):
+BRIEF_REVIEW = "1 review prompt written for 1 selected trial (scope dq-candidates)"
+
+
+@pytest.mark.parametrize(
+    ("view", "written"),
+    [([], BRIEF_REVIEW), (["--brief"], BRIEF_REVIEW), (["--summary"], "1 prompt(s) written")],
+)
+def test_review_status_in_normal_text_and_summary(population, tmp_path, capsys, view, written):
     assert (
         main(
             [
@@ -148,7 +154,8 @@ def test_review_status_in_normal_text_and_summary(population, tmp_path, capsys, 
         == 0
     )
     out = capsys.readouterr().out
-    assert "REVIEW" in out and "1 prompt(s) written" in out
+    review = " ".join(out[out.index("REVIEW") :].split("\n\n", 1)[0].split())  # unwrapped
+    assert written in review
     assert "--inspect-tool --jobs 8" in out
     assert "--answers DIR" in out
     assert str(tmp_path) not in out

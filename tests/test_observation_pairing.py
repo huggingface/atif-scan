@@ -236,5 +236,7 @@ def test_default_brief_prints_reconstruction_as_warning(tmp_path, capsys):
     p.write_text(json.dumps(raw()))
     assert main([str(p), "--brief", "--format", "text"]) == 0
     text = capsys.readouterr().out
-    assert "⚠" in text
-    assert "call/result links inferred by position (not verified): 1" in text
+    evidence = text[text.index("EVIDENCE") :]
+    assert "⚠ 1 trial (100.0%): tool results paired to calls by order" in evidence
+    # Real plurals: one trial "isn't" in the total.
+    assert "the 1 trial without usage isn't in the total" in text

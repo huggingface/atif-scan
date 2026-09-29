@@ -181,6 +181,9 @@ class Usage:
     completion_tokens: int | None = None
     cached_tokens: int | None = None
     reasoning_tokens: int | None = None  # final_metrics.extra.total_reasoning_tokens
+    # Prompt tokens written to the provider's cache (Anthropic cache creation), part of
+    # the prompt tokens: final_metrics.extra.total_cache_creation_input_tokens.
+    cache_write_tokens: int | None = None
 
 
 # A trace's results read as status-only when at least this many are recorded and this

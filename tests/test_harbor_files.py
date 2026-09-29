@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from test_brief import section
 
 from atif_scan.cli import main
 from atif_scan.harbor_files import job_meta, primary_reward, trial_result
@@ -145,10 +146,14 @@ def test_local_job_folder_uses_recorded_facts(tmp_path, capsys):
     assert items["weird-folder-2/agent"]["error_type"] == "AgentTimeoutError"
     main([str(job), "--format", "text"])
     out = capsys.readouterr().out
-    assert "my-run · job 1d6abb23" in out and "3 trials · 2 tasks × 1–2" in out
-    assert "3/4 planned trials have a trajectory" in out
-    assert "scoring overrides" in out and "agents[].override_timeout_sec" in out
-    assert "no cost recorded for any trial" in out and "--price" in out
+    flat = " ".join(out.split())  # unwrapped: phrases may span lines
+    assert "RUN        job 1d6abb23 · my-run" in out and "3 trials of 2 tasks, 1–2 per task" in out
+    assert "⚠ 3 of 4 planned trials have a trajectory" in out
+    assert (
+        "⚠ overrides that change the agent's time or resources (leaderboards require defaults):"
+        " agents[].override_timeout_sec"
+    ) in flat
+    assert "⚠ no trial recorded a cost; price the tokens with --price U,C,O" in flat
 
 
 def test_price_estimates_unpriced_trials(tmp_path, capsys):
@@ -172,7 +177,8 @@ def test_unknown_tasks_are_reported_not_invented(tmp_path, capsys):
     main([str(root), "--format", "text"])
     out = capsys.readouterr().out
     assert "tasks unknown (pass --task-from trial-dir or --task)" in out
-    assert "RESULT     100.0% (3/3)" in out  # no per-task ± without tasks
+    score = section(out, "SCORE")
+    assert score == "SCORE      100.0% · 3 of 3 scored trials rewarded"  # no ± without tasks
 
 
 def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
@@ -213,9 +219,21 @@ def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
     from atif_scan.brief import brief
 
     text = brief_text(brief(doc))
-    assert "scoring overrides" in text and "agents[].override_timeout_sec" in text
-    assert "infrastructure overrides (provisioning only)" in text
-    assert "non-canonical source: github.com/example/terminal-bench-2-1/tasks" in text
+    settings = " ".join(section(text, "SETTINGS").split())  # unwrapped
+    assert (
+        "⚠ overrides that change the agent's time or resources (leaderboards require defaults):"
+        " agents[].override_timeout_sec ·"
+    ) in settings
+    assert (
+        "· provisioning-only overrides: agent_setup_timeout_multiplier,"
+        " agents[].override_setup_timeout_sec"
+    ) in settings
+    assert (
+        "⚠ tasks aren't from the benchmark's own source"
+        " (github.com/example/terminal-bench-2-1/tasks)"
+    ) in settings
+    # No trials: no highest-priority breakdown with nothing after its label.
+    assert "trials by their highest priority" not in text
 
 
 def rerun_job(tmp_path, listing=True, completed=2):
@@ -273,11 +291,15 @@ def test_trials_missing_from_the_jobs_result_are_scored_and_flagged_as_a_rerun(t
     assert rr["unlisted"] == {"trials": 1, "scored": 1, "rewarded": 0, "cost_usd": 4.0}
     main([str(job), "--format", "text"])
     out = capsys.readouterr().out
-    assert "RESULT     33.3%" in out  # everything seen is scored
-    assert "⚠ 3/2 planned trials have a trajectory" in out
-    assert "2 trial folder(s) not in the job's result.json (1 with a trajectory)" in out
-    assert "1 task(s) run again: likely a rerun or resume" in out
-    assert "job's listed trials 1/2 (50.0%), $3.00 · other trials 0/1 (0.0%), $4.00" in out
+    flat = " ".join(out.split())  # unwrapped: phrases may span lines
+    assert "SCORE      33.3% ± 25.0 · 1 of 3 scored trials rewarded" in out  # all seen are scored
+    assert "⚠ 3 of 2 planned trials have a trajectory" in out
+    assert "⚠ 2 trial folders not listed in the job's result.json (1 with a trajectory)" in flat
+    assert "; 1 task ran again: likely a rerun or resume" in flat
+    assert (
+        "· all are scored above · listed trials 1 of 2 rewarded (50.0%), $3.00"
+        " · other trials 0 of 1 rewarded (0.0%), $4.00"
+    ) in flat
 
 
 def test_job_listing_missing_or_incomplete_is_unknown_not_clean(tmp_path, capsys):

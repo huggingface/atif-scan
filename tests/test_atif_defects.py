@@ -240,12 +240,12 @@ def test_ratio_in_report_and_brief(tmp_path, capsys):
     assert items["b"]["chars_per_output_token"] == 20.0
     assert items["b"]["output_ratio_basis"] == "all_text"
     main([str(tmp_path), "--format", "text", "--no-cache"])
-    out = capsys.readouterr().out
-    assert "recorded text doesn't fit reported output tokens: 1 (50.0%)" in out
-    assert "chars/output token: median 2.50 over 1 trace, excl. reasoning" in out
+    out = " ".join(capsys.readouterr().out.split())  # unwrapped: phrases may span lines
+    assert "⚠ 1 trial (50.0%): agent text doesn't fit reported output tokens" in out
+    assert "median 2.50 characters over 1 trace, reasoning excluded" in out
     # No reasoning text or count: its low side is expected for reasoning models.
-    assert "median 20.00" in out and "no reasoning text recorded" in out
-    assert "reasoning: withheld (tokens only) 1 (50.0%) · not exposed 1 (50.0%)" in out
+    assert "median 20.00 characters" in out and "no reasoning text recorded" in out
+    assert "reasoning: withheld (tokens only) 1 · not exposed 1 (" in out
     assert items["a"]["reasoning"] == "withheld" and items["b"]["reasoning"] == "none"
 
 
