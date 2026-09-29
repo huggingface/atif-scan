@@ -13,11 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from atif_scan import harbor_hub, layout, sources
+from atif_scan import harbor_hub, harbor_runs, layout, sources, sync
 from atif_scan.harbor_files import dataset_source, job_meta, primary_reward, trial_result
 from atif_scan.harbor_hub import HarborCLI, harbor_sources, inspect_job, run_meta, trial_meta
 from atif_scan.jsonval import number
-from atif_scan.sources import Entry, Listing, confined, list_input, resolve, sync_remote
+from atif_scan.sources import Entry, Listing, confined, list_input, resolve
+from atif_scan.sync import sync_remote
 
 JOB = "1d6abb23-0000-4000-8000-000000000000"
 ROOT = "buckets/o/b/job"
@@ -89,7 +90,7 @@ def test_sync_rejects_unsafe_listed_paths(tmp_path, monkeypatch):
         lambda e: None,
         fetch=lambda e, path: (written.append(path), path.write_bytes(b"{}")),
     )
-    monkeypatch.setattr(sources, "list_input", lambda value, fs=None: listing)
+    monkeypatch.setattr(sync, "list_input", lambda value, fs=None: listing)
     dest = tmp_path / "dest"
     with pytest.raises(sources.SourceError, match="invalid_hf_path"):
         sync_remote("hf://x/y/z", dest, pattern="*.json")
@@ -100,11 +101,11 @@ def test_sync_rejects_unsafe_listed_paths(tmp_path, monkeypatch):
 
 
 def test_sync_skips_oversize_entries(tmp_path, monkeypatch):
-    monkeypatch.setattr(sources, "MAX_BYTES", 100)
+    monkeypatch.setattr(sync, "MAX_BYTES", 100)
     fs = FS(
         {
             f"{ROOT}/a/trajectory.json": b"x" * 101,
-            f"{ROOT}/a/verifier/reward.txt": b"1" * (sources.REWARD_BYTES + 1),
+            f"{ROOT}/a/verifier/reward.txt": b"1" * (harbor_runs.REWARD_BYTES + 1),
             f"{ROOT}/b/trajectory.json": TRAJ[:100],
             f"{ROOT}/b/verifier/reward.txt": b"1",
         }
@@ -257,7 +258,9 @@ def test_numbers_are_finite_and_rewards_may_be_negative():
     )
     assert trial_meta({"id": "x", "cost_usd": float("inf")})["cost_usd"] is None
     assert trial_meta({"id": "x", "reward": -1})["reward"] == -1.0
-    assert primary_reward({"reward": -1}) == -1.0 and sources.parse_reward(b"-1", "r.txt") == -1.0
+    assert (
+        primary_reward({"reward": -1}) == -1.0 and harbor_runs.parse_reward(b"-1", "r.txt") == -1.0
+    )
     assert number(True) is None and number(-1, 0) is None and number(2, 0) == 2.0
     data = json.dumps({"task_name": "t", "agent_result": {"cost_usd": -3}}).encode()
     assert "cost_usd" not in trial_result(data)

@@ -31,7 +31,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from atif_scan.sources import default_sync_root
+from atif_scan.sync import default_sync_root
 
 MEDIUM = 50
 

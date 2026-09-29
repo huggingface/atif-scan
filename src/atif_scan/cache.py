@@ -16,9 +16,15 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from .jsonval import Doc, is_object
 from .report import SCHEMA_VERSION
 from .rules import Allowance, Rule
+
+if TYPE_CHECKING:
+    from .checks import Context
+    from .engine import Engine
 
 PACKAGE = Path(__file__).parent
 
@@ -48,11 +54,11 @@ def module_fingerprint(obj: object) -> str | None:
         return "unreadable"  # never matches a readable file's hash
 
 
-def logic(check: object) -> list:
+def logic(check: object) -> list[object]:
     """What a check decides with beyond its spec: a rule's `when`, an allowance's covers
     and `when` (frozen dataclasses: their repr is canonical), and plugin source."""
     if isinstance(check, Rule):
-        expression = [repr(check.expression)]
+        expression: list[object] = [repr(check.expression)]
     elif isinstance(check, Allowance):
         expression = [sorted(check.covers), repr(check.when)]
     else:
@@ -60,7 +66,7 @@ def logic(check: object) -> list:
     return [*expression, module_fingerprint(check)]
 
 
-def checks_signature(engine) -> list:
+def checks_signature(engine: Engine) -> list[list[object]]:
     checks = [*engine.checks.values(), *engine.allowances]
     return sorted(
         [c.spec.id, c.spec.version, sorted(c.spec.tasks), int(c.spec.severity), logic(c)]
@@ -69,14 +75,16 @@ def checks_signature(engine) -> list:
 
 
 class ResultCache:
-    def __init__(self, directory: Path, scanner_version: str, signature: list):
+    def __init__(
+        self, directory: Path, scanner_version: str, signature: list[list[object]]
+    ) -> None:
         self.directory = directory
         # The report schema too: an item cached under an older layout must not be reused.
         self.base = json.dumps(
             [scanner_version, code_fingerprint(), SCHEMA_VERSION, signature], sort_keys=True
         )
 
-    def key(self, fingerprint: str, context) -> str:
+    def key(self, fingerprint: str, context: Context) -> str:
         material = json.dumps(
             [self.base, fingerprint, context.task, context.partial, context.reward],
             sort_keys=True,
@@ -86,14 +94,15 @@ class ResultCache:
     def _path(self, key: str) -> Path:
         return self.directory / key[:2] / f"{key}.json"
 
-    def get(self, key: str) -> dict | None:
+    def get(self, key: str) -> Doc | None:
         try:
             value = json.loads(self._path(key).read_text())
         except (OSError, ValueError):
             return None
-        return value if isinstance(value, dict) else None
+        # Written by `put` from allowlisted report fields; any other shape is a miss.
+        return value if is_object(value) else None
 
-    def put(self, key: str, entry: dict) -> None:
+    def put(self, key: str, entry: Doc) -> None:
         path = self._path(key)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

@@ -12,7 +12,7 @@ from atif_scan.cli import main
 from atif_scan.estimates import partial_usage, unmetered_work
 from atif_scan.harbor_files import attempt_cost, declared_prices, trial_result
 from atif_scan.loader import parse_trace
-from atif_scan.sources import sync_cap
+from atif_scan.sync import sync_cap
 
 PRICING = {
     "currency": "USD",

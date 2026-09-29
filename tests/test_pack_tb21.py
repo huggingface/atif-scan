@@ -8,8 +8,9 @@ import pytest
 
 from atif_scan import Context, Engine, Severity, Status, builtin_detectors, parse_trace
 from atif_scan.cli import main
+from atif_scan.harbor_runs import parse_reward
 from atif_scan.packs.tb21 import checks
-from atif_scan.sources import parse_reward, resolve
+from atif_scan.sources import resolve
 
 PACK = ["--plugin", "atif_scan.packs.tb21:checks"]
 
@@ -222,6 +223,9 @@ def test_hub_reward_uses_listing_without_extra_listing(monkeypatch):
             import io
 
             return io.BytesIO(files[path])
+
+        def get_file(self, path, local):  # pragma: no cover - resolve never downloads
+            raise AssertionError("downloaded")
 
     (source,) = resolve(["hf://buckets/o/b/job"], fs=FS())
     assert source.reward() == 1.0 and FS.finds == 1

@@ -13,7 +13,7 @@ from test_sync import FS, trajectory
 
 from atif_scan.cli import main
 from atif_scan.harbor_files import trial_ledger
-from atif_scan.sources import sync_remote
+from atif_scan.sync import sync_remote
 
 
 def row(trial, task, reward, error=None, cost=0.5, **extra):
