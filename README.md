@@ -971,7 +971,7 @@ uv run atif-scan --manifest /external/inputs.json > /external/report.json
 ## Development
 
 ```bash
-uv run pytest -q && uv run ruff check . && uv run ruff format --check .
+uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run ty check
 ```
 
 Only synthetic fixtures belong in this repository. Add a regression test for every

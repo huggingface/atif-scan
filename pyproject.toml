@@ -16,7 +16,7 @@ atif-scan = "atif_scan.cli:main"
 atif-inspect = "atif_scan.extract:main"
 
 [dependency-groups]
-dev = ["pytest==9.1.1", "ruff==0.16.9", "ty==0.0.84"]
+dev = ["pytest==9.1.1", "ruff==0.16.9", "ty==0.0.84", "typing_extensions==4.16.0"]
 
 [tool.ruff]
 line-length = 100

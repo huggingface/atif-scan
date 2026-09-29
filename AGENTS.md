@@ -3,8 +3,8 @@
 <!-- fast-agent subagents -->
 
 Read README.md and SECURITY.md first. Keep the core (model, loader, detectors, rules,
-engine) stdlib-only and offline; `huggingface_hub` and `rich` are imported lazily, only
-by `sources` (hf:// inputs) and `report` (rich text).
+engine, jsonval) stdlib-only and offline; `huggingface_hub` and `rich` are imported
+lazily, only by `sources` (hf:// inputs) and `report`/`brief`/`rich_view` (rich text).
 Do not execute trajectory commands or URLs. Never commit real traces, auth files,
 raw findings or copied benchmark solutions. Use synthetic fixtures only.
 
@@ -13,6 +13,9 @@ separate. Plugins return typed results. Reports are explicitly allowlisted and
 contain no snippets. Unknown evidence is not a negative result. Severity is review
 priority, not cheating probability. Make task selection explicit.
 
-Run `uv run pytest -q`, `uv run ruff check .`, and
-`uv run ruff format --check .` before committing. Add regression tests whenever a
+Run `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .` and
+`uv run ty check` before committing; all four must be clean (tool versions are pinned
+in pyproject.toml). Fix complexity by splitting into named helpers rather than
+suppressing; a `# noqa`/`# ty: ignore` needs a rule code and a reason. Untrusted JSON is
+narrowed with `jsonval`; report documents are `jsonval.Doc`. Add regression tests whenever a
 new false-positive or evidence gap is found. No external model runs are needed.

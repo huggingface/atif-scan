@@ -8,7 +8,11 @@ detector or changing the engine.
 | Module | Role |
 |---|---|
 | `sources` | Resolves files, directories, `hf://` paths and Hub URLs to loadable inputs (the only input I/O) |
-| `harbor_files` | Harbor's own run files (trial `result.json`, job `config.json`/`result.json`) as recorded facts for local/hf:// job folders |
+| `sync` | Mirrors remote inputs into the private sync folder (inventory, content identities, confinement) |
+| `harbor_runs` | Finds the Harbor files next to each trajectory: reward, trial `result.json` + attempt cost, `exception.txt`, job folders, saved Hub listings and ledgers |
+| `harbor_files` | Parses Harbor's own run files (trial `result.json`, job `config.json`/`result.json`, `trials.jsonl`, harbor-hf `run.json` prices and attempt costs) into allowlisted facts |
+| `facts` | The one place that decides which record wins for each per-trial fact (reward, task, error, tokens, cost), and the trace-derived facts that are cached |
+| `jsonval` | Narrows untrusted JSON values (`as_object`, `count`, `number`, …); wrong shapes become unknown, never zero |
 | `harbor_hub` | `harbor://jobs/<id>`: Hub listing (task/reward/cost) and trajectory downloads via the `harbor` CLI |
 | `layout` | `--inspect`: classifies a listing (Harbor markers, roles, anomalies) without reading traces |
 | `model`, `loader` | Immutable `Trace → Step → ToolCall / Observation` view of ATIF v1 |
@@ -17,8 +21,8 @@ detector or changing the engine.
 | `detectors` | Built-ins (`builtin`, `integrity`) and the `RegexDetector` / `SurfaceDetector` / `ObservationDetector` helpers |
 | `rules`, `policy` | Three-valued rule expressions, `Allowance`, and the JSON rule/allow format |
 | `engine` | Dependency ordering, task scope, error isolation, applying allowances |
-| `report` | The JSON allowlist, summary rollup, and text/rich views rendered only from it |
-| `brief`, `estimates` | One-screen run integrity report; missing-cost and missing-activity estimates fitted on the run's own data |
+| `report`, `rich_view` | The JSON allowlist, summary rollup, and text/rich views rendered only from it |
+| `brief`, `estimates` | One-screen run integrity report (one renderer per section); token accounting, then cost priced once from given, declared or fitted rates; missing-activity estimates |
 | `cache` | Per-trace result cache keyed by file fingerprint + scanner version + check set + context |
 | `cite` | Opt-in (`--cite`) masked excerpts with before/after context: the only trace-text output |
 | `cli` | Picks inputs, loads trusted plugins, prints JSON or text |
