@@ -9,7 +9,7 @@ import pytest
 
 from atif_scan.brief import brief, brief_text
 from atif_scan.cli import main
-from atif_scan.estimates import partial_usage, unmetered_work
+from atif_scan.estimates import choose_pricing, partial_usage, unmetered_work
 from atif_scan.harbor_files import attempt_cost, declared_prices, trial_result
 from atif_scan.loader import parse_trace
 from atif_scan.sync import sync_cap
@@ -258,7 +258,7 @@ def test_unmetered_work_is_estimated_from_trials_priced_at_given_rates():
     ]
     items.append({"input_id": "dead", "llm_calls": 20, "tool_calls": 20, "cost_usd": None})
     assert unmetered_work(items)["estimate_usd"] is None
-    um = unmetered_work(items, price=(1.0, 0.0, 0.0))
+    um = unmetered_work(items, choose_pricing(items, given=(1.0, 0.0, 0.0)))
     assert um["trials"] == 1 and um["estimate_usd"] > 1.0  # 20 calls at $0.10+/call
     assert partial_usage(items) == {
         "trials": 0,
@@ -305,3 +305,28 @@ def test_findings_headline_counts_findings_and_trials_not_overlap():
     assert "FINDINGS   4 finding(s) across 2 trial(s)" in text
     assert "access.test_path · 3 finding(s) across 2 trial(s)" in text
     assert "overlap" not in text
+
+
+def test_rates_are_chosen_once_given_then_declared_then_fitted():
+    from atif_scan.estimates import choose_pricing
+
+    items = [
+        {
+            "input_id": f"t{i}",
+            "input_tokens": 1_000_000 * (i + 1),
+            "cache_tokens": 100_000 * (i % 4),
+            "output_tokens": 1000 * (i % 7),
+            "cost_usd": 2.0 * (i + 1) + 0.01 * (i % 5),
+        }
+        for i in range(25)
+    ]
+    given, declared = (1.0, 0.1, 3.0), (2.0, 0.2, 6.0)
+    assert choose_pricing(items, given, declared).source == "given"
+    assert choose_pricing(items, None, declared).rates == declared
+    fitted = choose_pricing(items)
+    assert fitted.source == "fit" and not fitted.known
+    # Fitted rates never price a trial as a reference: only recorded or known costs do.
+    unpriced = dict(items[0], cost_usd=None)
+    assert fitted.trial_cost(unpriced) is None
+    assert choose_pricing(items, None, declared).trial_cost(unpriced) == 2.0
+    assert choose_pricing(items[:5]).rates is None  # too few priced trials: no rates
