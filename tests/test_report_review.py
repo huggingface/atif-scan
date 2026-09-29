@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import re
 import sys
 
 import pytest
@@ -19,6 +20,7 @@ from atif_scan.report import (
     overview,
     overview_text,
     render_rich,
+    render_summary_rich,
     summary,
     summary_text,
 )
@@ -224,12 +226,15 @@ def test_citation_match_is_structured_not_bracket_joined(monkeypatch):
     pytest.importorskip("rich")
     plain = io.StringIO()
     render_rich(doc, file=plain)  # the rich view highlights the match instead of bracketing
-    assert "│ a⟦bMc⟧d" in plain.getvalue()
+    assert "match a⟦bMc⟧d" in plain.getvalue()
+    # Off a terminal the summary stays plain text (the caller prints summary_text).
+    assert not render_summary_rich(summary(doc), file=io.StringIO())
     monkeypatch.setenv("FORCE_COLOR", "1")
     monkeypatch.delenv("NO_COLOR", raising=False)
-    styled = io.StringIO()
-    render_rich(doc, file=styled)
-    assert "a⟦b\x1b[1;7mM\x1b[0mc⟧d" in styled.getvalue()  # exactly the match reversed
+    for render in (render_rich, render_summary_rich):
+        styled = io.StringIO()
+        render(summary(doc) if render is render_summary_rich else doc, file=styled)
+        assert "a⟦b\x1b[1;7mM\x1b[0mc⟧d" in styled.getvalue()  # exactly the match reversed
 
 
 def test_view_flags_are_mutually_exclusive(tmp_path, capsys):
@@ -268,3 +273,53 @@ def test_brief_ties_are_ordered_by_check_id():
     items = [dict(_item(0, "a"), assessments=[a(c) for c in names])]
     b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}})
     assert list(b["recording"]) == sorted(names)
+
+
+def test_citation_rows_say_what_the_context_is():
+    def labels(channel):
+        c = dict(CITATION, channel=channel, context_before="b", context_after="a")
+        return [label for label, _ in citation_lines(c)]
+
+    assert labels("command") == ["@", "why", ">", "result"]  # intent, then what came back
+    assert labels("observation") == ["@", "call", ">", "after"]  # the producing call
+    assert labels("reasoning") == ["@", "before", ">", "then ran"]  # the step's first call
+
+
+def test_citation_collapses_blank_lines_but_keeps_match_boundaries():
+    c = dict(CITATION, before="one\n\n\n  two ", match="M", after=" three\r\n\nfour")
+    assert citation_lines(c)[-1] == (">", ("one ⏎ two ", "M", " three ⏎ four"))
+
+
+def test_rich_summary_wraps_citations_inside_their_column(monkeypatch):
+    pytest.importorskip("rich")
+    long = "word " * 60
+    cite = dict(CITATION, channel="reasoning", before=long, match="M", after=long)
+    cite["context_after"] = "ls /app"
+    s = {
+        "scanner_version": "dev",
+        "checks": {"x.check": {"severity": "low", "traces": 1, "events": 1}},
+        "highest_severity": {"low": 1},
+        "details": [
+            {
+                "check": "x.check",
+                "severity": "low",
+                "traces": [{"input_id": "t1", "reward": 1, "evidence": [], "citations": [cite]}],
+            }
+        ],
+        "expected": {},
+        "unresolved": {},
+        "coverage": {"inputs": 1, "available": 1, "incomplete": 0},
+    }
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("COLUMNS", "80")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    out = io.StringIO()
+    assert render_summary_rich(s, file=out)
+    lines = re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()).splitlines()
+    rows = [line for line in lines if "word" in line]
+    assert len(rows) > 3 and all(len(line) <= 80 for line in lines)
+    # Every wrapped line starts at the text column, never back at column 0.
+    column = rows[0].index("word")
+    assert all(line[:column].strip() in ("", "match") for line in rows)
+    assert all(line.index("word") == column for line in rows)
+    assert "⟦" not in out.getvalue() and any("then ran ls /app" in line for line in lines)

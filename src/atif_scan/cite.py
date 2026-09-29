@@ -13,6 +13,7 @@ import re
 from typing import TYPE_CHECKING
 
 from . import credentials
+from .checks import check_selected
 from .model import Channel, Content, Locator, Step, ToolCall, Trace
 
 if TYPE_CHECKING:
@@ -250,12 +251,18 @@ def _call_context(step: Step, call: ToolCall, known: frozenset[str]) -> Doc:
 
 
 def citations(
-    trace: Trace, assessments: tuple[Assessment, ...], minimum: Severity
+    trace: Trace,
+    assessments: tuple[Assessment, ...],
+    minimum: Severity,
+    checks: tuple[str, ...] = (),
 ) -> dict[str, list[Doc]]:
-    """Citations for unexcused findings at/above `minimum`, keyed by check ID."""
+    """Citations for unexcused findings at/above `minimum`, keyed by check ID; with
+    `checks` (ID globs), only for the checks they select."""
     out: dict[str, list[Doc]] = {}
     known = trace_secrets(trace)
     for a in assessments:
-        if a.counts and a.spec.severity >= minimum and a.result.evidence:
+        if not (a.counts and a.spec.severity >= minimum and a.result.evidence):
+            continue
+        if not checks or check_selected(a.spec.id, checks):
             out[a.spec.id] = [cite(trace, at, known) for at in a.result.evidence[:PER_FINDING]]
     return out

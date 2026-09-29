@@ -6,10 +6,25 @@ from __future__ import annotations
 from typing import IO, TYPE_CHECKING
 
 from rich.console import Console
+from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
-from .report import STYLE, _cited, citation_lines, counts, footer, headline, sections, where
+from .report import (
+    STYLE,
+    _cited,
+    citation_lines,
+    counts,
+    detail_heading,
+    detail_spread,
+    footer,
+    headline,
+    reward_label,
+    sections,
+    summary_head_lines,
+    summary_tail_lines,
+    where,
+)
 from .report import filter_notice as _filter_notice
 from .report import tally as _tally
 from .report import unresolved as _unresolved
@@ -31,21 +46,38 @@ def _findings_table(group: dict[str, list[Doc]]) -> Table:
     return table
 
 
-def _print_citation(console: Console, c: Doc) -> None:
-    for label, text in citation_lines(c):
-        if isinstance(text, tuple):  # the match row (`>`): mark the match itself
-            before, match, after = text
-            console.print(
-                Text("    │ ", style="dim"),
-                Text(before),
-                Text(match, style="bold reverse"),
-                Text(after),
-                sep="",
-                soft_wrap=True,
-            )
-        else:
-            tag = "┌ " if label == "@" else f"│ {label}: "
-            console.print(Text(f"    {tag}{text}", style="dim"), soft_wrap=True)
+NEWLINE = "⏎"  # _flat/_one_line's line-break marker, dimmed so the prose reads through
+MATCH = "bold reverse"
+
+
+def _prose(text: str, style: str = "") -> Text:
+    out = Text(text, style=style)
+    out.highlight_words([NEWLINE], "dim")
+    return out
+
+
+def _cell(label: str, text: str | tuple[str, str, str]) -> Text:
+    if isinstance(text, tuple):  # the match row: mark the match itself, no brackets
+        before, match, after = text
+        return Text.assemble(_prose(before), (match, MATCH), _prose(after))
+    if label == "@":
+        return Text(text, style="bold")
+    return _prose(text, "yellow" if label == "warning" else "dim")
+
+
+def citation_grid(cites: list[Doc], indent: int) -> Padding:
+    """Citations as a two-column grid (label, text). Long text wraps inside its own
+    column, so the indent survives the terminal width; a blank row separates citations."""
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column(no_wrap=True, style="dim", justify="right")  # why / match / result …
+    grid.add_column(overflow="fold")
+    for n, c in enumerate(cites):
+        if n:
+            grid.add_row("", "")
+        for label, text in citation_lines(c):
+            tag = {"@": "", ">": "match"}.get(label, label)
+            grid.add_row(tag, _cell(label, text))
+    return Padding(grid, (0, 0, 0, indent), expand=False)
 
 
 def _print_heading(console: Console, item: Doc) -> None:
@@ -63,8 +95,8 @@ def _print_citations(console: Console, item: Doc, group: dict[str, list[Doc]]) -
         cited = _cited(item, a["id"])
         if cited:
             console.print(Text(f"  {a['id']}", style=STYLE[a["severity"]]))
-        for c in cited:
-            _print_citation(console, c)
+        if cited:
+            console.print(citation_grid(cited, 4))
 
 
 def _print_item(console: Console, item: Doc) -> None:
@@ -89,3 +121,64 @@ def render(doc: Doc, file: IO[str] | None = None) -> None:
         _print_item(console, item)
     console.print()
     console.print(Text(footer(doc), style="dim"))
+
+
+# --- Summary ----------------------------------------------------------------------------
+
+
+def _print_lines(console: Console, lines: list[str]) -> None:
+    for line in lines:
+        text = Text(line)
+        for severity, style in STYLE.items():
+            text.highlight_regex(rf"^\s+{severity}\b", style)  # check-table rows
+        console.print(text)
+
+
+def _print_trace(console: Console, t: Doc) -> None:
+    reward = reward_label(t)
+    style = "green" if t.get("reward") else "dim"
+    console.print(
+        Padding(
+            Text.assemble(
+                (t["input_id"], "bold"),
+                "  ",
+                (reward, style),
+                "  " if reward else "",
+                (where(t["evidence"]), "dim"),
+            ),
+            (0, 0, 0, 4),
+        )
+    )
+    if t.get("citations"):
+        console.print(citation_grid(t["citations"], 6))
+
+
+def _print_details(console: Console, s: Doc) -> None:
+    if not s["details"]:
+        return
+    console.print()
+    console.print(Text(detail_heading(s), style="dim"))
+    for d in s["details"]:
+        console.print()
+        console.print(
+            Text.assemble(
+                "  ",
+                (f"{d['severity']:<6}", STYLE[d["severity"]]),
+                " ",
+                (d["check"], "bold"),
+                (f" · {detail_spread(s, d)}", "dim"),
+            )
+        )
+        for t in d["traces"]:
+            _print_trace(console, t)
+
+
+def render_summary(s: Doc, file: IO[str] | None = None) -> bool:
+    """The summary with rich citations; False (nothing printed) off a terminal."""
+    console = Console(file=file, highlight=False)
+    if not console.is_terminal:
+        return False
+    _print_lines(console, summary_head_lines(s))
+    _print_details(console, s)
+    _print_lines(console, summary_tail_lines(s))
+    return True

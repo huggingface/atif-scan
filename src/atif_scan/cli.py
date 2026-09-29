@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from .access import access_rules
 from .brief import brief, brief_text, print_brief
 from .cache import ResultCache, checks_signature
-from .checks import Context, Severity, Status, identifier
+from .checks import Context, Severity, Status, check_pattern, check_selected, identifier
 from .cite import citations
 from .detectors import builtin_detectors
 from .engine import Engine, effective_context
@@ -38,6 +38,7 @@ from .report import (
     overview,
     overview_text,
     render_rich,
+    render_summary_rich,
     report,
     summary,
     summary_text,
@@ -268,22 +269,28 @@ def _overview(doc: Doc, args: argparse.Namespace, fmt: str) -> None:
     print(to_json(out) if fmt == "json" else "\n".join(overview_text(scorecard)))
 
 
+def _cite_filter(doc: Doc, args: argparse.Namespace, *, hide_empty: bool = False) -> Doc:
+    minimum = Severity[args.cite.upper()]
+    return filter_findings(doc, minimum, hide_empty=hide_empty, checks=tuple(args.cite_check))
+
+
 def _summary(doc: Doc, args: argparse.Namespace, fmt: str) -> None:
-    shown = filter_findings(doc, Severity[args.cite.upper()]) if args.cite else doc
+    shown = _cite_filter(doc, args) if args.cite else doc
     rolled = dict(
         summary(shown),
         overview=_scorecard(doc, args),
         dq_threshold=args.dq_on,
         answers=answer_tally(doc["inputs"]),
     )
-    print(to_json(rolled) if fmt == "json" else summary_text(rolled), end="")
     if fmt == "json":
-        print()
+        print(to_json(rolled))
+    elif not render_summary_rich(rolled):
+        print(summary_text(rolled), end="")
 
 
 def _detail(doc: Doc, args: argparse.Namespace, fmt: str) -> None:
     if args.cite:
-        doc = filter_findings(doc, Severity[args.cite.upper()], hide_empty=True)
+        doc = _cite_filter(doc, args, hide_empty=True)
     if fmt == "json":
         print(to_json(doc))
         return
@@ -539,10 +546,27 @@ def _review_arguments(parser: argparse.ArgumentParser) -> None:
         "Output then contains trace text.",
     )
     parser.add_argument(
+        "--cite-check",
+        action="append",
+        default=[],
+        type=_check_glob,
+        metavar="CHECK",
+        help="cite only checks matching this ID or glob (repeatable, e.g. 'awareness.*'); "
+        "implies --cite info unless --cite sets a level. Output then contains trace text.",
+    )
+    parser.add_argument(
         "--fail-on",
         choices=[s.name.lower() for s in Severity],
         help="exit 1 for an unexcused finding at/above this review severity",
     )
+
+
+def _check_glob(value: str) -> str:
+    try:
+        return check_pattern(value)
+    except ValueError:
+        message = "expected a check ID or glob, e.g. 'awareness.*'"
+        raise argparse.ArgumentTypeError(message) from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -575,8 +599,12 @@ def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespac
         parser.error("--judge-scope requires --judge-prompts DIR")
     if args.judge_prompts:
         _check_review_dir(parser, args)
+    if args.cite_check and not args.cite:
+        args.cite = "info"  # checks picked by name: severity shouldn't hide them
     if args.cite and (args.view in ("brief", "overview") or args.inspect):
-        parser.error("--cite requires detail or summary output, not brief/overview/inspect")
+        parser.error(
+            "--cite/--cite-check require detail or summary output, not brief/overview/inspect"
+        )
 
 
 def _submission(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Doc | None:
@@ -659,6 +687,7 @@ class Scanner:
     writer: Writer | None = None
     answers: Answers | None = None
     cite: Severity | None = None
+    cite_checks: tuple[str, ...] = ()  # --cite-check globs; empty cites every check
 
     @classmethod
     def for_args(cls, args: argparse.Namespace, engine: Engine) -> Scanner:
@@ -667,10 +696,11 @@ class Scanner:
         cite = Severity[args.cite.upper()] if args.cite else None
         cache = None
         # Citations and questions carry trace text, and answers need the trace: never cached.
-        if not (args.no_cache or cite or args.judge_prompts or writer or answers):
+        # `cite is not None`: Severity.INFO is 0, so `--cite info` is falsy (regression).
+        if not (args.no_cache or cite is not None or args.judge_prompts or writer or answers):
             directory = args.cache or args.sync_root / "results"
             cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
-        return cls(engine, args.task, cache, writer, answers, cite)
+        return cls(engine, args.task, cache, writer, answers, cite, tuple(args.cite_check))
 
     def item(self, source: Source, context: Context) -> Doc:
         listed, result = source.meta, source.details()
@@ -707,7 +737,7 @@ class Scanner:
             item["answers"] = self.answers.annotate(source.label, trace)
         if self.cite is not None and trace is not None:
             # Opt-in trace text; the only report field that isn't allowlisted metadata.
-            item["citations"] = citations(trace, assessments, self.cite)
+            item["citations"] = citations(trace, assessments, self.cite, self.cite_checks)
         return item
 
     def close(self) -> None:
@@ -771,20 +801,39 @@ def _review(doc: Doc, args: argparse.Namespace, records: list[Record], engine: E
     return True
 
 
-def scan(args: argparse.Namespace) -> int:
+def _unmatched_checks(patterns: list[str], engine: Engine) -> list[str]:
+    """--cite-check globs that select none of this scan's checks."""
+    ids = [spec.id for _, spec in engine.catalog()]
+    return [p for p in patterns if not any(check_selected(i, (p,)) for i in ids)]
+
+
+def _prepare(args: argparse.Namespace) -> tuple[list[Record], Engine] | None:
+    """(inputs, engine), or None after printing why the scan can't start."""
     try:
         records = inputs(args)
         engine = Engine(load_checks(args, records))
     except SourceError as error:
         # Fixed codes only (e.g. a missing optional extra); never paths or remote messages.
         print(f"atif-scan: {error}", file=sys.stderr)
-        return 2
+        return None
     except Exception:  # noqa: BLE001 - policies and plugins can raise anything; withheld
         print(
             "atif-scan: invalid input, policy or plugin configuration (details withheld)",
             file=sys.stderr,
         )
+        return None
+    if unmatched := _unmatched_checks(args.cite_check, engine):
+        # A typo would otherwise hide every trace: say so instead of an empty report.
+        print(f"atif-scan: --cite-check matches no check: {', '.join(unmatched)}", file=sys.stderr)
+        return None
+    return records, engine
+
+
+def scan(args: argparse.Namespace) -> int:
+    prepared = _prepare(args)
+    if prepared is None:
         return 2
+    records, engine = prepared
     sync_failed = sum(getattr(args, "sync_failures", []))
     if sync_failed:
         print(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import math
 import re
 from dataclasses import dataclass
@@ -21,6 +22,19 @@ def identifier(value: str) -> str:
     ):
         raise ValueError("invalid_identifier")
     return value
+
+
+def check_pattern(value: str) -> str:
+    """A check-ID glob (`awareness.*`, `tamper.reward_write`): identifier characters plus
+    `*` and `?`. Reports echo it, so its shape is checked like an identifier."""
+    if not isinstance(value, str) or re.fullmatch(r"[a-zA-Z0-9_.:/*?-]{1,128}", value) is None:
+        raise ValueError("invalid_check_pattern")
+    return value
+
+
+def check_selected(check_id: str, patterns: Iterable[str]) -> bool:
+    """Whether a check ID matches any glob (case-sensitive, like the IDs themselves)."""
+    return any(fnmatch.fnmatchcase(check_id, p) for p in patterns)
 
 
 MAX_TITLE = 60

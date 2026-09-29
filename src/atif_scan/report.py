@@ -11,7 +11,7 @@ import re
 from collections import Counter
 from typing import IO, TYPE_CHECKING
 
-from .checks import Severity, Status
+from .checks import Severity, Status, check_selected
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -128,19 +128,26 @@ def document(
     }
 
 
-def filter_findings(doc: Doc, minimum: Severity, *, hide_empty: bool = False) -> Doc:
-    """Presentation-only projection; preserve full-scan scores and unknown evidence."""
+def _shown(a: Doc, minimum: Severity, checks: tuple[str, ...]) -> bool:
+    """Whether a filtered view keeps this assessment row. Unknown/error rows stay (unknown
+    evidence is not a negative result) unless `checks` leaves their check out."""
+    if checks and a["kind"] != "context" and not check_selected(a["id"], checks):
+        return False
+    return not (
+        a["kind"] in ("detector", "rule")
+        and a["status"] == Status.MATCH
+        and RANK[a["severity"]] < minimum
+    )
+
+
+def filter_findings(
+    doc: Doc, minimum: Severity, *, hide_empty: bool = False, checks: tuple[str, ...] = ()
+) -> Doc:
+    """Presentation-only projection; preserve full-scan scores and unknown evidence.
+    `checks` (ID globs) narrows the rows to the checks they select."""
     items = []
     for item in doc["inputs"]:
-        assessments = [
-            a
-            for a in item["assessments"]
-            if not (
-                a["kind"] in ("detector", "rule")
-                and a["status"] == Status.MATCH
-                and RANK[a["severity"]] < minimum
-            )
-        ]
+        assessments = [a for a in item["assessments"] if _shown(a, minimum, checks)]
         shown = dict(item, assessments=assessments)
         group = sections(shown)
         if (
@@ -155,14 +162,17 @@ def filter_findings(doc: Doc, minimum: Severity, *, hide_empty: bool = False) ->
         doc,
         inputs=items,
         finding_minimum=minimum.name.lower(),
+        **({"finding_checks": list(checks)} if checks else {}),
         **({"hidden_inputs": len(doc["inputs"]) - len(items)} if hide_empty else {}),
     )
 
 
 def filter_notice(doc: Doc) -> str:
     minimum = doc.get("finding_minimum")
+    checks = doc.get("finding_checks")
+    selected = f"{', '.join(checks)} at " if checks else ""
     return (
-        f"Finding rows: {minimum} and above; scores and coverage use the full scan."
+        f"Finding rows: {selected}{minimum} and above; scores and coverage use the full scan."
         + (
             f" {doc['hidden_inputs']} trace(s) omitted with no findings at this level."
             if doc.get("hidden_inputs")
@@ -365,8 +375,20 @@ def _one_line(text: str) -> str:
 
 
 def _flat(text: str) -> str:
-    """Newlines to ` ⏎ `, other spacing kept (so the match boundaries stay exact)."""
-    return re.sub(r"[ \t]*\r?\n[ \t]*", " ⏎ ", text)
+    """Line breaks (a run of them, blank lines included) to one ` ⏎ `; other spacing kept,
+    so the match boundaries stay exact."""
+    return re.sub(r"[ \t]*(?:\r?\n[ \t]*)+", " ⏎ ", text)
+
+
+def context_labels(channel: str) -> tuple[str, str]:
+    """What a citation's before/after context is, by the cited channel (see
+    `cite._context`): a tool argument has the step's intent and the call's result; a
+    tool result has the call that produced it; prose has the step's first call."""
+    if channel == "observation":
+        return "call", "after"
+    if channel in ("reasoning", "message", "metadata"):
+        return "before", "then ran"
+    return "why", "result"
 
 
 def citation_lines(c: Doc) -> list[tuple[str, str | tuple[str, str, str]]]:
@@ -378,11 +400,12 @@ def citation_lines(c: Doc) -> list[tuple[str, str | tuple[str, str, str]]]:
         rows.append(
             ("warning", "Call/result pairing reconstructed by position; not an exported link.")
         )
+    before, after = context_labels(c["channel"])
     if c.get("context_before"):
-        rows.append(("before", _one_line(c["context_before"])))
+        rows.append((before, _one_line(c["context_before"])))
     rows.append((">", (_flat(c["before"]), _flat(c["match"]), _flat(c["after"]))))
     if c.get("context_after"):
-        rows.append(("after", _one_line(c["context_after"])))
+        rows.append((after, _one_line(c["context_after"])))
     return rows
 
 
@@ -391,7 +414,7 @@ def _cited(item: Doc, check: str) -> list[Doc]:
 
 
 def _row(label: str, text: str | tuple[str, str, str]) -> str:
-    """`┌ @ where`, `│ > …⟦match⟧…`, `│ before: …`."""
+    """`┌ @ where`, `│ > …⟦match⟧…`, `│ why: …`."""
     if isinstance(text, tuple):
         before, match, after = text
         text = f"{before}⟦{match}⟧{after}"
@@ -488,7 +511,8 @@ def summary(doc: Doc) -> Doc:
             )
             entry["traces"] += 1
             entry["events"] += events(a)
-            if a["severity"] in DETAIL:
+            # Medium+ always; lower findings too when cited (--cite low, --cite-check).
+            if a["severity"] in DETAIL or _cited(item, a["id"]):
                 detail = details.setdefault(
                     a["id"], {"check": a["id"], "severity": a["severity"], "traces": []}
                 )
@@ -509,6 +533,7 @@ def summary(doc: Doc) -> Doc:
         "kind": "summary",
         "review": review_metadata(doc),
         **({"finding_minimum": doc["finding_minimum"]} if "finding_minimum" in doc else {}),
+        **({"finding_checks": doc["finding_checks"]} if "finding_checks" in doc else {}),
         "scanner_version": doc["scanner_version"],
         "coverage": doc["coverage"],
         "highest_severity": {
@@ -555,24 +580,41 @@ def _check_table_lines(checks: Doc) -> list[str]:
     ]
 
 
+def detail_heading(s: Doc) -> str:
+    scope = "medium and above"
+    if any(d["severity"] not in DETAIL for d in s["details"]):
+        scope += ", plus cited lower findings"
+    return f"{scope} (review priority, not verdicts; counts overlap)"
+
+
+def detail_spread(s: Doc, d: Doc) -> str:
+    """`N event(s) across M trace(s)` for one detailed check."""
+    n = s["checks"].get(d["check"], {}).get("events")
+    return (f"{n} event(s) across " if n is not None else "") + f"{len(d['traces'])} trace(s)"
+
+
+def reward_label(t: Doc) -> str:
+    return f"reward {t['reward']:g}" if t.get("reward") is not None else ""
+
+
 def _detail_lines(s: Doc) -> list[str]:
     if not s["details"]:
         return []
-    lines: list[str] = ["", "medium and above (review priority, not verdicts; counts overlap)"]
+    lines: list[str] = ["", detail_heading(s)]
     for d in s["details"]:
-        n = s["checks"].get(d["check"], {}).get("events")
-        spread = f"{n} event(s) across " if n is not None else ""
-        lines.append(f"  {d['severity']:<6} {d['check']} · {spread}{len(d['traces'])} trace(s)")
+        lines.append(f"  {d['severity']:<6} {d['check']} · {detail_spread(s, d)}")
         width = max(len(t["input_id"]) for t in d["traces"])
         for t in d["traces"]:
-            reward = f"reward {t['reward']:g}" if t.get("reward") is not None else ""
-            lines.append(f"         {t['input_id']:<{width}}  {reward:<10} {where(t['evidence'])}")
+            lines.append(
+                f"         {t['input_id']:<{width}}  {reward_label(t):<10} {where(t['evidence'])}"
+            )
             for c in t.get("citations", []):
                 lines += _citation_rows(c, "           ")
     return lines
 
 
-def summary_text(s: Doc) -> str:
+def summary_head_lines(s: Doc) -> list[str]:
+    """The summary before its per-check details: overview, severities, check table."""
     lines = [f"atif-scan {s['scanner_version']} · summary", ""]
     if notice := filter_notice(s):
         lines += [notice, ""]
@@ -586,14 +628,32 @@ def summary_text(s: Doc) -> str:
             "integrity.cost_missing: absent from trajectory telemetry; "
             "run totals may use separately recorded trial costs."
         )
-    lines += _check_table_lines(s["checks"])
-    lines += _detail_lines(s)
+    return lines + _check_table_lines(s["checks"])
+
+
+def summary_tail_lines(s: Doc) -> list[str]:
+    """The summary after its details: expected, unknown/error, footer."""
+    lines = []
     if s["expected"]:
         lines += ["", "expected: " + " · ".join(f"{k} {v}" for k, v in s["expected"].items())]
     if s["unresolved"]:
         lines += ["unknown/error: " + " · ".join(f"{k} {v}" for k, v in s["unresolved"].items())]
-    lines += ["", footer({"coverage": s["coverage"]})]
+    return [*lines, "", footer({"coverage": s["coverage"]})]
+
+
+def summary_text(s: Doc) -> str:
+    lines = [*summary_head_lines(s), *_detail_lines(s), *summary_tail_lines(s)]
     return "\n".join(lines) + "\n"
+
+
+def render_summary_rich(s: Doc, file: IO[str] | None = None) -> bool:
+    """Rich summary on a terminal; False (nothing printed) when rich is missing or the
+    output isn't a terminal, so the caller prints `summary_text`."""
+    try:
+        from .rich_view import render_summary  # noqa: PLC0415 - rich is optional
+    except ImportError:
+        return False
+    return render_summary(s, file)
 
 
 # --- Run overview (the "super-summary") -------------------------------------------------
