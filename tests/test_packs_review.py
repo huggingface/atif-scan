@@ -164,7 +164,8 @@ def test_tb21_patterns_are_linear(linear):
 def test_tb21_catalog_names_bisect_is_fast_and_exact(linear):
     # Regression: 8k names x 8k benchmark mentions took 2.4s.
     from atif_scan.checks import Context
-    from atif_scan.packs.tb21 import NEAR_BENCHMARK, catalog_names
+    from atif_scan.detectors.catalog import NEAR_BENCHMARK
+    from atif_scan.packs.tb21 import catalog_names
 
     def names(n):
         text = " ".join(["regex-chess"] * n + ["terminal-bench"] * n)
