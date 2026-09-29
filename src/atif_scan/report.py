@@ -9,42 +9,46 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Sequence
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
 from .checks import Severity, Status
-from .engine import Assessment
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from .engine import Assessment
+    from .jsonval import Doc
 
 # 3: evidence and citations carry `step_id` (the ATIF step number shown in text views).
 SCHEMA_VERSION = 3
 EVIDENCE_SHOWN = 3
 # Report severity names -> Severity values, for ordering and thresholds.
-RANK = {s.name.lower(): int(s) for s in Severity}
+RANK: dict[str, int] = {s.name.lower(): int(s) for s in Severity}
 STYLE = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan", "info": "dim"}
 
 
-def is_counted(a: dict) -> bool:
+def is_counted(a: Doc) -> bool:
     """A reported assessment that is an unexcused finding (`Assessment.counts`)."""
     return a.get("score") is not None
 
 
-def _location(e: dict) -> tuple:
+def _location(e: Doc) -> tuple[object, ...]:
     """Where evidence sits (step, channel, call, result, argument), ignoring the span."""
     return (e["step"], e["channel"], e["call"], e["observation"], e["field"])
 
 
-def events(a: dict) -> int:
+def events(a: Doc) -> int:
     """Distinct evidence locations of one reported assessment: two matches in one command
     are one event. A finding with no location (a whole-trace fact) is one event."""
     return len({_location(e) for e in a["evidence"]}) or 1
 
 
-def ranked(counter: Counter) -> dict:
+def ranked(counter: Counter[str]) -> dict[str, int]:
     """Most frequent first; ties keep first-seen order."""
     return dict(counter.most_common())
 
 
-def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | None = None) -> dict:
+def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | None = None) -> Doc:
     """Per-trace report. Never dataclasses.asdict(trace). `step_numbers` maps each 0-based
     step position to its ATIF step number (`Trace.step_numbers`); integers only."""
 
@@ -97,7 +101,7 @@ def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | No
     }
 
 
-def document(items: list[dict], scanner_version: str) -> dict:
+def document(items: list[Doc], scanner_version: str) -> Doc:
     return {
         "schema_version": SCHEMA_VERSION,
         "scanner_version": scanner_version,
@@ -110,7 +114,7 @@ def document(items: list[dict], scanner_version: str) -> dict:
     }
 
 
-def filter_findings(doc: dict, minimum: Severity, *, hide_empty: bool = False) -> dict:
+def filter_findings(doc: Doc, minimum: Severity, *, hide_empty: bool = False) -> Doc:
     """Presentation-only projection; preserve full-scan scores and unknown evidence."""
     items = []
     for item in doc["inputs"]:
@@ -141,7 +145,7 @@ def filter_findings(doc: dict, minimum: Severity, *, hide_empty: bool = False) -
     )
 
 
-def filter_notice(doc: dict) -> str:
+def filter_notice(doc: Doc) -> str:
     minimum = doc.get("finding_minimum")
     return (
         f"Finding rows: {minimum} and above; scores and coverage use the full scan."
@@ -155,19 +159,19 @@ def filter_notice(doc: dict) -> str:
     )
 
 
-def to_json(doc: dict) -> str:
+def to_json(doc: Doc) -> str:
     return json.dumps(doc, indent=2)
 
 
 # --- Text views -------------------------------------------------------------------------
 
 
-def step_label(e: dict) -> int:
+def step_label(e: Doc) -> int:
     """The ATIF step number (`step_id`); older items without it: 1-based position."""
-    return e["step_id"] if e.get("step_id") is not None else e["step"] + 1
+    return int(e["step_id"]) if e.get("step_id") is not None else int(e["step"]) + 1
 
 
-def where(evidence: list[dict]) -> str:
+def where(evidence: list[Doc]) -> str:
     """`step 2 call 0 command`: the ATIF step number, then 0-based positions into the
     step's tool_calls / observation results."""
     parts = []
@@ -183,7 +187,7 @@ def where(evidence: list[dict]) -> str:
     return "; ".join(parts)
 
 
-def sections(item: dict) -> dict[str, list[dict]]:
+def sections(item: Doc) -> dict[str, list[Doc]]:
     """Group a per-input report for display. Findings sort by severity, then ID."""
     checks = [a for a in item["assessments"] if a["kind"] in ("detector", "rule")]
     matched = [a for a in checks if a["status"] == Status.MATCH]
@@ -203,7 +207,7 @@ def sections(item: dict) -> dict[str, list[dict]]:
     }
 
 
-def headline(item: dict) -> str:
+def headline(item: Doc) -> str:
     if item["input_status"] != "available":
         return f"not scanned: {item.get('input_error') or 'unavailable_or_invalid'}"
     if item["severity"] is None:
@@ -215,7 +219,7 @@ def headline(item: dict) -> str:
     return f"{score} · {'INCOMPLETE' if item['incomplete'] else 'complete'}"
 
 
-def counts(item: dict) -> str:
+def counts(item: Doc) -> str:
     if item["agent_steps"] is None:
         return ""
     return (
@@ -227,11 +231,11 @@ def counts(item: dict) -> str:
     )
 
 
-def unresolved(item: dict, group: dict[str, list[dict]]) -> list[str]:
+def unresolved(item: Doc, group: dict[str, list[Doc]]) -> list[str]:
     """One line per unresolved status, instead of a row per check. Skipped if unscanned."""
     if item["input_status"] != "available":
         return []
-    lines = []
+    lines: list[str] = []
     for status in (Status.ERROR, Status.UNKNOWN):
         ids = [a["id"] for a in group["unresolved"] if a["status"] == status]
         if ids:
@@ -239,11 +243,11 @@ def unresolved(item: dict, group: dict[str, list[dict]]) -> list[str]:
     return lines
 
 
-def tally(group: dict[str, list[dict]]) -> str:
+def tally(group: dict[str, list[Doc]]) -> str:
     return f"{len(group['no_match'])} no match · {len(group['not_applicable'])} not applicable"
 
 
-def footer(doc: dict) -> str:
+def footer(doc: Doc) -> str:
     c = doc["coverage"]
     return (
         (
@@ -256,7 +260,7 @@ def footer(doc: dict) -> str:
     )
 
 
-def to_text(doc: dict) -> str:
+def to_text(doc: Doc) -> str:
     """Plain-text view (no optional dependencies)."""
     lines = [f"atif-scan {doc['scanner_version']}", ""]
     if notice := filter_notice(doc):
@@ -278,78 +282,33 @@ def to_text(doc: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_rich(doc: dict, file: IO[str] | None = None) -> None:
-    """Rich view; requires the optional `pretty` extra."""
-    from rich.console import Console
-    from rich.table import Table
-    from rich.text import Text
+def render_rich(doc: Doc, file: IO[str] | None = None) -> None:
+    """Rich view; requires the optional `pretty` extra (ImportError without it)."""
+    from .rich_view import render  # noqa: PLC0415 - rich is optional: import it only here
 
-    console = Console(file=file, highlight=False)
-    console.print(f"[bold]atif-scan[/] {doc['scanner_version']}")
-    if notice := filter_notice(doc):
-        console.print(Text(notice, style="dim"))
-    for item in doc["inputs"]:
-        group, shape = sections(item), counts(item)
-        style = STYLE.get(item["severity"] or "", "green")
-        if item["input_status"] != "available":
-            style = "bold magenta"
-        console.print()
-        console.print(Text(item["input_id"], style="bold"), Text(headline(item), style=style))
-        if shape:
-            console.print(Text(shape, style="dim"))
-        table = Table(show_header=True, header_style="bold", box=None, pad_edge=False)
-        table.add_column("status")
-        table.add_column("check")
-        table.add_column("evidence / reason")
-        for a in group["findings"]:
-            sev = a["severity"]
-            table.add_row(Text(sev, style=STYLE[sev]), a["id"], where(a["evidence"]))
-        for a in group["expected"]:
-            table.add_row(
-                Text("expected", style="green"), a["id"], "by " + ", ".join(a["expected_by"])
-            )
-        if table.row_count:
-            console.print(table)
-        for a in group["findings"]:
-            if _cited(item, a["id"]):
-                console.print(Text(f"  {a['id']}", style=STYLE[a["severity"]]))
-            for c in _cited(item, a["id"]):
-                for label, text in citation_lines(c):
-                    if label == ">":
-                        before, match, after = text
-                        console.print(
-                            Text("    │ ", style="dim"),
-                            Text(before),
-                            Text(match, style="bold reverse"),
-                            Text(after),
-                            sep="",
-                            soft_wrap=True,
-                        )
-                    else:
-                        tag = "┌ " if label == "@" else f"│ {label}: "
-                        console.print(Text(f"    {tag}{text}", style="dim"), soft_wrap=True)
-        for line in unresolved(item, group):
-            console.print(Text(line, style="magenta"))
-        if item["input_status"] == "available":
-            console.print(Text(tally(group), style="dim"))
-    console.print()
-    console.print(Text(footer(doc), style="dim"))
+    render(doc, file)
 
 
 # --- Inspection view --------------------------------------------------------------------
 
 
+KIB = 1024
+
+
 def size(value: int | None) -> str:
     if value is None:
         return "size unknown"
-    for unit in ("B", "KB", "MB", "GB"):
-        if value < 1024 or unit == "GB":
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
-        value /= 1024
-    return ""
+    if value < KIB:
+        return f"{value:.0f} B"
+    scaled = value / KIB
+    for unit in ("KB", "MB"):
+        if scaled < KIB:
+            return f"{scaled:.1f} {unit}"
+        scaled /= KIB
+    return f"{scaled:.1f} GB"
 
 
-def inspection_text(doc: dict, examples: int = 3) -> str:
+def inspection_text(doc: Doc, examples: int = 3) -> str:
     """Plain-text view of a `layout.document`: counts, labels and file names only."""
     lines = [f"atif-scan inspect · pattern {doc['pattern']}", ""]
     for item in doc["inputs"]:
@@ -396,7 +355,7 @@ def _flat(text: str) -> str:
     return re.sub(r"[ \t]*\r?\n[ \t]*", " ⏎ ", text)
 
 
-def citation_lines(c: dict) -> list[tuple[str, str | tuple[str, str, str]]]:
+def citation_lines(c: Doc) -> list[tuple[str, str | tuple[str, str, str]]]:
     """(label, text) rows for one citation. The match row is `>` with a (before, match,
     after) triple, so each renderer marks the match its own way."""
     where_ = f"step {step_label(c)} · {c['channel']}" + (f" · {c['tool']}" if c.get("tool") else "")
@@ -413,7 +372,7 @@ def citation_lines(c: dict) -> list[tuple[str, str | tuple[str, str, str]]]:
     return rows
 
 
-def _cited(item: dict, check: str) -> list[dict]:
+def _cited(item: Doc, check: str) -> list[Doc]:
     return (item.get("citations") or {}).get(check, [])
 
 
@@ -427,11 +386,11 @@ def _row(label: str, text: str | tuple[str, str, str]) -> str:
     return f"{mark} {tag} {text}"
 
 
-def _citation_rows(c: dict, indent: str) -> list[str]:
+def _citation_rows(c: Doc, indent: str) -> list[str]:
     return [indent + _row(label, text) for label, text in citation_lines(c)]
 
 
-def _citation_text(item: dict, check: str, indent: str) -> list[str]:
+def _citation_text(item: Doc, check: str, indent: str) -> list[str]:
     return [row for c in _cited(item, check) for row in _citation_rows(c, indent)]
 
 
@@ -440,7 +399,7 @@ def _citation_text(item: dict, check: str, indent: str) -> list[str]:
 DETAIL = ("high", "medium", "critical")
 
 
-def review_metadata(doc: dict) -> dict | None:
+def review_metadata(doc: Doc) -> Doc | None:
     """Review export allowlist: no bundle paths, manifests or prompt text."""
     value = doc.get("review")
     if value is None:
@@ -460,10 +419,10 @@ def review_metadata(doc: dict) -> dict | None:
     }
 
 
-def review_text(ov: dict, review: dict | None = None, dq: str = "high") -> list[str]:
+def review_text(ov: Doc, review: Doc | None = None, dq: str = "high") -> list[str]:
     """Counts and generic commands only; never interpolate private bundle locations."""
     d = ov.get("disqualification")
-    lines = []
+    lines: list[str] = []
     candidates = len(set(d["candidate_ids"])) if d else 0
     gaps = d["rewarded_not_cleared"] if d else 0
     if candidates or gaps or review is not None:
@@ -497,14 +456,14 @@ def review_text(ov: dict, review: dict | None = None, dq: str = "high") -> list[
     return lines
 
 
-def summary(doc: dict) -> dict:
+def summary(doc: Doc) -> Doc:
     """Cross-input rollup: counts for info/low, per-trace details for medium and above."""
     items = doc["inputs"]
-    highest: Counter = Counter()
-    checks: dict[str, dict] = {}
-    expected: Counter = Counter()
-    unresolved: Counter = Counter()
-    details: dict[str, dict] = {}
+    highest: Counter[str] = Counter()
+    checks: dict[str, Doc] = {}
+    expected: Counter[str] = Counter()
+    unresolved: Counter[str] = Counter()
+    details: dict[str, Doc] = {}
     for item in items:
         key = "unavailable" if item["input_status"] != "available" else item["severity"] or "none"
         highest[key] += 1
@@ -550,23 +509,60 @@ def summary(doc: dict) -> dict:
     }
 
 
-def summary_text(s: dict) -> str:
+def _summary_overview_lines(s: Doc) -> list[str]:
+    if not s.get("overview"):
+        return []
+    lines = [*overview_text(s["overview"]), ""]
+    lines += review_text(s["overview"], s.get("review"), s.get("dq_threshold", "high"))
+    if s.get("answers"):
+        lines += [
+            "ANSWERS    "
+            + question
+            + ": "
+            + " · ".join(f"{key} {value}" for key, value in counts.items())
+            for question, counts in sorted(s["answers"].items())
+        ]
+        lines.append("           reviewer annotations only; DQ candidates unchanged")
+    return [*lines, ""]
+
+
+def _check_table_lines(checks: Doc) -> list[str]:
+    if not checks:
+        return []
+    width = max(len(k) for k in checks)
+    return [
+        "",
+        "findings by check (events = distinct evidence locations; counts overlap)",
+        f"  {'':<6} {'':<{width}}  {'events':>6}  {'traces':>6}",
+        *(
+            f"  {v['severity']:<6} {k:<{width}}  {v.get('events', ''):>6}  {v['traces']:>6}"
+            for k, v in checks.items()
+        ),
+    ]
+
+
+def _detail_lines(s: Doc) -> list[str]:
+    if not s["details"]:
+        return []
+    lines: list[str] = ["", "medium and above (review priority, not verdicts; counts overlap)"]
+    for d in s["details"]:
+        n = s["checks"].get(d["check"], {}).get("events")
+        spread = f"{n} event(s) across " if n is not None else ""
+        lines.append(f"  {d['severity']:<6} {d['check']} · {spread}{len(d['traces'])} trace(s)")
+        width = max(len(t["input_id"]) for t in d["traces"])
+        for t in d["traces"]:
+            reward = f"reward {t['reward']:g}" if t.get("reward") is not None else ""
+            lines.append(f"         {t['input_id']:<{width}}  {reward:<10} {where(t['evidence'])}")
+            for c in t.get("citations", []):
+                lines += _citation_rows(c, "           ")
+    return lines
+
+
+def summary_text(s: Doc) -> str:
     lines = [f"atif-scan {s['scanner_version']} · summary", ""]
     if notice := filter_notice(s):
         lines += [notice, ""]
-    if s.get("overview"):
-        lines += [*overview_text(s["overview"]), ""]
-        lines += review_text(s["overview"], s.get("review"), s.get("dq_threshold", "high"))
-        if s.get("answers"):
-            lines += [
-                "ANSWERS    "
-                + question
-                + ": "
-                + " · ".join(f"{key} {value}" for key, value in counts.items())
-                for question, counts in sorted(s["answers"].items())
-            ]
-            lines.append("           reviewer annotations only; DQ candidates unchanged")
-        lines.append("")
+    lines += _summary_overview_lines(s)
     lines.append(
         "highest severity per trace (including recording integrity; brief excludes it): "
         + " · ".join(f"{k} {v}" for k, v in s["highest_severity"].items())
@@ -576,28 +572,8 @@ def summary_text(s: dict) -> str:
             "integrity.cost_missing: absent from trajectory telemetry; "
             "run totals may use separately recorded trial costs."
         )
-    if s["checks"]:
-        lines += ["", "findings by check (events = distinct evidence locations; counts overlap)"]
-        width = max(len(k) for k in s["checks"])
-        lines.append(f"  {'':<6} {'':<{width}}  {'events':>6}  {'traces':>6}")
-        lines += [
-            f"  {v['severity']:<6} {k:<{width}}  {v.get('events', ''):>6}  {v['traces']:>6}"
-            for k, v in s["checks"].items()
-        ]
-    if s["details"]:
-        lines += ["", "medium and above (review priority, not verdicts; counts overlap)"]
-        for d in s["details"]:
-            n = s["checks"].get(d["check"], {}).get("events")
-            spread = f"{n} event(s) across " if n is not None else ""
-            lines.append(f"  {d['severity']:<6} {d['check']} · {spread}{len(d['traces'])} trace(s)")
-            width = max(len(t["input_id"]) for t in d["traces"])
-            for t in d["traces"]:
-                reward = f"reward {t['reward']:g}" if t.get("reward") is not None else ""
-                lines.append(
-                    f"         {t['input_id']:<{width}}  {reward:<10} {where(t['evidence'])}"
-                )
-                for c in t.get("citations", []):
-                    lines += _citation_rows(c, "           ")
+    lines += _check_table_lines(s["checks"])
+    lines += _detail_lines(s)
     if s["expected"]:
         lines += ["", "expected: " + " · ".join(f"{k} {v}" for k, v in s["expected"].items())]
     if s["unresolved"]:
@@ -613,6 +589,10 @@ def summary_text(s: dict) -> str:
 # and cost totals count every trial that ran, with missing telemetry counted as $0.
 
 
+# A task's success rate only varies (has a standard error) with at least two attempts.
+MIN_ATTEMPTS_FOR_SE = 2
+
+
 def accuracy(by_task: dict[str, list[bool]]) -> tuple[float, float] | None:
     total = sum(len(v) for v in by_task.values())
     if not total:
@@ -622,12 +602,12 @@ def accuracy(by_task: dict[str, list[bool]]) -> tuple[float, float] | None:
     var = sum(
         (sum(v) / len(v)) * (1 - sum(v) / len(v)) / (len(v) - 1)
         for v in by_task.values()
-        if len(v) >= 2
+        if len(v) >= MIN_ATTEMPTS_FOR_SE
     )
-    return round(acc, 2), round(100.0 * (var / (n * n)) ** 0.5, 2)
+    return round(acc, 2), round(100.0 * float((var / (n * n)) ** 0.5), 2)
 
 
-def reruns(items: list[dict], runs: list[dict]) -> dict | None:
+def reruns(items: list[Doc], runs: list[Doc]) -> Doc | None:
     """Trials a Harbor job's own result.json doesn't list: usually another execution of
     the same job (a rerun or resume, possibly overlapping the first). Everything is still
     scored; this splits the job's listed set from the rest so both can be compared.
@@ -636,8 +616,8 @@ def reruns(items: list[dict], runs: list[dict]) -> dict | None:
     if not folders:
         return None
 
-    def part(rows: list[dict]) -> dict:
-        scored = [_outcome(i) for i in rows if _outcome(i) is not None]
+    def part(rows: list[Doc]) -> Doc:
+        scored = [o for i in rows if (o := _outcome(i)) is not None]
         costs = [i["cost_usd"] for i in rows if i.get("cost_usd") is not None]
         return {
             "trials": len(rows),
@@ -659,10 +639,10 @@ def reruns(items: list[dict], runs: list[dict]) -> dict | None:
     }
 
 
-def _outcome(item: dict) -> bool | None:
+def _outcome(item: Doc) -> bool | None:
     """True/False for a scored trial (errored = False); None when the reward is unknown."""
     if item.get("reward") is not None:
-        return item["reward"] > 0
+        return bool(item["reward"] > 0)
     if item.get("error_type"):
         return False
     return None
@@ -680,10 +660,10 @@ NOT_CLEARED_BECAUSE = {
 }
 
 
-def uncleared_reasons(items: list[dict]) -> dict[str, int]:
+def uncleared_reasons(items: list[Doc]) -> dict[str, int]:
     """Why each rewarded trial can't be cleared: a missing trace (by error code) or the
     recording defects it has; anything else is a tool input the scanner couldn't read."""
-    reasons: Counter = Counter()
+    reasons: Counter[str] = Counter()
     for i in items:
         if i["input_status"] != "available":
             found = [f"no trajectory ({i.get('input_error') or 'unknown'})"]
@@ -704,7 +684,7 @@ def model_key(name: str) -> str:
     return DATE_SUFFIX.sub("", name.rsplit("/", 1)[-1].lower())
 
 
-def served_models(item: dict) -> dict[str, int]:
+def served_models(item: Doc) -> dict[str, int]:
     """Agent steps per model that actually ran in a trial: the step-level models when
     recorded, else the header's model (a harness can keep the configured model in the
     header while its steps fall back to another one)."""
@@ -716,7 +696,7 @@ def served_models(item: dict) -> dict[str, int]:
     return {model_key(item["model_name"]): 1} if item.get("model_name") else {}
 
 
-def model_mismatch(items: list[dict], planned_models: int = 1) -> dict | None:
+def model_mismatch(items: list[Doc], planned_models: int = 1) -> Doc | None:
     """Trials that ran another model than the run's: a safety-classifier fallback or
     substitution. Their rewards and costs belong (at least partly) to another model, so
     rewarded ones are critical DQ candidates (TB4: a Fable 5.1 row ran Opus 5 in 45
@@ -727,7 +707,7 @@ def model_mismatch(items: list[dict], planned_models: int = 1) -> dict | None:
     entries (a comparison job) expects that many (TB2.1: a 5-agent job read as 1,347
     substitutions)."""
     served = {i["input_id"]: served_models(i) for i in items}
-    main = Counter(max(m, key=m.get) for m in served.values() if m)
+    main = Counter(max(m, key=m.__getitem__) for m in served.values() if m)
     counts = ranked(main)
     planned = set(list(counts)[: max(planned_models, 1)])
     other = [i for i in items if set(served[i["input_id"]]) - planned]
@@ -751,7 +731,7 @@ def model_mismatch(items: list[dict], planned_models: int = 1) -> dict | None:
 INDEX_MINIMUM = "medium"
 
 
-def finding_index(items: list[dict], minimum: str = INDEX_MINIMUM) -> dict:
+def finding_index(items: list[Doc], minimum: str = INDEX_MINIMUM) -> Doc:
     """How much of a run triggered behaviour checks: a per-run review-load figure for
     comparing runs (e.g. leaderboard rows), **not** a probability of cheating.
 
@@ -798,7 +778,7 @@ def finding_index(items: list[dict], minimum: str = INDEX_MINIMUM) -> dict:
     }
 
 
-def index_text(ix: dict) -> str:
+def index_text(ix: Doc) -> str:
     """`12.1% flagged medium+ (40/330) · up to 30.3% with 60 unresolved/unscanned · …`"""
     if not ix["trials"]:
         return "no trials"
@@ -814,22 +794,11 @@ def index_text(ix: dict) -> str:
     return text
 
 
-def overview(
-    doc: dict,
-    dq: str = "high",
-    min_trials: int | None = None,
-    scanned: bool = True,
-    expect_tasks: int | None = None,
-) -> dict:
-    """Run scorecard. `scanned=False` (listing only, e.g. --inspect) omits DQ figures."""
-    items = doc["inputs"]
-    runs = doc.get("runs") or []
-    threshold = RANK[dq]
-    scored = [i for i in items if _outcome(i) is not None]
-    by_task: dict[str, list[bool]] = {}
-    for i in scored:
-        by_task.setdefault(i.get("task") or "?", []).append(bool(_outcome(i)))
-    dq_ids, uncleared = [], []
+def _dq_split(items: Sequence[Doc], threshold: int) -> tuple[list[str], list[str]]:
+    """Rewarded trials that are DQ candidates (an unexcused finding at `threshold`+), and
+    those that can't be cleared (not scanned, or a DQ-level check couldn't decide)."""
+    dq_ids: list[str] = []
+    uncleared: list[str] = []
     for i in items:
         if not _outcome(i):
             continue
@@ -844,8 +813,114 @@ def overview(
         if any(RANK[a["severity"]] >= threshold for a in counted):
             dq_ids.append(i["input_id"])
         elif i["input_status"] == "unavailable_or_invalid" or relevant_unknown:
-            # Can't be cleared: not scanned, or a DQ-level check couldn't decide.
             uncleared.append(i["input_id"])
+    return dq_ids, uncleared
+
+
+def _by_task(scored: Sequence[Doc], flagged: set[str] | None = None) -> dict[str, list[bool]]:
+    """Outcomes per task; `flagged` trials count as failures (the DQ scenario)."""
+    by_task: dict[str, list[bool]] = {}
+    for i in scored:
+        ok = bool(_outcome(i)) and i["input_id"] not in (flagged or set())
+        by_task.setdefault(i.get("task") or "?", []).append(ok)
+    return by_task
+
+
+def _trial_counts(items: Sequence[Doc], planned: int | None, scored: int) -> Doc:
+    errors = Counter(i["error_type"] for i in items if i.get("error_type"))
+    return {
+        "present": len(items),
+        "planned": planned,
+        # Clamped: a job can hold more trials than planned (retries, merged runs).
+        "missing": max(planned - len(items), 0) if planned is not None else None,
+        "errored": sum(errors.values()),
+        "error_types": ranked(errors),
+        "without_trajectory": sum(i["input_status"] == "unavailable_or_invalid" for i in items),
+        "incomplete_scans": sum(bool(i["incomplete"]) for i in items),
+        "compacted": sum(bool(i.get("compacted")) for i in items),
+        "reward_unknown": len(items) - scored,
+    }
+
+
+def _task_counts(by_task: dict[str, list[bool]], k: int | None, expect_tasks: int | None) -> Doc:
+    counts = sorted(len(v) for v in by_task.values())
+    return {
+        "count": len(by_task),
+        "min_trials": counts[0] if counts else None,
+        "median_trials": counts[len(counts) // 2] if counts else None,
+        "max_trials": counts[-1] if counts else None,
+        "expected_per_task": k,
+        "expected_tasks": expect_tasks,
+        "missing_tasks": max(expect_tasks - len(by_task), 0) if expect_tasks else None,
+        "below_expected": sorted(t for t, v in by_task.items() if k and len(v) < k),
+    }
+
+
+def _disqualification(
+    items: Sequence[Doc],
+    dq: str,
+    scored: Sequence[Doc],
+    dq_ids: list[str],
+    uncleared: list[str],
+) -> Doc:
+    flagged, not_cleared = set(dq_ids), set(uncleared)
+    return {
+        "policy": f"rewarded trial with an unexcused finding >= {dq}, or run by another"
+        " model than the run's (critical)",
+        "candidates": len(dq_ids),
+        "candidate_ids": dq_ids,
+        "rate_pct": round(100.0 * len(dq_ids) / len(scored), 2) if scored else None,
+        "accuracy_if_disqualified": accuracy(_by_task(scored, flagged)) if dq_ids else None,
+        "rewarded_not_cleared": len(uncleared),
+        "rewarded_not_cleared_ids": uncleared,
+        "not_cleared_reasons": uncleared_reasons(
+            [i for i in items if i["input_id"] in not_cleared]
+        ),
+    }
+
+
+def _cost_totals(items: Sequence[Doc], runs: Sequence[Doc]) -> Doc:
+    costs = [i.get("cost_usd") for i in items]
+    tokens_no_cost = [
+        i["input_id"]
+        for i in items
+        # Reported as exactly $0 despite tokens (a missing cost is counted separately).
+        if i.get("cost_usd") == 0 and (i.get("input_tokens") or i.get("output_tokens"))
+    ]
+    return {
+        "total_usd": round(sum(c or 0 for c in costs), 2),
+        "per_trial_usd": round(sum(c or 0 for c in costs) / len(items), 4) if items else None,
+        "missing": sum(c is None for c in costs),
+        "tokens_without_cost": len(tokens_no_cost),
+        "tokens_without_cost_ids": tokens_no_cost,
+        "hub_job_total_usd": sum(r["cost_usd"] for r in runs if r.get("cost_usd")) or None,
+    }
+
+
+def _token_totals(items: Sequence[Doc]) -> Doc | None:
+    if not any(i.get("input_tokens") is not None for i in items):
+        return None
+    return {
+        "uncached_input": sum(
+            max((i.get("input_tokens") or 0) - (i.get("cache_tokens") or 0), 0) for i in items
+        ),
+        "cached_input": sum(i.get("cache_tokens") or 0 for i in items),
+        "output": sum(i.get("output_tokens") or 0 for i in items),
+    }
+
+
+def overview(
+    doc: Doc,
+    dq: str = "high",
+    min_trials: int | None = None,
+    scanned: bool = True,
+    expect_tasks: int | None = None,
+) -> Doc:
+    """Run scorecard. `scanned=False` (listing only, e.g. --inspect) omits DQ figures."""
+    items = doc["inputs"]
+    runs = doc.get("runs") or []
+    scored = [i for i in items if _outcome(i) is not None]
+    dq_ids, uncleared = _dq_split(items, RANK[dq])
     models = model_mismatch(
         items, sum(r.get("configured_agents") or 1 for r in runs) if runs else 1
     )
@@ -856,89 +931,24 @@ def overview(
     # Review buckets are disjoint: model attribution can flag a trial that also has gaps.
     # Its per-check unknown evidence remains in the report, but it is already a candidate.
     uncleared = [label for label in uncleared if label not in flagged]
-    disqualified: dict[str, list[bool]] = {}
-    for i in scored:
-        ok = bool(_outcome(i)) and i["input_id"] not in flagged
-        disqualified.setdefault(i.get("task") or "?", []).append(ok)
-    counts = sorted(len(v) for v in by_task.values())
     planned = sum(r["planned_trials"] for r in runs if r.get("planned_trials")) or None
     k = min_trials or max((r.get("n_attempts") or 0 for r in runs), default=0) or None
-    costs = [i.get("cost_usd") for i in items]
-    tokens_no_cost = [
-        i["input_id"]
-        for i in items
-        # Reported as exactly $0 despite tokens (a missing cost is counted separately).
-        if i.get("cost_usd") == 0 and (i.get("input_tokens") or i.get("output_tokens"))
-    ]
-    uncached = sum(
-        max((i.get("input_tokens") or 0) - (i.get("cache_tokens") or 0), 0) for i in items
-    )
-    has_tokens = any(i.get("input_tokens") is not None for i in items)
-    errors = Counter(i["error_type"] for i in items if i.get("error_type"))
-    not_cleared = set(uncleared)
+    by_task = _by_task(scored)
+    sync_failed = doc.get("coverage", {}).get("sync_failed_files")
     return {
         "runs": runs,
-        "trials": {
-            "present": len(items),
-            "planned": planned,
-            # Clamped: a job can hold more trials than planned (retries, merged runs).
-            "missing": max(planned - len(items), 0) if planned is not None else None,
-            "errored": sum(errors.values()),
-            "error_types": ranked(errors),
-            "without_trajectory": sum(i["input_status"] == "unavailable_or_invalid" for i in items),
-            "incomplete_scans": sum(bool(i["incomplete"]) for i in items),
-            "compacted": sum(bool(i.get("compacted")) for i in items),
-            "reward_unknown": len(items) - len(scored),
-        },
+        "trials": _trial_counts(items, planned, len(scored)),
         "reruns": reruns(items, runs),
-        "tasks": {
-            "count": len(by_task),
-            "min_trials": counts[0] if counts else None,
-            "median_trials": counts[len(counts) // 2] if counts else None,
-            "max_trials": counts[-1] if counts else None,
-            "expected_per_task": k,
-            "expected_tasks": expect_tasks,
-            "missing_tasks": max(expect_tasks - len(by_task), 0) if expect_tasks else None,
-            "below_expected": sorted(t for t, v in by_task.items() if k and len(v) < k),
-        },
-        **(
-            {"sync_failed_files": doc["coverage"]["sync_failed_files"]}
-            if doc.get("coverage", {}).get("sync_failed_files")
-            else {}
-        ),
+        "tasks": _task_counts(by_task, k, expect_tasks),
+        **({"sync_failed_files": sync_failed} if sync_failed else {}),
         "accuracy": accuracy(by_task),
-        "disqualification": None
-        if not scanned
-        else {
-            "policy": f"rewarded trial with an unexcused finding >= {dq}, or run by another"
-            " model than the run's (critical)",
-            "candidates": len(dq_ids),
-            "candidate_ids": dq_ids,
-            "rate_pct": round(100.0 * len(dq_ids) / len(scored), 2) if scored else None,
-            "accuracy_if_disqualified": accuracy(disqualified) if dq_ids else None,
-            "rewarded_not_cleared": len(uncleared),
-            "rewarded_not_cleared_ids": uncleared,
-            "not_cleared_reasons": uncleared_reasons(
-                [i for i in items if i["input_id"] in not_cleared]
-            ),
-        },
+        "disqualification": _disqualification(items, dq, scored, dq_ids, uncleared)
+        if scanned
+        else None,
         "finding_index": finding_index(items) if scanned else None,
         "model_mismatch": models,
-        "cost": {
-            "total_usd": round(sum(c or 0 for c in costs), 2),
-            "per_trial_usd": round(sum(c or 0 for c in costs) / len(items), 4) if items else None,
-            "missing": sum(c is None for c in costs),
-            "tokens_without_cost": len(tokens_no_cost),
-            "tokens_without_cost_ids": tokens_no_cost,
-            "hub_job_total_usd": sum(r["cost_usd"] for r in runs if r.get("cost_usd")) or None,
-        },
-        "tokens": {
-            "uncached_input": uncached,
-            "cached_input": sum(i.get("cache_tokens") or 0 for i in items),
-            "output": sum(i.get("output_tokens") or 0 for i in items),
-        }
-        if has_tokens
-        else None,
+        "cost": _cost_totals(items, runs),
+        "tokens": _token_totals(items),
         "overrides": sorted(
             {o for r in runs for o in r.get("overrides") or []}
             | {o for i in items for o in i.get("overrides") or []}
@@ -946,13 +956,16 @@ def overview(
     }
 
 
+THOUSAND = 1e3  # each token unit (k, M, B) is a thousand of the one before
+
+
 def _m(value: int) -> str:
     """Token counts: 950, 12k, 3.4M, 1.25B. The unit is picked after rounding."""
-    if value < 1e3:
+    if value < THOUSAND:
         return str(value)
-    for scale, unit, digits in ((1e3, "k", ".0f"), (1e6, "M", ".1f")):
+    for scale, unit, digits in ((THOUSAND, "k", ".0f"), (1e6, "M", ".1f")):
         text = f"{value / scale:{digits}}"
-        if float(text) < 1e3:
+        if float(text) < THOUSAND:
             return text + unit
     return f"{value / 1e9:.2f}B"
 
@@ -961,8 +974,8 @@ def _ids(ids: list[str], limit: int = 5) -> str:
     return ", ".join(ids[:limit]) + (f", +{len(ids) - limit} more" if len(ids) > limit else "")
 
 
-def overview_text(ov: dict) -> list[str]:
-    lines = ["run overview"]
+def _overview_run_lines(ov: Doc) -> list[str]:
+    lines: list[str] = []
     if ov.get("sync_failed_files"):
         lines.append(
             f"  sync       {ov['sync_failed_files']} file(s) unavailable; report incomplete"
@@ -973,6 +986,10 @@ def overview_text(ov: dict) -> list[str]:
             f"  job        {r.get('job_name') or '?'} (harbor {r['job_id'][:8]})"
             + (f" · {', '.join(r['datasets'])}@{ref}" if r.get("datasets") else "")
         )
+    return lines
+
+
+def _overview_trials_line(ov: Doc) -> str:
     t = ov["trials"]
     parts = [f"{t['present']} present"]
     if t["planned"] is not None:
@@ -980,14 +997,8 @@ def overview_text(ov: dict) -> list[str]:
         parts.append(f"{t['missing']} missing")
         if t["present"] > t["planned"]:
             parts.append(f"{t['present'] - t['planned']} more than planned")
-    parts.append(
-        f"{t['errored']} errored"
-        + (
-            f" ({', '.join(f'{k} {v}' for k, v in t['error_types'].items())})"
-            if t["error_types"]
-            else ""
-        )
-    )
+    kinds = ", ".join(f"{k} {v}" for k, v in t["error_types"].items())
+    parts.append(f"{t['errored']} errored" + (f" ({kinds})" if t["error_types"] else ""))
     if ov["disqualification"] is not None:  # scanned
         parts.append(f"{t['without_trajectory']} without trajectory")
         parts.append(f"{t['incomplete_scans']} incomplete scans")
@@ -995,48 +1006,61 @@ def overview_text(ov: dict) -> list[str]:
             parts.append(f"{t['compacted']} with compacted history (scanned as partial)")
     if t["reward_unknown"]:
         parts.append(f"{t['reward_unknown']} reward unknown")
-    lines.append("  trials     " + " · ".join(parts))
+    return "  trials     " + " · ".join(parts)
+
+
+def _overview_task_lines(ov: Doc) -> list[str]:
     k = ov["tasks"]
-    if k["count"]:
-        line = (
-            f"  tasks      {k['count']} · trials/task min {k['min_trials']} "
-            f"median {k['median_trials']} max {k['max_trials']}"
-        )
-        for r in ov["runs"]:
-            if r.get("config_task_names"):
-                line += f" · job config lists {r['config_task_names']} tasks"
-        if k["expected_per_task"]:
-            line += f" · {len(k['below_expected'])} below {k['expected_per_task']}"
-        if k["expected_tasks"]:
-            line += f" · {k['missing_tasks']} of {k['expected_tasks']} expected tasks missing"
-        lines.append(line)
-    if ov["accuracy"]:
-        acc, se = ov["accuracy"]
+    if not k["count"]:
+        return []
+    line = (
+        f"  tasks      {k['count']} · trials/task min {k['min_trials']} "
+        f"median {k['median_trials']} max {k['max_trials']}"
+    )
+    for r in ov["runs"]:
+        if r.get("config_task_names"):
+            line += f" · job config lists {r['config_task_names']} tasks"
+    if k["expected_per_task"]:
+        line += f" · {len(k['below_expected'])} below {k['expected_per_task']}"
+    if k["expected_tasks"]:
+        line += f" · {k['missing_tasks']} of {k['expected_tasks']} expected tasks missing"
+    return [line]
+
+
+def _overview_accuracy_lines(ov: Doc) -> list[str]:
+    if not ov["accuracy"]:
+        return []
+    acc, se = ov["accuracy"]
+    return [
+        f"  accuracy   {acc:.1f}% ± {se:.1f} (successes / all trials; errored without a reward = 0)"
+    ]
+
+
+def _overview_dq_lines(d: Doc | None) -> list[str]:
+    if d is None or d["rate_pct"] is None:
+        return []
+    lines = [
+        f"  DQ         {d['candidates']} candidate(s) = {d['rate_pct']:.1f}% of trials"
+        f"  [{d['policy']}]"
+    ]
+    if d["accuracy_if_disqualified"]:
+        acc, se = d["accuracy_if_disqualified"]
+        noun = "success is" if d["candidates"] == 1 else "successes are"
         lines.append(
-            f"  accuracy   {acc:.1f}% ± {se:.1f}"
-            " (successes / all trials; errored without a reward = 0)"
+            f"  scenario   {acc:.1f}% ± {se:.1f} if {d['candidates']} flagged {noun}"
+            " zeroed (not a verdict)"
         )
-    d = ov["disqualification"]
-    if d is not None and d["rate_pct"] is not None:
-        line = f"  DQ         {d['candidates']} candidate(s) = {d['rate_pct']:.1f}% of trials"
-        lines.append(line + f"  [{d['policy']}]")
-        if d["accuracy_if_disqualified"]:
-            acc, se = d["accuracy_if_disqualified"]
-            noun = "success is" if d["candidates"] == 1 else "successes are"
-            lines.append(
-                f"  scenario   {acc:.1f}% ± {se:.1f} if {d['candidates']} flagged {noun}"
-                " zeroed (not a verdict)"
-            )
-        if d["candidate_ids"]:
-            lines.append(f"             {_ids(d['candidate_ids'])}")
-        if d["rewarded_not_cleared"]:
-            lines.append(
-                f"             +{d['rewarded_not_cleared']} rewarded trial(s) not fully scanned "
-                f"(can't be cleared): {_ids(d['rewarded_not_cleared_ids'], 3)}"
-            )
-    if ov.get("finding_index"):
-        lines.append(f"  index      {index_text(ov['finding_index'])}")
-    c = ov["cost"]
+    if d["candidate_ids"]:
+        lines.append(f"             {_ids(d['candidate_ids'])}")
+    if d["rewarded_not_cleared"]:
+        lines.append(
+            f"             +{d['rewarded_not_cleared']} rewarded trial(s) not fully scanned "
+            f"(can't be cleared): {_ids(d['rewarded_not_cleared_ids'], 3)}"
+        )
+    return lines
+
+
+def _overview_cost_line(c: Doc) -> str:
     line = f"  cost       ${c['total_usd']:,.2f}"
     if c["per_trial_usd"] is not None:
         line += f" · ${c['per_trial_usd']:.2f}/trial"
@@ -1045,9 +1069,13 @@ def overview_text(ov: dict) -> list[str]:
         line += f" · {c['tokens_without_cost']} with tokens but no cost"
     if c["hub_job_total_usd"] is not None:
         line += f" · Hub job total ${c['hub_job_total_usd']:,.2f}"
-    lines.append(line)
-    if ov["tokens"]:
-        tk = ov["tokens"]
+    return line
+
+
+def _overview_tail_lines(ov: Doc) -> list[str]:
+    """Tokens, overrides, and the DQ caveat."""
+    lines: list[str] = []
+    if tk := ov["tokens"]:
         lines.append(
             f"  tokens     uncached {_m(tk['uncached_input'])} · cached {_m(tk['cached_input'])}"
             f" · output {_m(tk['output'])}"
@@ -1061,3 +1089,17 @@ def overview_text(ov: dict) -> list[str]:
     if ov["disqualification"] is not None:
         lines.append("  DQ candidates are review candidates, not disqualifications.")
     return lines
+
+
+def overview_text(ov: Doc) -> list[str]:
+    return [
+        "run overview",
+        *_overview_run_lines(ov),
+        _overview_trials_line(ov),
+        *_overview_task_lines(ov),
+        *_overview_accuracy_lines(ov),
+        *_overview_dq_lines(ov["disqualification"]),
+        *([f"  index      {index_text(ov['finding_index'])}"] if ov.get("finding_index") else []),
+        _overview_cost_line(ov["cost"]),
+        *_overview_tail_lines(ov),
+    ]
