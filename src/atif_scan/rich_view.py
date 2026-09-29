@@ -106,7 +106,7 @@ def _print_item(console: Console, item: Doc) -> None:
     if table.row_count:
         console.print(table)
     _print_citations(console, item, group)
-    for line in _unresolved(item, group):
+    for line in _unresolved(item):
         console.print(Text(line, style="magenta"))
     if item["input_status"] == "available":
         console.print(Text(_tally(group), style="dim"))
