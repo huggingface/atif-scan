@@ -22,7 +22,17 @@ from collections.abc import Iterator, Mapping
 from datetime import datetime
 
 from .checks import identifier
-from .jsonval import JsonObject, count, load_object, number
+from .jsonval import (
+    Doc,
+    JsonObject,
+    as_list,
+    as_object,
+    as_str,
+    count,
+    is_object,
+    load_object,
+    number,
+)
 
 MAX_BYTES = 1024 * 1024
 # Leaderboard static rules: these settings must be unset (multipliers may be 1.0).
@@ -73,7 +83,7 @@ def text_label(value: object, limit: int = 200) -> str | None:
     return value[:limit]
 
 
-def duration(record: Mapping) -> float | None:
+def duration(record: Mapping[str, object]) -> float | None:
     """Seconds from `started_at` to `finished_at` (ISO timestamps), else None."""
     try:
         start = datetime.fromisoformat(str(record["started_at"]))
@@ -83,24 +93,31 @@ def duration(record: Mapping) -> float | None:
     return max((end - start).total_seconds(), 0.0)
 
 
-def dataset_source(entry: Mapping) -> tuple[str | None, str | None, bool | None]:
+# (name, ref, canonical) of a dataset, each None when unknown.
+DatasetSource = tuple[str | None, str | None, bool | None]
+UNKNOWN_DATASET: DatasetSource = (None, None, None)
+
+
+def dataset_source(entry: Mapping[str, object]) -> DatasetSource:
     """(name, ref, canonical) for a job config dataset: a registry name, or a git repo
     (`repo: https://github.com/OWNER/REPO.git@COMMIT`, `path: tasks`)."""
     name = entry.get("name")
     if isinstance(name, str) and name:
         if text_label(name) is None:
-            return None, None, None
+            return UNKNOWN_DATASET
         return name, text_label(entry.get("ref")), bool(CANONICAL_DATASETS.match(name))
-    repo = entry.get("repo")
-    if isinstance(repo, str):
-        m = GIT_REPO.match(repo.strip())
-        if m:
-            path = entry.get("path") if isinstance(entry.get("path"), str) else ""
-            label = m.group(1) + (f"/{path.strip('/')}" if path else "")
-            if text_label(label) != label:
-                return None, None, None
-            return label, m.group(2), bool(CANONICAL_DATASETS.match(m.group(1)))
-    return None, None, None
+    repo = as_str(entry.get("repo"))
+    match = GIT_REPO.match(repo.strip()) if repo is not None else None
+    return _git_dataset(match, entry) if match else UNKNOWN_DATASET
+
+
+def _git_dataset(match: re.Match[str], entry: Mapping[str, object]) -> DatasetSource:
+    repo = str(match.group(1))
+    path = as_str(entry.get("path")) or ""
+    label = repo + (f"/{path.strip('/')}" if path else "")
+    if text_label(label) != label:
+        return UNKNOWN_DATASET
+    return label, as_str(match.group(2)), bool(CANONICAL_DATASETS.match(repo))
 
 
 def overrides(config: object) -> list[str]:
@@ -134,20 +151,22 @@ def primary_reward(rewards: object) -> float | None:
         return number(rewards)
     if not isinstance(rewards, dict):
         return None
+    rewards = as_object(rewards)
     if "reward" in rewards:
         return number(rewards["reward"])
     values = [number(v) for v in rewards.values()]
     return values[0] if len(values) == 1 else None
 
 
-def trial_result(data: bytes | None) -> dict:
+def trial_result(data: bytes | None) -> Doc:
     """Allowlisted facts from a trial's result.json ({} when absent or unreadable)."""
     d = _json(data)
     if not d or not ({"trial_name", "task_name"} & set(d)):
         return {}  # not a trial result (e.g. a job-level result.json)
-    agent = d.get("agent_result") if isinstance(d.get("agent_result"), dict) else {}
-    verifier = d.get("verifier_result") if isinstance(d.get("verifier_result"), dict) else {}
-    exception = d.get("exception_info") if isinstance(d.get("exception_info"), dict) else None
+    agent = as_object(d.get("agent_result"))
+    verifier = as_object(d.get("verifier_result"))
+    exception = as_object(d.get("exception_info"))
+    attempt = as_str(d.get("id"))
     task = str(d.get("task_name") or "").rsplit("/", 1)[-1]
     meta = {
         "task": _label(task),
@@ -162,9 +181,7 @@ def trial_result(data: bytes | None) -> dict:
         "duration_sec": duration(d),
         # Harbor's trial id (a UUID): the key of harbor-hf's attempt-costs file. Used for
         # that lookup only, never reported.
-        "attempt_id": d["id"]
-        if isinstance(d.get("id"), str) and ATTEMPT_ID.fullmatch(d["id"])
-        else None,
+        "attempt_id": attempt if attempt and ATTEMPT_ID.fullmatch(attempt) else None,
     }
     return {k: v for k, v in meta.items() if v is not None}
 
@@ -174,7 +191,30 @@ LEDGER_BYTES = 16 * 1024 * 1024  # ~500 bytes per trial
 LEDGER_TRIAL = re.compile(r"[A-Za-z0-9][\w.-]{0,127}")
 
 
-def trial_ledger(data: bytes | None) -> dict[str, dict]:
+def _ledger_row(line: str) -> tuple[str, Doc] | None:
+    """(trial folder, allowlisted facts) from one ledger line; None when malformed."""
+    try:
+        row = as_object(json.loads(line))
+    except (ValueError, RecursionError):
+        return None
+    name = as_str(row.get("trial_name"))
+    if row.get("schema_version") != 1 or name is None or not LEDGER_TRIAL.fullmatch(name):
+        return None
+    error = row.get("error_type")
+    meta = {
+        "task": _label(str(row.get("task_name") or "").rsplit("/", 1)[-1]),
+        "reward": number(row.get("reward")),
+        "error_type": (_label(error) or "other") if error else None,
+        "cost_usd": number(row.get("cost_usd"), 0),
+        "input_tokens": count(row.get("input_tokens")),
+        "cache_tokens": count(row.get("cached_input_tokens")),
+        "output_tokens": count(row.get("output_tokens")),
+        "duration_sec": duration(row),
+    }
+    return name, {k: v for k, v in meta.items() if v is not None}
+
+
+def trial_ledger(data: bytes | None) -> dict[str, Doc]:
     """{trial folder: allowlisted facts} from a run's `trials.jsonl` ledger.
 
     One JSON object per trial (schema_version 1): `trial_name` (the trial folder),
@@ -185,36 +225,19 @@ def trial_ledger(data: bytes | None) -> dict[str, dict]:
     """
     if not data or len(data) > LEDGER_BYTES:
         return {}
-    found: dict[str, dict] = {}
-    repeated: set[str] = set()
     try:
         lines = data.decode("utf-8").splitlines()
     except UnicodeError:
         return {}
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except (ValueError, RecursionError):
+    found: dict[str, Doc] = {}
+    repeated: set[str] = set()
+    for parsed in map(_ledger_row, lines):
+        if parsed is None:
             continue
-        if not isinstance(row, dict) or row.get("schema_version") != 1:
-            continue
-        name = row.get("trial_name")
-        if not isinstance(name, str) or not LEDGER_TRIAL.fullmatch(name):
-            continue
+        name, facts = parsed
         if name in found:
             repeated.add(name)
-        error = row.get("error_type")
-        meta = {
-            "task": _label(str(row.get("task_name") or "").rsplit("/", 1)[-1]),
-            "reward": number(row.get("reward")),
-            "error_type": (_label(error) or "other") if error else None,
-            "cost_usd": number(row.get("cost_usd"), 0),
-            "input_tokens": count(row.get("input_tokens")),
-            "cache_tokens": count(row.get("cached_input_tokens")),
-            "output_tokens": count(row.get("output_tokens")),
-            "duration_sec": duration(row),
-        }
-        found[name] = {k: v for k, v in meta.items() if v is not None}
+        found[name] = facts
     return {k: v for k, v in found.items() if k not in repeated}
 
 
@@ -228,19 +251,20 @@ ATTEMPT_ID = re.compile(
 PRICE_KINDS = ("uncached_input", "cached_input", "output")
 
 
-def declared_prices(data: bytes | None) -> dict | None:
+def declared_prices(data: bytes | None) -> dict[str, float] | None:
     """{uncached_input, cached_input, output} $/M tokens a harbor-hf `run.json` declares
     (`pricing.{input,cached,output}_usd_per_million`), or None. `input` is the price of
     uncached input: cached tokens have their own rate. Only USD (or no currency) and
     finite, non-negative numbers; anything else is unknown, never a zero price."""
     d = _json(data) if data and len(data) <= RUN_MANIFEST_BYTES else {}
     pricing = d.get("pricing")
-    if not isinstance(pricing, dict) or pricing.get("currency", "USD") != "USD":
+    if not is_object(pricing) or pricing.get("currency", "USD") != "USD":
         return None
     rates = [number(pricing.get(f"{k}_usd_per_million"), 0) for k in ("input", "cached", "output")]
-    if any(r is None for r in rates):
+    known = [r for r in rates if r is not None]
+    if len(known) != len(PRICE_KINDS):
         return None
-    return dict(zip(PRICE_KINDS, rates, strict=True))
+    return dict(zip(PRICE_KINDS, known, strict=True))
 
 
 def attempt_cost(data: bytes | None, attempt_id: str, trial: str) -> float | None:
@@ -252,7 +276,7 @@ def attempt_cost(data: bytes | None, attempt_id: str, trial: str) -> float | Non
     return number(d.get("cost_usd"), 0)
 
 
-def configured_agents(cfg: dict) -> int | None:
+def configured_agents(cfg: Mapping[str, object]) -> int | None:
     """How many agent/model entries a job config plans (a comparison job runs several,
     so several models are expected rather than a substitution)."""
     agents = cfg.get("agents")
@@ -261,43 +285,39 @@ def configured_agents(cfg: dict) -> int | None:
     return len([a for a in agents if isinstance(a, dict)]) or None
 
 
+def _listed_names(ev: JsonObject) -> Iterator[str]:
+    """Trial names in one eval's `reward_stats` ({metric: {value: [names]}}) and
+    `exception_stats` ({exception type: [names]})."""
+    rewards = as_object(ev.get("reward_stats")).values()
+    groups = [v for by_value in rewards for v in as_object(by_value).values()]
+    groups += as_object(ev.get("exception_stats")).values()
+    for values in groups:
+        yield from (v for v in as_list(values) if isinstance(v, str) and v)
+
+
 def job_listed_trials(result: bytes | None) -> frozenset[str] | None:
     """Trial folder names the job's own result.json accounts for (its per-eval
     `reward_stats` and `exception_stats`), or None when that can't be trusted: no
     listing, or fewer names than the job says it completed. Unknown, never "none"."""
-    stats = _json(result).get("stats")
-    evals = stats.get("evals") if isinstance(stats, dict) else None
-    if not isinstance(evals, dict):
+    stats = as_object(_json(result).get("stats"))
+    evals = stats.get("evals")
+    if not is_object(evals):
         return None
-    names: set[str] = set()
-
-    def add(values: object) -> None:
-        if isinstance(values, list):
-            names.update(v for v in values if isinstance(v, str) and v)
-
-    for ev in evals.values():
-        if not isinstance(ev, dict):
-            continue
-        rewards, exceptions = ev.get("reward_stats"), ev.get("exception_stats")
-        for by_value in rewards.values() if isinstance(rewards, dict) else ():
-            for values in by_value.values() if isinstance(by_value, dict) else ():
-                add(values)
-        for values in exceptions.values() if isinstance(exceptions, dict) else ():
-            add(values)
+    names = {name for ev in evals.values() for name in _listed_names(as_object(ev))}
     completed = count(stats.get("n_completed_trials"))
     if not names or (completed is not None and len(names) < completed):
         return None
     return frozenset(names)
 
 
-def job_meta(config: bytes | None, result: bytes | None) -> dict | None:
+def job_meta(config: bytes | None, result: bytes | None) -> Doc | None:
     """Run facts from a Harbor job folder's config.json/result.json (None if not a job)."""
     cfg, res = _json(config), _json(result)
     if not cfg or not ({"datasets", "agents", "n_attempts"} & set(cfg)):
         return None
-    stats = res.get("stats") if isinstance(res.get("stats"), dict) else {}
-    datasets = [d for d in cfg.get("datasets") or [] if isinstance(d, dict)]
-    task_names = [n for d in datasets for n in (d.get("task_names") or [])]
+    stats = as_object(res.get("stats"))
+    datasets = [as_object(d) for d in as_list(cfg.get("datasets")) if is_object(d)]
+    task_names = [n for d in datasets for n in as_list(d.get("task_names"))]
     sources = [dataset_source(d) for d in datasets]
     completed = count(stats.get("n_completed_trials"))
     return {

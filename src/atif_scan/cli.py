@@ -9,9 +9,10 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import replace
+from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .access import access_rules
 from .brief import brief, brief_text, print_brief
@@ -19,8 +20,8 @@ from .cache import ResultCache, checks_signature
 from .checks import Context, Severity, Status, identifier
 from .cite import citations
 from .detectors import builtin_detectors
-from .detectors.integrity import output_ratio
 from .engine import Engine, effective_context
+from .facts import assemble, recorded_facts, run_facts, trace_facts, trial_reward, trial_task
 from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
 from .loader import TraceError
@@ -48,17 +49,49 @@ from .sources import (
     HF_PREFIX,
     Source,
     SourceError,
-    default_sync_root,
     file_source,
     list_input,
     normalize,
     resolve,
-    sync_remote,
-    sync_target,
 )
+from .sync import default_sync_root, sync_remote, sync_target
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from .checks import Detector
+    from .engine import Assessment
+    from .jsonval import Doc
+    from .model import Trace
+    from .rules import Allowance, Rule
+
+    Check = Detector | Rule | Allowance
+
+Record = tuple[Source, Context]
+# --price: $/M tokens for uncached input, cached input and output.
+PRICE_PARTS = 3
+PRICE_USAGE = "atif-scan: --price takes three numbers: U,C,O ($/M tokens)"
+# TraceError messages are fixed codes; anything else is reported as unreadable.
+ERROR_CODE = re.compile(r"[a-z_]{1,64}")
+MANIFEST_RECORD_KEYS = {"id", "path", "task", "partial", "reward"}
 
 
-def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
+def _manifest_record(raw: object, manifest: Path) -> Record:
+    if not isinstance(raw, dict) or set(raw) - MANIFEST_RECORD_KEYS:
+        raise ValueError("invalid_input_record")
+    if not {"id", "path"} <= set(raw) or not isinstance(raw["path"], str):
+        raise ValueError("invalid_input_record")
+    location = raw["path"]
+    if "://" not in location:
+        location = str(manifest.parent / location)
+    source = file_source(identifier(raw["id"]), location)
+    if "reward" in raw:
+        reward = Context(reward=raw["reward"]).reward  # validated number or None
+        source = Source(source.label, source.load, lambda: reward, local=source.local)
+    return source, Context(raw.get("task"), raw.get("partial", False))
+
+
+def manifest_inputs(path: Path) -> list[Record]:
     """Explicit file list: `{"inputs": [{"id", "path", "task"?, "partial"?}]}`.
 
     Local paths resolve relative to the manifest; `hf://` paths are used as given.
@@ -70,26 +103,14 @@ def manifest_inputs(path: Path) -> list[tuple[Source, Context]]:
         or not isinstance(value["inputs"], list)
     ):
         raise ValueError("invalid_input_manifest")
-    result = []
-    for raw in value["inputs"]:
-        if not isinstance(raw, dict) or set(raw) - {"id", "path", "task", "partial", "reward"}:
-            raise ValueError("invalid_input_record")
-        if not {"id", "path"} <= set(raw) or not isinstance(raw["path"], str):
-            raise ValueError("invalid_input_record")
-        location = raw["path"]
-        if "://" not in location:
-            location = str(path.parent / location)
-        source = file_source(identifier(raw["id"]), location)
-        if "reward" in raw:
-            reward = Context(reward=raw["reward"]).reward  # validated number or None
-            source = Source(
-                source.label, source.load, lambda reward=reward: reward, local=source.local
-            )
-        result.append((source, Context(raw.get("task"), raw.get("partial", False))))
-    return result
+    return [_manifest_record(raw, path) for raw in value["inputs"]]
 
 
-def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
+def _quiet(message: str) -> None:
+    pass
+
+
+def inputs(args: argparse.Namespace) -> list[Record]:
     args.sync_failures = []
     if args.manifest:
         if args.paths or args.task or args.task_from or args.partial:
@@ -110,7 +131,7 @@ def inputs(args: argparse.Namespace) -> list[tuple[Source, Context]]:
                 full=args.full,
                 workers=args.jobs,
                 refresh=args.refresh,
-                progress=status_line if sys.stderr.isatty() else lambda message: None,
+                progress=status_line if sys.stderr.isatty() else _quiet,
             )
             args.runs.append(run)
             found += hub
@@ -155,16 +176,9 @@ def sync_if_remote(value: str, args: argparse.Namespace) -> str:
     return str(path)
 
 
-def task_for(source: Source, args: argparse.Namespace) -> str | None:
-    """--task for every input, or (explicitly) derived from the trial folder name."""
-    if args.task:
-        return args.task
-    if source.meta.get("task"):
-        return str(source.meta["task"])  # recorded by the source (e.g. the Harbor Hub)
-    if args.task_from != "trial-dir":
-        return None
-    # Harbor trial folders are `<task>__<suffix>`. Job folders can contain `__` too
-    # (`2026-08-19__20-38-18`), so the part closest to the file wins.
+def folder_task(source: Source) -> str | None:
+    """The task in a Harbor trial folder name (`<task>__<suffix>`). Job folders can
+    contain `__` too (`2026-08-19__20-38-18`), so the part closest to the file wins."""
     for part in reversed(re.split(r"[\\/]", source.hint or source.label)):
         task, separator, _ = part.partition("__")
         if separator and task:
@@ -175,178 +189,42 @@ def task_for(source: Source, args: argparse.Namespace) -> str | None:
     return None
 
 
+def task_for(source: Source, args: argparse.Namespace) -> str | None:
+    """--task for every input, else the task its run listing recorded (e.g. the Harbor
+    Hub), else (explicitly, --task-from) derived from the trial folder name."""
+    inferred = folder_task(source) if args.task_from == "trial-dir" else None
+    return trial_task(args.task, source.meta, inferred)
+
+
 def price(value: str | None) -> tuple[float, float, float] | None:
     if not value:
         return None
     try:
         parts = tuple(float(p) for p in value.split(","))
     except ValueError:
-        raise SystemExit("atif-scan: --price takes three numbers: U,C,O ($/M tokens)") from None
-    if len(parts) != 3 or any(p < 0 for p in parts):
-        raise SystemExit("atif-scan: --price takes three numbers: U,C,O ($/M tokens)")
-    return parts
+        raise SystemExit(PRICE_USAGE) from None
+    if len(parts) != PRICE_PARTS or any(p < 0 for p in parts):
+        raise SystemExit(PRICE_USAGE)
+    uncached, cached, output = parts
+    return uncached, cached, output
 
 
-def trace_facts(trace) -> dict:
-    """Run facts derived from the trajectory alone (cacheable with its results)."""
-    if trace is None:
-        return dict.fromkeys(TRACE_FACTS)
-    ratio = output_ratio(trace)
-    usage = trace.usage
-    usage_basis = "final_metrics" if usage is not None else None
-    tokens = usage is not None and (usage.prompt_tokens, usage.completion_tokens) != (None, None)
-    steps_match = step_tokens_match(trace) if tokens else None
-    if not tokens and trace.step_usage is not None:
-        # No totals (e.g. the harness died before writing them): the steps' own usage.
-        usage = replace(trace.step_usage, cost_usd=usage.cost_usd if usage else None)
-        usage_basis = "steps_partial" if trace.calls_without_usage else "steps"
-    return {
-        "agent_name": trace.agent[0],
-        "agent_version": trace.agent[1],
-        "model_name": trace.agent[2],
-        # Agent steps per step-level model (at most 8, most used first): what actually ran.
-        "step_models": dict(sorted(trace.step_models.items(), key=lambda kv: -kv[1])[:8]) or None,
-        "llm_calls": trace.llm_calls or trace.agent_steps,
-        # A fixed code (Trace.reasoning_exposure): what the recorded reasoning covers.
-        "reasoning": trace.reasoning_exposure,
-        # A number and a fixed code only: authored characters per reported completion token.
-        "chars_per_output_token": round(ratio.value, 2) if ratio else None,
-        "output_ratio_basis": None
-        if ratio is None
-        else "answer_only"
-        if ratio.answer_only
-        else "all_text",
-        "usage": None
-        if usage is None
-        else {
-            "cost_usd": usage.cost_usd,
-            "input_tokens": usage.prompt_tokens,
-            "cache_tokens": usage.cached_tokens,
-            "output_tokens": usage.completion_tokens,
-        },
-        # A fixed code: where the trajectory's tokens come from (final_metrics totals, or
-        # summed step metrics, `steps_partial` when some agent steps recorded none).
-        "usage_basis": usage_basis,
-        "calls_without_usage": trace.calls_without_usage if usage_basis == "steps_partial" else 0,
-        "step_tokens_match": steps_match,
-    }
-
-
-def step_tokens_match(trace) -> bool | None:
-    """Do the trajectory's final_metrics token totals equal the sum of its steps' own
-    usage? None when they can't be compared like for like: no step usage, LLM calls
-    without usage, or compacted history (the steps cover only the last context)."""
-    totals, steps = trace.usage, trace.step_usage
-    if totals is None or steps is None or trace.calls_without_usage or trace.compacted:
-        return None
-    pairs = [
-        (a, b)
-        for a, b in (
-            (totals.prompt_tokens, steps.prompt_tokens),
-            (totals.completion_tokens, steps.completion_tokens),
-            (totals.cached_tokens, steps.cached_tokens),
-        )
-        if a is not None and b is not None
-    ]
-    return all(a == b for a, b in pairs) if pairs else None
-
-
-TRACE_FACTS = (
-    "agent_name",
-    "agent_version",
-    "model_name",
-    "step_models",
-    "llm_calls",
-    "reasoning",
-    "chars_per_output_token",
-    "output_ratio_basis",
-    "usage",
-    "usage_basis",
-    "calls_without_usage",
-    "step_tokens_match",
-)
-
-
-def run_facts(meta: dict, traced: dict) -> dict:
-    """Per-trial run facts: recorded metadata (Hub, Harbor result.json), else final_metrics.
-
-    `meta` is read fresh on every scan (never cached); `traced` is `trace_facts`."""
-    facts = {
-        "error_type": meta.get("error_type"),
-        "status": meta.get("status"),
-        "hub_trial_id": meta.get("hub_trial_id"),
-        # False: the job's own result.json doesn't list this trial (rerun/resume).
-        "in_job_result": meta.get("in_job_result"),
-        "duration_sec": meta.get("duration_sec"),
-        "overrides": meta.get("overrides") or [],
-        "cost_usd": meta.get("cost_usd"),
-        "input_tokens": meta.get("input_tokens"),
-        "cache_tokens": meta.get("cache_tokens"),
-        "output_tokens": meta.get("output_tokens"),
-        **{k: v for k, v in traced.items() if k not in ("usage", "usage_basis")},
-        # Fixed codes: where the tokens come from ("run" = the run's own records), and
-        # whether they agree with the trajectory's (None when there's nothing to compare).
-        "usage_basis": "run" if meta.get("input_tokens") is not None else traced.get("usage_basis"),
-        "tokens_match_trajectory": tokens_match(meta, traced),
-        # harbor-hf's attempt-costs record, when it and the trial's own record both
-        # have a cost (None otherwise): a cost recorded twice must agree.
-        "cost_records_agree": None,
-    }
-    if meta.get("input_tokens") is None and traced["usage"] is not None:
-        facts.update(traced["usage"])
-    elif meta.get("input_tokens") is None:
-        facts["usage_basis"] = None
-    beside = meta.get("attempt_cost_usd")
-    if beside is not None:
-        if facts["cost_usd"] is None:
-            facts["cost_usd"] = beside
-        else:
-            facts["cost_records_agree"] = abs(facts["cost_usd"] - beside) <= max(
-                0.01, 0.01 * max(facts["cost_usd"], beside)
-            )
-    return facts
-
-
-def tokens_match(meta: dict, traced: dict) -> bool | None:
-    """Do the run's recorded token totals (result.json, Hub, ledger) equal the
-    trajectory's final_metrics totals? None unless both are complete totals."""
-    usage = traced.get("usage")
-    if (
-        meta.get("input_tokens") is None
-        or usage is None
-        or traced.get("usage_basis") not in ("final_metrics", "steps")
-    ):
-        return None
-    pairs = [(meta.get(k), usage.get(k)) for k in ("input_tokens", "cache_tokens", "output_tokens")]
-    pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
-    return all(a == b for a, b in pairs) if pairs else None
-
-
-# Trace-derived item fields reported after the run facts (the JSON layout's order).
-TAIL = ("partial", "agent_steps", "tool_calls", "unrecognized_tool_calls")
-
-
-def assemble(scanned: dict, facts: dict) -> dict:
-    """The report item: cacheable scan results with fresh run facts in their place."""
-    head = {k: v for k, v in scanned.items() if k not in TAIL}
-    return {**head, **facts, **{k: scanned[k] for k in TAIL}}
-
-
-def outcome(item: dict, threshold: Severity | None) -> tuple[bool, bool]:
+def outcome(item: Doc, threshold: Severity | None) -> tuple[bool, bool]:
     """(invalid, failed) for one report item. A Hub trial without a trajectory (e.g. it
     errored first) is a reported run fact, not bad input; unreadable files exit 2."""
-    invalid = any(a["status"] == Status.ERROR for a in item["assessments"]) or (
+    assessments = item["assessments"]
+    invalid = any(a["status"] == Status.ERROR for a in assessments) or (
         item["input_status"] != "available"
         and item.get("input_error") != "no_trajectory_downloaded"
     )
     failed = threshold is not None and any(
-        a.get("score") is not None and a["score"] >= int(threshold) for a in item["assessments"]
+        a.get("score") is not None and a["score"] >= int(threshold) for a in assessments
     )
-    return invalid, failed
+    return bool(invalid), bool(failed)
 
 
-def load_checks(args: argparse.Namespace, records: list | None = None) -> list:
-    checks = [*builtin_detectors(), *access_rules()]
+def load_checks(args: argparse.Namespace, records: list[Record] | None = None) -> list[Check]:
+    checks: list[Check] = [*builtin_detectors(), *access_rules()]
     args.packs_loaded = []
     if args.packs == "auto" and records is not None:
         # The recorded task (Hub, result.json) when it wasn't given: small capped reads,
@@ -371,7 +249,7 @@ def load_checks(args: argparse.Namespace, records: list | None = None) -> list:
     return checks
 
 
-def _brief(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+def _brief(doc: Doc, args: argparse.Namespace, fmt: str) -> None:
     report_ = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
     if fmt == "json":
         print(to_json(report_))
@@ -379,17 +257,17 @@ def _brief(doc: dict, args: argparse.Namespace, fmt: str) -> None:
         print_brief(brief_text(report_))
 
 
-def _scorecard(doc: dict, args: argparse.Namespace) -> dict:
+def _scorecard(doc: Doc, args: argparse.Namespace) -> Doc:
     return overview(doc, args.dq_on, args.min_trials, expect_tasks=args.expect_tasks)
 
 
-def _overview(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+def _overview(doc: Doc, args: argparse.Namespace, fmt: str) -> None:
     scorecard = _scorecard(doc, args)
     out = {"kind": "overview", "scanner_version": doc["scanner_version"], **scorecard}
     print(to_json(out) if fmt == "json" else "\n".join(overview_text(scorecard)))
 
 
-def _summary(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+def _summary(doc: Doc, args: argparse.Namespace, fmt: str) -> None:
     shown = filter_findings(doc, Severity[args.cite.upper()]) if args.cite else doc
     rolled = dict(
         summary(shown),
@@ -402,7 +280,7 @@ def _summary(doc: dict, args: argparse.Namespace, fmt: str) -> None:
         print()
 
 
-def _detail(doc: dict, args: argparse.Namespace, fmt: str) -> None:
+def _detail(doc: Doc, args: argparse.Namespace, fmt: str) -> None:
     if args.cite:
         doc = filter_findings(doc, Severity[args.cite.upper()], hide_empty=True)
     if fmt == "json":
@@ -417,10 +295,15 @@ def _detail(doc: dict, args: argparse.Namespace, fmt: str) -> None:
 VIEWS = {"brief": _brief, "overview": _overview, "summary": _summary, "detail": _detail}
 
 
-def emit(doc: dict, args: argparse.Namespace) -> None:
-    fmt = args.format
-    if fmt == "auto":
-        fmt = "text" if sys.stdout.isatty() else "json"
+def output_format(args: argparse.Namespace) -> str:
+    """--format, with auto resolved: text on a terminal, JSON when piped."""
+    if args.format == "auto":
+        return "text" if sys.stdout.isatty() else "json"
+    return str(args.format)
+
+
+def emit(doc: Doc, args: argparse.Namespace) -> None:
+    fmt = output_format(args)
     view = args.view
     if view is None:
         # Default: the brief for a run's text view (unless citing), else the detail.
@@ -431,6 +314,24 @@ def emit(doc: dict, args: argparse.Namespace) -> None:
             else "detail"
         )
     VIEWS[view](doc, args, fmt)
+
+
+def _harbor_cards(args: argparse.Namespace, jobs: list[Doc]) -> list[Doc]:
+    """Scorecards for Harbor Hub jobs from their listings only: nothing is downloaded."""
+    cards = []
+    for job in jobs:
+        items = [
+            dict(t, input_status="listed", incomplete=False, assessments=[]) for t in job["trials"]
+        ]
+        cards.append(
+            overview(
+                {"inputs": items, "runs": [job["run"]]},
+                min_trials=args.min_trials,
+                scanned=False,
+                expect_tasks=args.expect_tasks,
+            )
+        )
+    return cards
 
 
 def inspect(args: argparse.Namespace) -> int:
@@ -444,25 +345,10 @@ def inspect(args: argparse.Namespace) -> int:
     except SourceError as error:
         print(f"atif-scan: {error}", file=sys.stderr)
         return 2
-    cards = []
-    for job in jobs:  # listing only: no trajectory is downloaded
-        items = [
-            dict(t, input_status="listed", incomplete=False, assessments=[]) for t in job["trials"]
-        ]
-        cards.append(
-            overview(
-                {"inputs": items, "runs": [job["run"]]},
-                min_trials=args.min_trials,
-                scanned=False,
-                expect_tasks=args.expect_tasks,
-            )
-        )
+    cards = _harbor_cards(args, jobs)
     if cards:
         doc["harbor_jobs"] = cards
-    fmt = args.format
-    if fmt == "auto":
-        fmt = "text" if sys.stdout.isatty() else "json"
-    if fmt == "json":
+    if output_format(args) == "json":
         print(to_json(doc))
     else:
         text = inspection_text(doc) if local else ""
@@ -472,8 +358,7 @@ def inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def _input_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "paths",
         nargs="*",
@@ -526,6 +411,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--partial", action="store_true", help="live/incomplete trace; negatives unknown"
     )
+
+
+def _check_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--rules",
         type=Path,
@@ -547,6 +435,9 @@ def main(argv: list[str] | None = None) -> int:
         metavar="MODULE:FACTORY",
         help="explicitly trust/import a Python factory returning detectors/rules/allowances",
     )
+
+
+def _output_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--format",
         choices=["auto", "json", "text"],
@@ -589,6 +480,9 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         help="tasks the dataset should cover (e.g. 89 for Terminal-Bench 2.1)",
     )
+
+
+def _review_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--judge-prompts",
         "--judge",
@@ -640,26 +534,46 @@ def main(argv: list[str] | None = None) -> int:
         choices=[s.name.lower() for s in Severity],
         help="exit 1 for an unexcused finding at/above this review severity",
     )
-    args = parser.parse_args(argv)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    _input_arguments(parser)
+    _check_arguments(parser)
+    _output_arguments(parser)
+    _review_arguments(parser)
+    return parser
+
+
+def _check_review_dir(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """--judge-prompts needs durable local traces and a new or empty directory."""
+    if args.questions or args.answers or args.inspect:
+        parser.error("--judge-prompts cannot be combined with --questions, --answers or --inspect")
+    if not args.sync:
+        parser.error("--judge-prompts requires durable local traces; omit --no-sync")
+    directory = Path(args.judge_prompts)
+    try:
+        if directory.is_symlink() or (
+            directory.exists() and (not directory.is_dir() or any(directory.iterdir()))
+        ):
+            parser.error("--judge-prompts requires a new or empty directory")
+    except OSError:
+        parser.error("review directory unavailable (details withheld)")
+
+
+def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.judge_scope and not args.judge_prompts:
         parser.error("--judge-scope requires --judge-prompts DIR")
     if args.judge_prompts:
-        if args.questions or args.answers or args.inspect:
-            parser.error(
-                "--judge-prompts cannot be combined with --questions, --answers or --inspect"
-            )
-        if not args.sync:
-            parser.error("--judge-prompts requires durable local traces; omit --no-sync")
-        try:
-            if args.judge_prompts.is_symlink() or (
-                args.judge_prompts.exists()
-                and (not args.judge_prompts.is_dir() or any(args.judge_prompts.iterdir()))
-            ):
-                parser.error("--judge-prompts requires a new or empty directory")
-        except OSError:
-            parser.error("review directory unavailable (details withheld)")
+        _check_review_dir(parser, args)
     if args.cite and (args.view in ("brief", "overview") or args.inspect):
         parser.error("--cite requires detail or summary output, not brief/overview/inspect")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    _check_combinations(parser, args)
     args.price_rates = price(args.price)  # validate early, whatever the output format
     if args.inspect:
         return inspect(args)
@@ -671,6 +585,161 @@ def main(argv: list[str] | None = None) -> int:
         return scan(args)
 
 
+def _load(source: Source) -> tuple[Trace | None, str | None]:
+    """(trace, None), or (None, a fixed error code) when it can't be loaded."""
+    try:
+        return source.load(), None
+    except TraceError as exc:
+        # TraceError carries fixed codes only (e.g. trace_too_large); re-check anyway.
+        code = str(exc)
+        return None, code if ERROR_CODE.fullmatch(code) else "unreadable_trace"
+
+
+def scanned_item(
+    source: Source,
+    trace: Trace | None,
+    error: str | None,
+    context: Context,
+    assessments: tuple[Assessment, ...],
+) -> Doc:
+    """The cacheable, trace-derived part of a report item (no run facts, no trace text)."""
+    scanned = report(assessments, trace.step_numbers if trace is not None else None)
+    scanned.update(
+        input_id=source.label,
+        input_status="available" if trace is not None else "unavailable_or_invalid",
+        input_error=error,
+        compacted=bool(trace is not None and trace.compacted),
+        task=context.task,
+        reward=context.reward,
+        partial=context.partial,
+        agent_steps=trace.agent_steps if trace is not None else None,
+        # Counts only: tool names and arguments never enter the report.
+        tool_calls=trace.tool_calls if trace is not None else None,
+        unrecognized_tool_calls=trace.unrecognized_tool_calls if trace is not None else None,
+    )
+    return scanned
+
+
+@dataclass
+class Scanner:
+    """Scans one input at a time into a report item: cached trace results where the
+    cache allows, run facts always read fresh (see `facts`)."""
+
+    engine: Engine
+    task: str | None  # --task, which beats any recorded task
+    cache: ResultCache | None = None
+    writer: Writer | None = None
+    answers: Answers | None = None
+    cite: Severity | None = None
+
+    @classmethod
+    def for_args(cls, args: argparse.Namespace, engine: Engine) -> Scanner:
+        writer = Writer(args.questions, args.question) if args.questions else None
+        answers = Answers.load(args.answers) if args.answers else None
+        cite = Severity[args.cite.upper()] if args.cite else None
+        cache = None
+        # Citations and questions carry trace text, and answers need the trace: never cached.
+        if not (args.no_cache or cite or args.judge_prompts or writer or answers):
+            directory = args.cache or args.sync_root / "results"
+            cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
+        return cls(engine, args.task, cache, writer, answers, cite)
+
+    def item(self, source: Source, context: Context) -> Doc:
+        listed, result = source.meta, source.details()
+        recorded = recorded_facts(listed, result)
+        context = Context(
+            trial_task(self.task, recorded, context.task),
+            context.partial,
+            trial_reward(source.reward(), listed, result),
+        )
+        fingerprint = source.fingerprint() if self.cache is not None else None
+        key = self.cache.key(fingerprint, context) if self.cache and fingerprint else None
+        cached = self.cache.get(key) if self.cache and key else None
+        if cached is not None and cached.get("input_id") == source.label:
+            return assemble(cached["scan"], run_facts(recorded, cached["trace_facts"]))
+        return self._scan(source, context, recorded, key)
+
+    def _scan(
+        self, source: Source, context: Context, recorded: Mapping[str, object], key: str | None
+    ) -> Doc:
+        trace, error = _load(source)
+        # Reported as partial when part of the session isn't recorded (Engine applies
+        # the same rule itself).
+        context = effective_context(trace, context)
+        assessments = self.engine.evaluate(trace, context)
+        scanned = scanned_item(source, trace, error, context, assessments)
+        traced = trace_facts(trace)
+        if self.cache is not None and key is not None:
+            # Only trace-derived data: result.json / Hub facts are merged fresh.
+            self.cache.put(key, {"input_id": source.label, "scan": scanned, "trace_facts": traced})
+        item = assemble(scanned, run_facts(recorded, traced))
+        if self.writer is not None and trace is not None:
+            self.writer.add(trace, assessments, context, source.label, source.local)
+        if self.answers is not None:
+            item["answers"] = self.answers.annotate(source.label, trace)
+        if self.cite is not None and trace is not None:
+            # Opt-in trace text; the only report field that isn't allowlisted metadata.
+            item["citations"] = citations(trace, assessments, self.cite)
+        return item
+
+    def close(self) -> None:
+        if self.writer is not None:
+            self.writer.close()
+            print(
+                f"atif-scan: {self.writer.count} question(s) written (prompts contain masked "
+                "trace text; keep them out of Git)",
+                file=sys.stderr,
+            )
+
+
+def _scan_all(
+    scanner: Scanner, records: list[Record], threshold: Severity | None
+) -> tuple[list[Doc], bool, bool]:
+    """(report items, any invalid input, any finding at/above `threshold`)."""
+    output = []
+    invalid = failed = False
+    progress = sys.stderr.isatty() and len(records) > 1
+    for number, (source, context) in enumerate(records, 1):
+        if progress:
+            status_line(f"scanning {number}/{len(records)}")
+        item = scanner.item(source, context)
+        output.append(item)
+        bad, fail = outcome(item, threshold)
+        invalid, failed = invalid or bad, failed or fail
+    if progress:
+        print("\r\033[K", end="", file=sys.stderr)
+    return output, invalid, failed
+
+
+def _document(output: list[Doc], args: argparse.Namespace, sync_failed: int) -> Doc:
+    doc = document(output, version("atif-scan"))
+    if sync_failed:
+        doc["coverage"]["sync_failed_files"] = sync_failed
+    if args.runs:
+        doc["runs"] = args.runs
+    if args.packs_loaded:
+        doc["packs"] = args.packs_loaded
+    return doc
+
+
+def _review(doc: Doc, args: argparse.Namespace, records: list[Record], engine: Engine) -> bool:
+    """Write the --judge-prompts bundle into the report; False when it failed."""
+    try:
+        doc["review"] = write_review(
+            args.judge_prompts,
+            doc,
+            records,
+            engine,
+            args.dq_on,
+            args.judge_scope or "dq-candidates",
+            args.question,
+        )
+    except (OSError, ValueError):
+        print("atif-scan: review bundle failed (details withheld)", file=sys.stderr)
+        return False
+    return True
+
+
 def scan(args: argparse.Namespace) -> int:
     try:
         records = inputs(args)
@@ -679,125 +748,27 @@ def scan(args: argparse.Namespace) -> int:
         # Fixed codes only (e.g. a missing optional extra); never paths or remote messages.
         print(f"atif-scan: {error}", file=sys.stderr)
         return 2
-    except Exception:
+    except Exception:  # noqa: BLE001 - policies and plugins can raise anything; withheld
         print(
             "atif-scan: invalid input, policy or plugin configuration (details withheld)",
             file=sys.stderr,
         )
         return 2
-    output = []
     sync_failed = sum(getattr(args, "sync_failures", []))
     if sync_failed:
         print(
             f"atif-scan: {sync_failed} sync file(s) unavailable; report incomplete",
             file=sys.stderr,
         )
-    invalid, failed = bool(sync_failed), False
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
-    cache = None
-    writer = Writer(args.questions, args.question) if args.questions else None
-    answers = Answers.load(args.answers) if args.answers else None
-    # Citations and questions carry trace text, and answers need the trace: never cached.
-    if (
-        not args.no_cache
-        and not args.cite
-        and not args.judge_prompts
-        and writer is None
-        and answers is None
-    ):
-        directory = args.cache or args.sync_root / "results"
-        cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
-    progress = sys.stderr.isatty() and len(records) > 1
-    for number, (source, context) in enumerate(records, 1):
-        if progress:
-            status_line(f"scanning {number}/{len(records)}")
-        # Recorded run facts (Hub listing, Harbor result.json) beat folder-name inference.
-        meta = {**source.meta, **source.details()}
-        task = context.task if args.task else (meta.get("task") or context.task)
-        reward = source.reward()
-        context = Context(
-            task, context.partial, reward if reward is not None else meta.get("reward")
-        )
-        fingerprint = source.fingerprint() if cache is not None else None
-        key = cache.key(fingerprint, context) if fingerprint else None
-        cached = cache.get(key) if key else None
-        if cached is not None and cached.get("input_id") == source.label:
-            item = assemble(cached["scan"], run_facts(meta, cached["trace_facts"]))
-        else:
-            error = None
-            try:
-                trace = source.load()
-            except TraceError as exc:
-                trace = None
-                # TraceError carries fixed codes only (e.g. trace_too_large); re-check anyway.
-                error = str(exc) if re.fullmatch(r"[a-z_]{1,64}", str(exc)) else "unreadable_trace"
-            # Reported as partial when part of the session isn't recorded (Engine applies
-            # the same rule itself).
-            context = effective_context(trace, context)
-            assessments = engine.evaluate(trace, context)
-            scanned = report(assessments, trace.step_numbers if trace is not None else None)
-            scanned.update(
-                input_id=source.label,
-                input_status="available" if trace is not None else "unavailable_or_invalid",
-                input_error=error,
-                compacted=bool(trace is not None and trace.compacted),
-                task=context.task,
-                reward=context.reward,
-                partial=context.partial,
-                agent_steps=trace.agent_steps if trace is not None else None,
-                # Counts only: tool names and arguments never enter the report.
-                tool_calls=trace.tool_calls if trace is not None else None,
-                unrecognized_tool_calls=trace.unrecognized_tool_calls
-                if trace is not None
-                else None,
-            )
-            traced = trace_facts(trace)
-            if key is not None:
-                # Only trace-derived data: result.json / Hub facts are merged fresh.
-                cache.put(key, {"input_id": source.label, "scan": scanned, "trace_facts": traced})
-            item = assemble(scanned, run_facts(meta, traced))
-            if writer is not None and trace is not None:
-                writer.add(trace, assessments, context, source.label, source.local)
-            if answers is not None:
-                item["answers"] = answers.annotate(source.label, trace)
-            if args.cite and trace is not None:
-                # Opt-in trace text; the only report field that isn't allowlisted metadata.
-                item["citations"] = citations(trace, assessments, Severity[args.cite.upper()])
-        output.append(item)
-        bad, fail = outcome(item, threshold)
-        invalid, failed = invalid or bad, failed or fail
-    if progress:
-        print("\r\033[K", end="", file=sys.stderr)
-    if writer is not None:
-        writer.close()
-        print(
-            f"atif-scan: {writer.count} question(s) written (prompts contain masked trace "
-            "text; keep them out of Git)",
-            file=sys.stderr,
-        )
-    doc = document(output, version("atif-scan"))
-    if sync_failed:
-        doc["coverage"]["sync_failed_files"] = sync_failed
-    if args.runs:
-        doc["runs"] = args.runs
-    if args.packs_loaded:
-        doc["packs"] = args.packs_loaded
-    if args.judge_prompts:
-        try:
-            doc["review"] = write_review(
-                args.judge_prompts,
-                doc,
-                records,
-                engine,
-                args.dq_on,
-                args.judge_scope or "dq-candidates",
-                args.question,
-            )
-        except (OSError, ValueError):
-            print("atif-scan: review bundle failed (details withheld)", file=sys.stderr)
-            return 2
+    scanner = Scanner.for_args(args, engine)
+    output, invalid, failed = _scan_all(scanner, records, threshold)
+    scanner.close()
+    doc = _document(output, args, sync_failed)
+    if args.judge_prompts and not _review(doc, args, records, engine):
+        return 2
     emit(doc, args)
-    return 2 if invalid else 1 if failed else 0
+    return 2 if invalid or sync_failed else 1 if failed else 0
 
 
 if __name__ == "__main__":

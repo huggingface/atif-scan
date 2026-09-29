@@ -23,7 +23,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from atif_scan.sources import default_sync_root
+from atif_scan.sync import default_sync_root
 
 PLUGINS = [
     "--plugin",

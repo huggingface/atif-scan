@@ -9,10 +9,11 @@ from pathlib import Path
 import pytest
 from test_sync import FS, ROOT, job_files, trajectory
 
-from atif_scan import sources
+from atif_scan import sources, sync
 from atif_scan.cli import main
 from atif_scan.loader import TraceError
-from atif_scan.sources import SourceError, resolve, sync_remote
+from atif_scan.sources import SourceError, resolve
+from atif_scan.sync import sync_remote
 
 
 class FailingFS(FS):
@@ -165,7 +166,7 @@ def test_all_downloads_fail_and_single_file_failure_still_report(monkeypatch, ca
 
 
 def test_oversize_trace_stays_in_population(tmp_path, monkeypatch):
-    monkeypatch.setattr(sources, "MAX_BYTES", 8)
+    monkeypatch.setattr(sync, "MAX_BYTES", 8)
     fs = FS({f"{ROOT}/a/trajectory.json": b"x" * 9})
     _, counts = sync_remote(f"hf://{ROOT}", tmp_path, fs=fs)
     assert counts["failed"] == 1 and not fs.downloads
@@ -316,7 +317,7 @@ def test_interrupted_sync_leaves_inventory_unknown_not_cached(monkeypatch, capsy
         row["failed"] = True
         row["stamp"] = None
     # The conservative inventory published before downloading, with old files still present.
-    sources.write_sync_state(dest, state["files"], None)
+    sync.write_sync_state(dest, state["files"], None)
     assert main([str(dest), "--format", "json"]) == 2
     doc = json.loads(capsys.readouterr().out)
     assert doc["coverage"]["available"] == 0

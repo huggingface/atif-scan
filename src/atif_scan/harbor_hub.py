@@ -17,6 +17,7 @@ the CLI keeps the user's login and Harbor version, and relies only on its public
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -25,8 +26,8 @@ import subprocess
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .checks import identifier
 from .harbor_files import (
@@ -37,9 +38,16 @@ from .harbor_files import (
     overrides,
     text_label,
 )
-from .jsonval import count, number
+from .jsonval import Doc, JsonObject, as_list, as_object, count, is_object, number
 from .loader import TraceError, load_trace
-from .sources import Source, SourceError, local_fingerprint, private_directory, private_tree
+from .sources import Source, SourceError, local_fingerprint
+from .sync import private_directory, private_tree
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from .model import Trace
 
 UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 JOB = re.compile(
@@ -80,12 +88,12 @@ def job_id(value: str) -> str:
     match = JOB.match(value)
     if match is None:
         raise SourceError("invalid_harbor_reference: expected " + ACCEPTED)
-    return match.group(1).lower()
+    return str(match.group(1)).lower()
 
 
 def row_id(value: str) -> str | None:
     match = ROW.match(value)
-    return match.group(1).lower() if match else None
+    return str(match.group(1)).lower() if match else None
 
 
 def reference(value: str) -> tuple[str, str]:
@@ -108,8 +116,10 @@ class HarborCLI:
 
     def run(self, *args: str) -> str:
         try:
-            done = subprocess.run(
+            # No shell; fixed subcommands plus validated UUIDs and our own folder paths.
+            done = subprocess.run(  # noqa: S603 - arguments are fixed or validated
                 [self.exe, *args],
+                check=False,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 encoding="utf-8",
@@ -130,34 +140,50 @@ class HarborCLI:
             raise SourceError("harbor_returned_invalid_json") from None
 
 
-def _pages(cli: HarborCLI, *args: str) -> Iterator[tuple[int, int, Mapping]]:
+def _object(value: object) -> JsonObject:
+    """A `--json` output that must be an object."""
+    if not is_object(value):
+        raise SourceError("harbor_returned_invalid_json")
+    return value
+
+
+def _pages(cli: HarborCLI, *args: str) -> Iterator[tuple[int, int, JsonObject]]:
     """(page, total_pages, data) for a paged `--json` listing, at most MAX_PAGES."""
     for page in range(1, MAX_PAGES + 1):
-        data = cli.json(*args, "--limit", str(PAGE_SIZE), "--page", str(page))
-        if not isinstance(data, Mapping):
-            raise SourceError("harbor_returned_invalid_json")
-        pages = data.get("total_pages")
-        pages = pages if type(pages) is int and pages > 0 else 1
+        data = _object(cli.json(*args, "--limit", str(PAGE_SIZE), "--page", str(page)))
+        pages = count(data.get("total_pages")) or 1
         yield page, pages, data
         if page >= pages:
             return
 
 
-def valid_row(row: Mapping) -> bool:
+def valid_row(row: Mapping[str, object]) -> bool:
     """A trial row whose ID is safe to pass to the CLI (see TRIAL_ID)."""
     return bool(TRIAL_ID.fullmatch(str(row.get("id") or "")))
 
 
-def trial_meta(row: Mapping) -> dict:
+def _checked(value: str | None) -> str | None:
+    """The value if it's a valid identifier (see checks.identifier), else None."""
+    if value is None:
+        return None
+    try:
+        identifier(value)
+    except ValueError:
+        return None
+    return value
+
+
+def trial_meta(row: Mapping[str, object]) -> Doc:
     """Allowlisted per-trial facts from the Hub listing (numbers, codes, identifiers)."""
     task = str(row.get("task_name") or "").rsplit("/", 1)[-1] or None
     error = row.get("error_type")
-    meta = {
-        "hub_trial_id": str(row.get("id") or "") or None,
-        "task": task,
+    return {
+        "hub_trial_id": _checked(str(row.get("id") or "") or None),
+        "task": _checked(task),
         "reward": number(row.get("reward")),
-        "error_type": str(error) if error else None,
-        "status": str(row.get("status") or "") or None,
+        # An error that isn't a plain code is still an error.
+        "error_type": (_checked(str(error)) or "other") if error else None,
+        "status": _checked(str(row.get("status") or "") or None),
         "cost_usd": number(row.get("cost_usd"), 0),
         "input_tokens": count(row.get("input_tokens")),
         "cache_tokens": count(row.get("cache_tokens")),
@@ -165,19 +191,16 @@ def trial_meta(row: Mapping) -> dict:
         "duration_sec": duration(row),
         "overrides": overrides(row.get("config_values") or {}),
     }
-    for key in ("task", "error_type", "status", "hub_trial_id"):
-        if meta[key] is not None:
-            try:
-                identifier(meta[key])
-            except ValueError:
-                meta[key] = None if key != "error_type" else "other"
-    return meta
 
 
-def run_meta(job: str, show: Mapping, rows: list[Mapping]) -> dict:
-    config = show.get("config") if isinstance(show.get("config"), Mapping) else {}
-    datasets = [d for d in config.get("datasets") or [] if isinstance(d, Mapping)]
-    task_names = [n for d in datasets for n in (d.get("task_names") or [])]
+def _datasets(config: JsonObject) -> list[JsonObject]:
+    return [as_object(d) for d in as_list(config.get("datasets")) if is_object(d)]
+
+
+def run_meta(job: str, show: Mapping[str, object], rows: Sequence[Mapping[str, object]]) -> Doc:
+    config = as_object(show.get("config"))
+    datasets = _datasets(config)
+    task_names = [n for d in datasets for n in as_list(d.get("task_names"))]
     return {
         "source": "harbor_hub",
         "job_id": job,
@@ -191,7 +214,7 @@ def run_meta(job: str, show: Mapping, rows: list[Mapping]) -> dict:
         "dataset_refs": [r for d in datasets if (r := text_label(d.get("ref")))],
         "config_task_names": len(task_names) or None,
         "n_attempts": count(config.get("n_attempts")),
-        "configured_agents": configured_agents(dict(config)),
+        "configured_agents": configured_agents(config),
         "cost_usd": number(show.get("cost_usd"), 0),
         "overrides": overrides(config),
     }
@@ -203,20 +226,18 @@ def listing(
     progress: Progress = _quiet,
     label: str = "job",
     want: set[str] | None = None,
-    shows: dict[str, Mapping] | None = None,
-) -> tuple[dict, list[dict]]:
+    shows: dict[str, JsonObject] | None = None,
+) -> tuple[Doc, list[JsonObject]]:
     """Run facts and trial rows of one job. With `want` (a leaderboard row's trials),
     paging stops once every wanted trial has been listed: a row often holds one agent's
     share of a multi-agent job, so the rest of the job isn't needed. `shows` collects the
     raw `hub job show` record per job (for save_listing)."""
     progress(f"listing {label}")
-    show = cli.json("hub", "job", "show", job)
-    if not isinstance(show, Mapping):
-        raise SourceError("harbor_returned_invalid_json")
-    rows: dict[str, dict] = {}
+    show = _object(cli.json("hub", "job", "show", job))
+    rows: dict[str, JsonObject] = {}
     for page, pages, data in _pages(cli, "hub", "job", "trials", job):
-        for row in data.get("items") or []:
-            if isinstance(row, Mapping) and row.get("id"):
+        for row in as_list(data.get("items")):
+            if is_object(row) and row.get("id"):
                 rows[str(row["id"])] = dict(row)
         progress(f"listing {label} trials · page {page}/{pages} · {len(rows)} trials")
         if want is not None and want <= rows.keys():
@@ -254,15 +275,15 @@ SHOW_KEYS = (
 )
 
 
-def _override_values(config: object) -> dict:
+def _override_values(config: object) -> JsonObject:
     """Only the override settings `overrides()` looks at: configs can hold env and keys."""
     return {path: value for path, value in _flatten(config) if OVERRIDE.search(path)}
 
 
-def _reduced(show: Mapping, rows: list[Mapping]) -> dict:
+def _reduced(show: Mapping[str, object], rows: Sequence[Mapping[str, object]]) -> Doc:
     """What run_meta/trial_meta read, and nothing else (they re-validate it on load)."""
-    config = show.get("config") if isinstance(show.get("config"), Mapping) else {}
-    datasets = [d for d in config.get("datasets") or [] if isinstance(d, Mapping)]
+    config = as_object(show.get("config"))
+    datasets = _datasets(config)
     agents = config.get("agents")
     return {
         "show": {
@@ -272,7 +293,7 @@ def _reduced(show: Mapping, rows: list[Mapping]) -> dict:
                     {k: d.get(k) for k in ("name", "ref", "task_names")} for d in datasets
                 ],
                 "n_attempts": config.get("n_attempts"),
-                "agents": [{} for a in agents if isinstance(a, dict)]
+                "agents": [{} for a in agents if is_object(a)]
                 if isinstance(agents, list)
                 else None,
                 **_override_values(config),
@@ -288,7 +309,9 @@ def _reduced(show: Mapping, rows: list[Mapping]) -> dict:
     }
 
 
-def save_listing(dest: Path, job: str, show: Mapping | None, rows: list[Mapping]) -> None:
+def save_listing(
+    dest: Path, job: str, show: Mapping[str, object] | None, rows: Sequence[Mapping[str, object]]
+) -> None:
     """Atomically write the reduced listing into the job's sync folder (best effort).
 
     Rows already saved for the same job are kept (these rows win by trial id): several
@@ -310,14 +333,16 @@ def save_listing(dest: Path, job: str, show: Mapping | None, rows: list[Mapping]
         except (OSError, KeyError, TypeError, ValueError, AttributeError, RecursionError):
             kept = []
         tmp = dest / f".{SAVED_LISTING}.{os.getpid()}.tmp"
-        tmp.write_text(json.dumps({"version": 1, "job": job, **_reduced(show or {}, kept + rows)}))
+        tmp.write_text(
+            json.dumps({"version": 1, "job": job, **_reduced(show or {}, [*kept, *rows])})
+        )
         tmp.chmod(0o600)
         tmp.replace(dest / SAVED_LISTING)
     except (OSError, TypeError, ValueError):
         pass  # a missing sidecar only means a later local rescan lacks Hub facts
 
 
-def saved_listing(data: bytes) -> tuple[dict | None, dict[str, dict]]:
+def saved_listing(data: bytes) -> tuple[Doc | None, dict[str, Doc]]:
     """(run facts, {trial folder label: trial facts}) from a saved listing, re-validated
     exactly like a live listing; ({}, {}) when it isn't one."""
     try:
@@ -332,14 +357,14 @@ def saved_listing(data: bytes) -> tuple[dict | None, dict[str, dict]]:
     return run_meta(job, show, rows), {_label(r): trial_meta(r) for r in rows}
 
 
-def _label(row: Mapping) -> str:
+def _label(row: Mapping[str, object]) -> str:
     """The trial's folder and report label: its name if a safe segment, else its UUID."""
     name = str(row.get("name") or "")
     return name if TRIAL_NAME.fullmatch(name) else str(row["id"])
 
 
-def _loader(path: Path) -> Callable:
-    def load():
+def _loader(path: Path) -> Callable[[], Trace]:
+    def load() -> Trace:
         if not path.is_file():
             raise TraceError("no_trajectory_downloaded")
         return load_trace(path)
@@ -347,10 +372,74 @@ def _loader(path: Path) -> Callable:
     return load
 
 
+def _fetch_archive(
+    cli: HarborCLI,
+    job: str,
+    rows: Sequence[Mapping[str, object]],
+    dest: Path,
+    refresh: bool,
+    progress: Progress,
+) -> dict[str, Path]:
+    """One `harbor hub job download` into `<dest>/job`, kept unless refreshing."""
+    target = dest / "job"
+    if refresh and target.exists():
+        shutil.rmtree(target)
+    if not target.exists():
+        progress(f"downloading job archive ({len(rows)} trials)")
+        with contextlib.suppress(SourceError):  # every trial then reports as unavailable
+            cli.run("hub", "job", "download", job, "-o", str(target))
+    private_tree(dest)
+    found = {p.parent.parent.name: p for p in target.rglob("agent/trajectory.json")}
+    return {str(r["id"]): found.get(_label(r), target / "missing") for r in rows}
+
+
+def _fetch_trajectory(cli: HarborCLI, row: Mapping[str, object], path: Path, dest: Path) -> bool:
+    """Download one trial's trajectory to `path`; False when it isn't there after."""
+    path.unlink(missing_ok=True)
+    try:
+        cli.run("hub", "trial", "download", str(row["id"]), "--trajectory", "-o", str(dest))
+    except SourceError:
+        path.unlink(missing_ok=True)
+        return False
+    # Harbor names the folder after the trial; move it if it differs from our label.
+    if not path.is_file():
+        name = str(row.get("name") or "")
+        candidate = dest / name / "trajectory.json" if TRIAL_NAME.fullmatch(name) else None
+        if candidate is not None and candidate.is_file() and candidate != path:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            candidate.replace(path)
+    return path.is_file()
+
+
+@dataclass
+class _Downloads:
+    """Progress of parallel trajectory downloads (fixed text and counts only)."""
+
+    total: int
+    local: int
+    progress: Progress
+    done: int = 0
+    failed: int = 0
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def report(self) -> None:
+        self.progress(
+            f"downloading trajectories {self.done}/{self.total}"
+            + (f" · {self.local} already local" if self.local else "")
+            + (f" · {self.failed} failed" if self.failed else "")
+        )
+
+    def finished(self, ok: bool) -> None:
+        with self.lock:
+            self.done += 1
+            self.failed += not ok
+            self.report()
+
+
 def fetch(
     cli: HarborCLI,
     job: str,
-    rows: list[Mapping],
+    rows: Sequence[Mapping[str, object]],
     dest: Path,
     full: bool,
     workers: int = 8,
@@ -364,58 +453,16 @@ def fetch(
     """
     private_tree(dest)
     if full:
-        target = dest / "job"
-        if refresh and target.exists():
-            shutil.rmtree(target)
-        if not target.exists():
-            progress(f"downloading job archive ({len(rows)} trials)")
-            try:
-                cli.run("hub", "job", "download", job, "-o", str(target))
-            except SourceError:
-                pass  # every trial then reports as unavailable
-        private_tree(dest)
-        found = {p.parent.parent.name: p for p in target.rglob("agent/trajectory.json")}
-        return {str(r["id"]): found.get(_label(r), target / "missing") for r in rows}
-
+        return _fetch_archive(cli, job, rows, dest, refresh, progress)
     paths = {str(r["id"]): dest / _label(r) / "trajectory.json" for r in rows}
     todo = [r for r in rows if refresh or not paths[str(r["id"])].is_file()]
-    local, done, failed = len(rows) - len(todo), 0, 0
-    lock = threading.Lock()
+    downloads = _Downloads(len(todo), len(rows) - len(todo), progress)
 
-    def report() -> None:
-        progress(
-            f"downloading trajectories {done}/{len(todo)}"
-            + (f" · {local} already local" if local else "")
-            + (f" · {failed} failed" if failed else "")
-        )
-
-    def one(row: Mapping) -> None:
-        nonlocal done, failed
-        ok = fetch_one(row)
-        with lock:
-            done += 1
-            failed += not ok
-            report()
-
-    def fetch_one(row: Mapping) -> bool:
-        path = paths[str(row["id"])]
-        path.unlink(missing_ok=True)
-        try:
-            cli.run("hub", "trial", "download", str(row["id"]), "--trajectory", "-o", str(dest))
-        except SourceError:
-            path.unlink(missing_ok=True)
-            return False
-        # Harbor names the folder after the trial; move it if it differs from our label.
-        if not path.is_file():
-            name = str(row.get("name") or "")
-            candidate = dest / name / "trajectory.json" if TRIAL_NAME.fullmatch(name) else None
-            if candidate is not None and candidate.is_file() and candidate != path:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                candidate.replace(path)
-        return path.is_file()
+    def one(row: Mapping[str, object]) -> None:
+        downloads.finished(_fetch_trajectory(cli, row, paths[str(row["id"])], dest))
 
     if todo:
-        report()
+        downloads.report()
         with ThreadPoolExecutor(max(1, workers)) as pool:
             list(pool.map(one, todo))
     private_tree(dest)
@@ -426,32 +473,29 @@ def row_trials(cli: HarborCLI, row: str) -> list[str]:
     return [
         str(t["trial_id"])
         for _, _, data in _pages(cli, "hub", "leaderboard", "row", "trial", "list", row)
-        for t in data.get("items") or []
-        if isinstance(t, Mapping) and TRIAL_ID.fullmatch(str(t.get("trial_id") or ""))
+        for t in as_list(data.get("items"))
+        if is_object(t) and TRIAL_ID.fullmatch(str(t.get("trial_id") or ""))
     ]
 
 
-def row_listing(
-    cli: HarborCLI, row: str, progress: Progress = _quiet
-) -> tuple[dict, list[tuple[str, list[dict]]]]:
-    """A leaderboard row's facts and its trials grouped by job.
+# A leaderboard row's trials grouped by job: (job id, that job's rows in the row).
+RowJobs = list[tuple[str, list[JsonObject]]]
 
-    The row lists trial IDs only; one `trial show` per job finds each job, whose listing
-    then covers the rest of the row's trials in it (a row may hold a subset of a job,
-    or trials from several jobs)."""
-    progress("listing leaderboard row")
-    show = cli.json("hub", "leaderboard", "row", "show", row)
-    if not isinstance(show, Mapping):
-        raise SourceError("harbor_returned_invalid_json")
-    wanted = set(row_trials(cli, row))
-    progress(f"leaderboard row lists {len(wanted)} trials · finding their jobs")
-    remaining, jobs, job_runs, unresolved = set(wanted), [], [], set()
+
+def _row_jobs(
+    cli: HarborCLI, wanted: set[str], progress: Progress
+) -> tuple[RowJobs, list[Doc], set[str]]:
+    """(the row's trials by job, those jobs' run facts, trials no job accounted for)."""
+    remaining = set(wanted)
+    jobs: RowJobs = []
+    job_runs: list[Doc] = []
+    unresolved: set[str] = set()
     lookups = 0
     while remaining and lookups < MAX_JOB_LOOKUPS:
         trial = min(remaining)
         lookups += 1
-        detail = cli.json("hub", "trial", "show", trial)
-        job = str(detail.get("job_id") or "") if isinstance(detail, Mapping) else ""
+        detail = as_object(cli.json("hub", "trial", "show", trial))
+        job = str(detail.get("job_id") or "")
         if not JOB.match(f"harbor://jobs/{job}") or any(j == job for j, _ in jobs):
             remaining.discard(trial)
             unresolved.add(trial)
@@ -464,15 +508,44 @@ def row_listing(
             unresolved.add(trial)
         jobs.append((job, mine))
         job_runs.append(run)
-    unresolved |= remaining
-    meta = show.get("metadata") if isinstance(show.get("metadata"), Mapping) else {}
-    metrics = show.get("metrics") if isinstance(show.get("metrics"), Mapping) else {}
+    return jobs, job_runs, unresolved | remaining
+
+
+def _leaderboard(show: JsonObject, jobs: RowJobs) -> Doc:
+    """The row's own leaderboard record: rank, labels and reported metrics."""
+    meta = as_object(show.get("metadata"))
+    metrics = as_object(show.get("metrics"))
 
     def label(key: str) -> str | None:
-        v = meta.get(key)
-        v = v.get("label") if isinstance(v, Mapping) else v
-        return text_label(v, 80)
+        value = meta.get(key)
+        return text_label(as_object(value).get("label") if is_object(value) else value, 80)
 
+    return {
+        "rank": count(show.get("rank")),
+        "agent": label("agent_display"),
+        "model": label("model_display"),
+        "reasoning_effort": label("reasoning_effort"),
+        "reported_accuracy": number(metrics.get("accuracy")),
+        "reported_n_trials": count(metrics.get("n_trials")),
+        "reported_cost_usd": number(metrics.get("total_cost_usd"), 0),
+        "reported_reward_hacks_pct": number(metrics.get("reward_hacks")),
+        "display_cost": text_label(metrics.get("display_cost"), 60),
+        "jobs": [j for j, _ in jobs],
+    }
+
+
+def row_listing(cli: HarborCLI, row: str, progress: Progress = _quiet) -> tuple[Doc, RowJobs]:
+    """A leaderboard row's facts and its trials grouped by job.
+
+    The row lists trial IDs only; one `trial show` per job finds each job, whose listing
+    then covers the rest of the row's trials in it (a row may hold a subset of a job,
+    or trials from several jobs)."""
+    progress("listing leaderboard row")
+    show = _object(cli.json("hub", "leaderboard", "row", "show", row))
+    wanted = set(row_trials(cli, row))
+    progress(f"leaderboard row lists {len(wanted)} trials · finding their jobs")
+    jobs, job_runs, unresolved = _row_jobs(cli, wanted, progress)
+    metrics = as_object(show.get("metrics"))
     run = {
         "source": "harbor_leaderboard_row",
         "job_id": row,
@@ -491,42 +564,37 @@ def row_listing(
         "cost_usd": number(metrics.get("total_cost_usd"), 0),
         "overrides": sorted({o for r in job_runs for o in r.get("overrides") or []}),
         "unresolved_trials": len(unresolved),
-        "leaderboard": {
-            "rank": count(show.get("rank")),
-            "agent": label("agent_display"),
-            "model": label("model_display"),
-            "reasoning_effort": label("reasoning_effort"),
-            "reported_accuracy": number(metrics.get("accuracy")),
-            "reported_n_trials": count(metrics.get("n_trials")),
-            "reported_cost_usd": number(metrics.get("total_cost_usd"), 0),
-            "reported_reward_hacks_pct": number(metrics.get("reward_hacks")),
-            "display_cost": text_label(metrics.get("display_cost"), 60),
-            "jobs": [j for j, _ in jobs],
-        },
+        "leaderboard": _leaderboard(show, jobs),
     }
     return run, jobs
 
 
 def _trial_sources(
-    cli, job, rows, dest, full, workers, refresh, progress=_quiet, show=None
+    cli: HarborCLI,
+    job: str,
+    rows: Sequence[JsonObject],
+    dest: Path,
+    full: bool,
+    workers: int,
+    refresh: bool,
+    progress: Progress = _quiet,
+    show: JsonObject | None = None,
 ) -> list[Source]:
+    """Sources for a job's listed trials. Each trial's Hub facts are its run listing
+    (`Source.meta`; see `facts` for how they combine with the trajectory's)."""
     rows = [r for r in rows if valid_row(r)]
     paths = fetch(cli, job, rows, dest / job, full, workers, refresh, progress)
     save_listing(dest / job, job, show, rows)
-    sources = []
-    for row in rows:
-        meta = trial_meta(row)
-        sources.append(
-            Source(
-                _label(row),
-                _loader(paths[str(row["id"])]),
-                lambda reward=meta["reward"]: reward,
-                meta=meta,
-                fingerprint=local_fingerprint(paths[str(row["id"])]),
-                local=paths[str(row["id"])],
-            )
+    return [
+        Source(
+            _label(row),
+            _loader(paths[str(row["id"])]),
+            meta=trial_meta(row),
+            fingerprint=local_fingerprint(paths[str(row["id"])]),
+            local=paths[str(row["id"])],
         )
-    return sources
+        for row in rows
+    ]
 
 
 def harbor_sources(
@@ -537,7 +605,7 @@ def harbor_sources(
     cli: HarborCLI | None = None,
     refresh: bool = False,
     progress: Progress = _quiet,
-) -> tuple[list[Source], dict]:
+) -> tuple[list[Source], Doc]:
     kind, ref = reference(value)
     cli = cli or HarborCLI.find()
     private_directory(dest)
@@ -550,13 +618,13 @@ def harbor_sources(
         ]
         return sources, run
     job = ref
-    shows: dict[str, Mapping] = {}
+    shows: dict[str, JsonObject] = {}
     run, rows = listing(cli, job, progress, shows=shows)
     sources = _trial_sources(cli, job, rows, dest, full, workers, refresh, progress, shows[job])
     return sources, run
 
 
-def inspect_job(value: str, cli: HarborCLI | None = None) -> dict:
+def inspect_job(value: str, cli: HarborCLI | None = None) -> Doc:
     """Listing only (no downloads): run facts plus per-trial metadata records."""
     kind, ref = reference(value)
     cli = cli or HarborCLI.find()

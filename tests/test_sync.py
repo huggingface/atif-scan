@@ -12,7 +12,8 @@ import pytest
 
 from atif_scan import sources
 from atif_scan.cli import main
-from atif_scan.sources import SourceError, sync_remote, sync_target
+from atif_scan.sources import SourceError
+from atif_scan.sync import sync_remote, sync_target
 
 
 def trajectory(command="ls"):
