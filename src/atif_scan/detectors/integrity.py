@@ -214,12 +214,6 @@ def subagent_unrecorded(trace: Trace) -> Detection:
     return _result(hits, complete=True)
 
 
-def reasoning_not_recorded(trace: Trace) -> Detection:
-    """Reasoning tokens reported but no reasoning text recorded: checks that read reasoning
-    can't be complete."""
-    return _result([], complete=True, matched=trace.reasoning_hidden)
-
-
 def cost_missing(trace: Trace) -> Detection:
     """final_metrics reports token totals but no cost (leaderboards then count $0)."""
     usage = trace.usage
@@ -351,9 +345,6 @@ def integrity_detectors() -> list[Detector]:
         ),
         TraceCheck(
             CheckSpec("integrity.history_compacted", Severity.MEDIUM, "2"), history_compacted
-        ),
-        TraceCheck(
-            CheckSpec("integrity.reasoning_not_recorded", Severity.LOW), reasoning_not_recorded
         ),
         TraceCheck(
             CheckSpec("integrity.tool_results_not_recorded", Severity.MEDIUM),

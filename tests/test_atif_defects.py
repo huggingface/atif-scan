@@ -73,17 +73,30 @@ def test_compaction_markers_only_count_in_prompts():
     assert parse_trace(trace(other)).compacted == (0,)
 
 
-def test_reasoning_reported_but_not_recorded_makes_prose_checks_incomplete():
-    hidden = trace([agent()], {"extra": {"total_reasoning_tokens": 5000}})
+def test_withheld_reasoning_is_a_model_property_not_a_coverage_gap():
+    # Proprietary models withhold or summarise reasoning by design: prose checks judge the
+    # recorded text (a decided no_match), and no integrity finding is raised for it.
+    prompt = {"source": "user", "message": "Fix the build."}
+    hidden = trace([prompt, agent()], {"extra": {"total_reasoning_tokens": 5000}})
     r = results(hidden)
-    assert r["integrity.reasoning_not_recorded"].result.status == Status.MATCH
-    assert r["awareness.benchmark"].result.status == Status.UNKNOWN  # can't rule it out
-    shown = trace(
-        [agent(reasoning="thinking about the task")], {"extra": {"total_reasoning_tokens": 5000}}
-    )
-    r = results(shown)
-    assert r["integrity.reasoning_not_recorded"].result.status == Status.NO_MATCH
-    assert r["awareness.benchmark"].result.status == Status.NO_MATCH
+    assert "integrity.reasoning_not_recorded" not in r
+    for check in ("awareness.benchmark", "recall.benchmark_unprompted"):
+        assert r[check].result.status == Status.NO_MATCH and r[check].result.complete
+    assert parse_trace(hidden).reasoning_exposure == "withheld"
+
+
+def test_reasoning_exposure_tells_full_from_summarised_by_reported_tokens():
+    def exposure(steps, final_metrics=None):
+        return parse_trace(trace(steps, final_metrics)).reasoning_exposure
+
+    tokens = {"extra": {"total_reasoning_tokens": 1_000}}
+    assert exposure([agent(reasoning="x" * 3_600)], tokens) == "full"  # ~3.6 chars/token
+    assert exposure([agent(reasoning="x" * 200)], tokens) == "summarised"  # 0.2
+    assert exposure([agent(reasoning="x" * 200)]) == "recorded"  # nothing to judge by
+    assert exposure([agent()]) == "none"
+    # Compacted totals include calls the recorded steps don't show: not judged.
+    compacted = [{"source": "user", "message": NOTICE}, agent(reasoning="x" * 200)]
+    assert exposure(compacted, tokens) == "recorded"
 
 
 def test_cost_missing_and_tokens_exceeding_recorded_calls():
@@ -229,7 +242,10 @@ def test_ratio_in_report_and_brief(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "recorded text doesn't fit reported output tokens: 1 (50.0%)" in out
     assert "chars/output token: median 2.50 over 1 trace, excl. reasoning" in out
-    assert "median 20.00" in out and "incl. reasoning; hidden reasoning lowers it" in out
+    # No reasoning text or count: its low side is expected for reasoning models.
+    assert "median 20.00" in out and "no reasoning text recorded" in out
+    assert "reasoning: withheld (tokens only) 1 (50.0%) · not exposed 1 (50.0%)" in out
+    assert items["a"]["reasoning"] == "withheld" and items["b"]["reasoning"] == "none"
 
 
 def test_output_ratio_spread_is_consistent_for_small_and_large_runs():

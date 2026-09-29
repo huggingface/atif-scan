@@ -15,7 +15,17 @@ from .estimates import cost_estimate, missing_activity, unmetered_work
 from .harbor_files import override_kind
 from .packs import BUNDLED
 from .questions import tally
-from .report import RANK, STYLE, _m, is_counted, overview, review_metadata, review_text
+from .report import (
+    RANK,
+    STYLE,
+    _m,
+    events,
+    index_text,
+    is_counted,
+    overview,
+    review_metadata,
+    review_text,
+)
 
 OK, WARN, BAD, INFO = "✓", "⚠", "✗", "·"
 
@@ -36,18 +46,42 @@ def _quantile(values: list[float], q: float) -> float:
 MIN_TRACES_FOR_PERCENTILES = 20
 
 
+RATIO_BASIS = {
+    "answer_only": "excl. reasoning (reasoning tokens reported)",
+    "all_text": "incl. recorded reasoning (summaries read lower)",
+    "visible_only": "no reasoning text recorded: reasoning models read low by design",
+}
+REASONING_LABELS = {
+    "full": "full",
+    "recorded": "recorded",
+    "summarised": "summarised",
+    "withheld": "withheld (tokens only)",
+    "none": "not exposed",
+}
+
+
+def reasoning_exposure(items: list[dict]) -> dict[str, int]:
+    """Scanned traces per `reasoning` exposure code, most to least exposed."""
+    counts = Counter(i.get("reasoning") for i in items if i.get("input_status") == "available")
+    return {k: counts[k] for k in REASONING_LABELS if counts[k]}
+
+
 def output_ratios(items: list[dict]) -> dict | None:
     """Run-level spread of authored characters per completion token, per basis."""
     by_basis: dict[str, list[float]] = {}
     for item in items:
         value, basis = item.get("chars_per_output_token"), item.get("output_ratio_basis")
-        if isinstance(value, (int, float)) and basis in ("answer_only", "all_text"):
+        if basis == "all_text" and item.get("reasoning") in ("withheld", "none"):
+            # No reasoning text, and its tokens (if any) weren't subtracted: reasoning is
+            # in the output tokens but not the text, so it reads low. Expected by design.
+            basis = "visible_only"
+        if isinstance(value, (int, float)) and basis in RATIO_BASIS:
             by_basis.setdefault(basis, []).append(float(value))
     if not by_basis:
         return None
     result = {}
-    for basis, values in sorted(by_basis.items()):
-        values.sort()
+    for basis in (b for b in RATIO_BASIS if b in by_basis):
+        values = sorted(by_basis[basis])
         n = len(values)
         result[basis] = {
             "traces": n,
@@ -72,14 +106,20 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         if i.get("agent_name") or i.get("model_name")
     )
     behaviour = Counter()  # check -> traces, excluding recording-integrity checks
+    behaviour_events = Counter()  # check -> distinct evidence locations over those traces
     integrity = Counter()
     by_severity = Counter()
     for item in items:
         counted = _counted(item)
-        for check in {a["id"] for a in counted}:
+        for a in counted:
+            check = a["id"]
             if check == "integrity.cost_missing" and item.get("cost_usd") is not None:
                 continue  # the trajectory lacks cost, but the source (e.g. Hub) has it
-            (integrity if check.startswith("integrity.") else behaviour)[check] += 1
+            if check.startswith("integrity."):
+                integrity[check] += 1
+            else:
+                behaviour[check] += 1
+                behaviour_events[check] += events(a)
         if item.get("input_status") != "available":
             # Never scanned (no trajectory, unreadable): unknown, not "none".
             by_severity["unavailable"] += 1
@@ -120,6 +160,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
         "tasks_known": sum(1 for i in items if i.get("task")),
         "missing_activity": missing_activity(items),
         "output_ratio": output_ratios(items),
+        "reasoning": reasoning_exposure(items),
         "recording": {
             check: integrity[check]
             # Ties by ID: counting order follows set iteration (string hashing).
@@ -132,7 +173,7 @@ def brief(doc: dict, dq: str = "high", min_trials=None, expect_tasks=None, price
                 if by_severity[k]
             },
             "checks": {
-                c: {"severity": severity_of[c], "traces": n}
+                c: {"severity": severity_of[c], "traces": n, "events": behaviour_events[c]}
                 for c, n in sorted(
                     behaviour.items(), key=lambda kv: (-RANK[severity_of[kv[0]]], -kv[1], kv[0])
                 )
@@ -147,7 +188,6 @@ def _pct(n: int, total: int) -> str:
 
 RECORDING_LABELS = {
     "integrity.history_compacted": "compacted history (only the last context window recorded)",
-    "integrity.reasoning_not_recorded": "reasoning produced but not recorded",
     "integrity.tool_results_not_recorded": "tool results exported as status words only",
     "integrity.actions_not_recorded": "work claimed but no tool calls recorded",
     "integrity.trace_head_missing": "trace starts mid-session (no prompt recorded)",
@@ -168,10 +208,6 @@ RECORDING_LABELS = {
     "integrity.web_results_not_recorded": "web searches/fetches without recorded results or URLs",
     "integrity.redacted_values": "bare [REDACTED] values (invalid JSON, read as unknown)",
     "integrity.agent_steps_missing": "no agent steps recorded",
-}
-RATIO_BASIS = {
-    "answer_only": "excl. reasoning",
-    "all_text": "incl. reasoning; hidden reasoning lowers it",
 }
 
 
@@ -344,7 +380,6 @@ def brief_text(b: dict) -> str:
             in (
                 "integrity.observation_pairing_reconstructed",
                 "integrity.observation_pairing_unresolved",
-                "integrity.reasoning_not_recorded",
                 "integrity.tokens_exceed_recorded_calls",
                 "integrity.output_token_ratio",
                 "integrity.web_results_not_recorded",
@@ -358,6 +393,13 @@ def brief_text(b: dict) -> str:
         first = False
     if first:
         lines.append(f"TRACES     {OK} no recording defects detected")
+    if exposure := b.get("reasoning"):
+        # A model property, not a recording defect: shown for reading findings, never warned.
+        shown = " · ".join(f"{REASONING_LABELS[k]} {v} ({_pct(v, n)})" for k, v in exposure.items())
+        lines.append(
+            f"{'':<10} {INFO} reasoning: {shown}; withheld or summarised reasoning is by"
+            " design for many models, and checks read the recorded text"
+        )
     for basis, r in (b.get("output_ratio") or {}).items():
         k = r["traces"]
         if k == 1:
@@ -457,9 +499,12 @@ def brief_text(b: dict) -> str:
     lines.append(
         f"FINDINGS   traces by highest review priority: {sev or 'none'}; check counts overlap"
     )
+    if ix := ov.get("finding_index"):
+        lines.append(f"{'':<10} index: {index_text(ix)} (review load, not a verdict)")
     top = [(cid, v) for cid, v in f["checks"].items() if RANK[v["severity"]] >= RANK["medium"]]
     for cid, v in top[:6]:
-        lines.append(f"{'':<10} {WARN} {v['severity']:<8} {cid} · {v['traces']} trace(s)")
+        spread = f"{v['events']} event(s) across " if "events" in v else ""
+        lines.append(f"{'':<10} {WARN} {v['severity']:<8} {cid} · {spread}{v['traces']} trace(s)")
     if len(top) > 6:
         lines.append(f"{'':<10}   +{len(top) - 6} more medium+ checks (see --summary)")
 
