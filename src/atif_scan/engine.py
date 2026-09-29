@@ -146,6 +146,11 @@ class Engine:
             if not set(allowance.dependencies) | allowance.covers <= set(self.checks):
                 raise ValueError("missing_dependency")
 
+    def catalog(self) -> list[tuple[str, CheckSpec]]:
+        """Every check this engine runs, as (kind, spec), sorted by ID."""
+        checks = [*self.checks.values(), *self.allowances]
+        return sorted(((kind(c), c.spec) for c in checks), key=lambda pair: pair[1].id)
+
     def _run(
         self,
         check: Detector | Rule | Allowance,

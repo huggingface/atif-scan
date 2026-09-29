@@ -292,6 +292,11 @@ def test_cite_medium_filters_finding_rows(tmp_path, capsys, view, fmt):
     assert low
     main([path, "--format", fmt, view, "--cite", "medium"])
     out = capsys.readouterr().out
+    if fmt == "json" and view == "--detail":
+        # The check catalog lists every check the scan ran, whatever the finding filter.
+        shown = json.loads(out)
+        assert set(full["checks"]) == set(shown.pop("checks")) >= low
+        out = json.dumps(shown)
     assert "tamper.reward_write" in out
     for check in low:
         assert check not in out

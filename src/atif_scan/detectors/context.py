@@ -35,4 +35,8 @@ def rewarded(trace: Trace, context: Context) -> Detection:
 
 
 def context_checks() -> list[ContextCheck]:
-    return [ContextCheck(CheckSpec("context.rewarded"), rewarded)]
+    return [
+        ContextCheck(
+            CheckSpec("context.rewarded", title="Trial rewarded by the verifier"), rewarded
+        )
+    ]

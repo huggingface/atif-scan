@@ -176,7 +176,11 @@ positions** (not ATIF step IDs), the index of the classified call argument, and 
 character span of the match when the detector knows it. A `SurfaceDetector` predicate may
 return a `re.Match` or `(start, end)` to supply the span. `cite` turns these into
 excerpts only when asked; renderers never re-open the trace. Check IDs, versions and manifest IDs must be static, non-sensitive
-identifiers.
+identifiers. `CheckSpec.title` is a static, non-sensitive label too (at most 60 printable
+characters, one line, no URL); `report.document` lists every check the engine ran in a
+top-level `checks` catalog (`{id: {severity, title}}`) built from `Engine.catalog()` on each
+scan, never from cached trace results. Built-in titles say what was observed, in sentence
+case, at most 48 characters, without severity words or hedging.
 
 Built-ins are deterministic: no clock, randomness, network or filesystem access. Bump a
 detector's `version` when its meaning changes. Bump the report `schema_version` for

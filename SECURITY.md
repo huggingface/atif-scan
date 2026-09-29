@@ -7,8 +7,8 @@
 - Reports are an explicit field allowlist: no raw text, paths, URLs, argument values or
   exception messages. The single exception is opt-in `--cite`, which adds bounded,
   secret-masked excerpts of the trace. Masking is best-effort, so treat cited output
-  like the trace itself and keep it out of Git and issues. Text reports render only that allowlisted document. Manifest IDs
-  and check IDs must be non-sensitive labels.
+  like the trace itself and keep it out of Git and issues. Text reports render only that allowlisted document. Manifest IDs,
+  check IDs and check titles must be non-sensitive labels.
 - `--judge-prompts DIR` (alias `--judge DIR`), `--questions DIR` and `atif-inspect` also write trace text: bounded, masked excerpts in
   prompt files, and masked step dumps. Treat both like the trace itself. atif-scan never
   sends prompts anywhere. Whoever answers them (e.g. `tools/ask-fast-agent.sh`) sends them

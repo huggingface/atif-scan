@@ -23,6 +23,21 @@ def identifier(value: str) -> str:
     return value
 
 
+MAX_TITLE = 60
+
+
+def title_label(value: str) -> str:
+    """A check title: short printable text on one line, no URL (reports allowlist it)."""
+    if (
+        not isinstance(value, str)
+        or len(value) > MAX_TITLE
+        or not value.isprintable()
+        or "://" in value
+    ):
+        raise ValueError("invalid_check_title")
+    return value
+
+
 class Status(StrEnum):
     MATCH = "match"
     NO_MATCH = "no_match"
@@ -63,6 +78,8 @@ class CheckSpec:
     severity: Severity = Severity.INFO
     version: str = "1"
     tasks: frozenset[str] = frozenset()
+    # What a match means, in plain words. Reports carry it, so it's a static label too.
+    title: str = ""
 
     def __post_init__(self) -> None:
         identifier(self.id)
@@ -71,6 +88,7 @@ class CheckSpec:
             raise ValueError("invalid_check_spec")
         for task in self.tasks:
             identifier(task)
+        title_label(self.title)
 
 
 def _locators(values: tuple[object, ...]) -> bool:

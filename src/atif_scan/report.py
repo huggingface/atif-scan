@@ -16,6 +16,7 @@ from .checks import Severity, Status
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from .checks import CheckSpec
     from .engine import Assessment
     from .jsonval import Doc
 
@@ -101,10 +102,23 @@ def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | No
     }
 
 
-def document(items: list[Doc], scanner_version: str) -> Doc:
+def document(
+    items: list[Doc], scanner_version: str, checks: Sequence[tuple[str, CheckSpec]] = ()
+) -> Doc:
+    """The report. `checks` is the engine's catalog (`Engine.catalog()`): (kind, spec)
+    pairs, listed with the severity name assessments use and the check's title."""
     return {
         "schema_version": SCHEMA_VERSION,
         "scanner_version": scanner_version,
+        "checks": {
+            spec.id: {
+                "severity": None
+                if kind in ("allowance", "context")
+                else spec.severity.name.lower(),
+                "title": spec.title or None,
+            }
+            for kind, spec in sorted(checks, key=lambda pair: pair[1].id)
+        },
         "inputs": items,
         "coverage": {
             "inputs": len(items),

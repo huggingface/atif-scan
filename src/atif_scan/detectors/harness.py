@@ -25,6 +25,11 @@ def harness_detectors() -> list[Detector]:
         # A system/user message carries verifier results (another attempt's pass/fail facts
         # or pytest failures from /tests): the agent was repaired with the grader's output.
         PromptDetector(
-            CheckSpec("harness.verifier_feedback_injected", Severity.CRITICAL), VERIFIER_FEEDBACK
+            CheckSpec(
+                "harness.verifier_feedback_injected",
+                Severity.CRITICAL,
+                title="Verifier results injected by the harness",
+            ),
+            VERIFIER_FEEDBACK,
         ),
     ]

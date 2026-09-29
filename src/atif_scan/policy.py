@@ -12,9 +12,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 MAX_DEPTH = 32  # nesting limit for policy expressions
-RULE_KEYS = frozenset({"id", "severity", "version", "tasks", "when"})
+RULE_KEYS = frozenset({"id", "severity", "version", "tasks", "when", "title"})
 RULE_REQUIRED = frozenset({"id", "severity", "when"})
-ALLOWANCE_KEYS = frozenset({"id", "version", "tasks", "covers", "when"})
+ALLOWANCE_KEYS = frozenset({"id", "version", "tasks", "covers", "when", "title"})
 REQUIRES_ARITY = 2  # `requires` takes exactly [antecedent, consequent]
 
 
@@ -56,6 +56,13 @@ def tasks(raw: Mapping[str, object]) -> frozenset[str]:
     return frozenset(names)
 
 
+def title(raw: Mapping[str, object]) -> str:
+    value = raw.get("title", "")
+    if not isinstance(value, str):
+        raise ValueError("invalid_check_title")
+    return value
+
+
 def _rule(raw: object) -> Rule:
     if not isinstance(raw, dict) or set(raw) - RULE_KEYS or not set(raw) >= RULE_REQUIRED:
         raise ValueError("invalid_rule")
@@ -63,7 +70,7 @@ def _rule(raw: object) -> Rule:
     severity = Severity.__members__.get(name.upper()) if name is not None else None
     if severity is None:
         raise ValueError("invalid_severity")
-    spec = CheckSpec(raw["id"], severity, raw.get("version", "1"), tasks(raw))
+    spec = CheckSpec(raw["id"], severity, raw.get("version", "1"), tasks(raw), title(raw))
     return Rule(spec, expression(raw["when"]))
 
 
@@ -75,7 +82,7 @@ def _allowance(raw: object) -> Allowance:
         raise ValueError("invalid_allowance")
     if any(not isinstance(c, str) for c in covers):
         raise ValueError("invalid_allowance")
-    spec = CheckSpec(raw["id"], Severity.INFO, raw.get("version", "1"), tasks(raw))
+    spec = CheckSpec(raw["id"], Severity.INFO, raw.get("version", "1"), tasks(raw), title(raw))
     when = expression(raw["when"]) if "when" in raw else None
     return Allowance(spec, frozenset(covers), when)
 

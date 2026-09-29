@@ -711,8 +711,9 @@ def _scan_all(
     return output, invalid, failed
 
 
-def _document(output: list[Doc], args: argparse.Namespace, sync_failed: int) -> Doc:
-    doc = document(output, version("atif-scan"))
+def _document(output: list[Doc], args: argparse.Namespace, sync_failed: int, engine: Engine) -> Doc:
+    # The catalog comes from this scan's engine, never from the per-trace result cache.
+    doc = document(output, version("atif-scan"), engine.catalog())
     if sync_failed:
         doc["coverage"]["sync_failed_files"] = sync_failed
     if args.runs:
@@ -764,7 +765,7 @@ def scan(args: argparse.Namespace) -> int:
     scanner = Scanner.for_args(args, engine)
     output, invalid, failed = _scan_all(scanner, records, threshold)
     scanner.close()
-    doc = _document(output, args, sync_failed)
+    doc = _document(output, args, sync_failed, engine)
     if args.judge_prompts and not _review(doc, args, records, engine):
         return 2
     emit(doc, args)
