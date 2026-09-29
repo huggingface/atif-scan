@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from test_sync import FS, ROOT, job_files, trajectory
+from typing_extensions import override
 
 from atif_scan import sources, sync
 from atif_scan.cli import main
@@ -23,6 +24,7 @@ class FailingFS(FS):
         super().__init__(files)
         self.fail = set()
 
+    @override
     def get_file(self, path, local):
         if path in self.fail:
             Path(local).write_bytes(b"partial synthetic download")
@@ -117,9 +119,11 @@ def test_same_size_reward_and_trajectory_changes_invalidate_results(monkeypatch,
 
 
 class NoRevisionFS(FS):
+    @override
     def info(self, path):
         return {k: v for k, v in super().info(path).items() if k != "xet_hash"}
 
+    @override
     def find(self, path, detail=False):
         return {
             p: {k: v for k, v in info.items() if k != "xet_hash"}
@@ -181,6 +185,7 @@ def test_sync_tightens_permissions_and_keeps_temporary_files_private(tmp_path):
     dest.mkdir(mode=0o755)
 
     class PermissionsFS(FS):
+        @override
         def get_file(self, path, local):
             assert Path(local).stat().st_mode & 0o777 == 0o600
             assert Path(local).parent.stat().st_mode & 0o777 == 0o700
@@ -261,6 +266,7 @@ def test_provider_listing_cache_is_invalidated_before_resync(tmp_path):
             self.cached = None
             self.invalidations += 1
 
+        @override
         def find(self, path, detail=False):
             if self.cached is None:
                 self.cached = super().find(path, detail)
@@ -277,6 +283,7 @@ def test_provider_listing_cache_is_invalidated_before_resync(tmp_path):
 @pytest.mark.parametrize("field", ["xet_hash", "blob_id", "etag"])
 def test_provider_content_identity_supported(tmp_path, field):
     class RevisionFS(FS):
+        @override
         def find(self, path, detail=False):
             found = super().find(path, detail)
             for info in found.values():
@@ -294,6 +301,7 @@ def test_provider_content_identity_supported(tmp_path, field):
 
 def test_download_size_disagreement_is_not_published(tmp_path):
     class ChangedFS(FS):
+        @override
         def get_file(self, path, local):
             Path(local).write_bytes(b"different size from inventory")
 
@@ -313,6 +321,7 @@ def test_interrupted_sync_leaves_inventory_unknown_not_cached(monkeypatch, capsy
     capsys.readouterr()
     dest = Path(os.environ["ATIF_SCAN_SYNC_DIR"]) / "hf" / ROOT
     state = sources.read_sync_state(dest)
+    assert state is not None
     for row in state["files"].values():
         row["failed"] = True
         row["stamp"] = None

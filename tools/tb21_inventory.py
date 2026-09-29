@@ -29,6 +29,10 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 JOB_LINK = re.compile(r"(?:hub\.harborframework\.com/jobs/|harbor://jobs/)(" + UUID.pattern + ")")
@@ -48,7 +52,7 @@ HACK_TALK = re.compile(r"reward[ -]?hack|disqualif|\bDQ\b|cheat|leak", re.I)
 SUBMISSION = re.compile(r"^leaderboard/submissions/[^/]+\.json$")
 
 
-def label(meta: dict, key: str) -> object:
+def label(meta: Doc, key: str) -> object:
     """A display field: `{"label": …, "url": …}` or a plain value."""
     value = meta.get(key)
     return value.get("label") if isinstance(value, dict) else value
@@ -57,7 +61,12 @@ def label(meta: dict, key: str) -> object:
 def run(*args: str, timeout: int = 120) -> str | None:
     try:
         done = subprocess.run(
-            args, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL
+            args,
+            check=False,  # a failed command is None below; its stderr is withheld
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -72,7 +81,7 @@ def gh_json(*args: str):
         return None
 
 
-def submission(repo: str, path: str, ref: str) -> dict | None:
+def submission(repo: str, path: str, ref: str) -> Doc | None:
     blob = gh_json("api", f"repos/{repo}/contents/{path}?ref={ref}")
     try:
         doc = json.loads(base64.b64decode(blob["content"]))
@@ -100,7 +109,7 @@ def submission(repo: str, path: str, ref: str) -> dict | None:
     }
 
 
-def pr_record(repo: str, pr: dict) -> dict:
+def pr_record(repo: str, pr: Doc) -> Doc:
     number = pr["number"]
     files = gh_json("api", "--paginate", f"repos/{repo}/pulls/{number}/files") or []
     view = gh_json("pr", "view", str(number), "-R", repo, "--json", "body,comments") or {}
@@ -139,7 +148,7 @@ def pr_record(repo: str, pr: dict) -> dict:
     }
 
 
-def job_record(job: str) -> dict:
+def job_record(job: str) -> Doc:
     out = run("harbor", "hub", "job", "show", job, "--json", timeout=60)
     try:
         show = json.loads(out) if out else None

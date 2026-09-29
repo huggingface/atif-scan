@@ -24,16 +24,21 @@ import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from atif_scan.harbor_hub import HarborCLI, listing, row_listing
+
+if TYPE_CHECKING:
+    from atif_scan.harbor_hub import RowJobs
+    from atif_scan.jsonval import Doc, JsonObject
 
 
 def slug(task: object) -> str:
     return str(task or "").rsplit("/", 1)[-1]
 
 
-def rewarded(rows: list[dict]) -> dict[str, list[dict]]:
-    by_task: dict[str, list[dict]] = defaultdict(list)
+def rewarded(rows: list[JsonObject]) -> dict[str, list[JsonObject]]:
+    by_task: dict[str, list[JsonObject]] = defaultdict(list)
     for row in rows:
         reward = row.get("reward")
         if isinstance(reward, int | float) and reward > 0:
@@ -41,10 +46,10 @@ def rewarded(rows: list[dict]) -> dict[str, list[dict]]:
     return by_task
 
 
-def label_run(judged: list[dict], jobs: list[tuple[str, list[dict]]], exact_ids: bool) -> dict:
+def label_run(judged: list[Doc], jobs: RowJobs, exact_ids: bool) -> dict[str, Doc]:
     by_id = {str(r["id"]).lower(): r for _, rows in jobs for r in rows}
     wins = rewarded([r for _, rows in jobs for r in rows])
-    tasks: dict[str, dict] = {}
+    tasks: dict[str, Doc] = {}
     for task in sorted({slug(j["task"]) for j in judged} | set(wins)):
         rulings = [j for j in judged if slug(j["task"]) == task]
         dq, cleared = (
@@ -74,7 +79,7 @@ def main() -> int:
     inv = json.loads((args.inventory / "inventory.json").read_text())
     rows_by_pr = {r["pr"]: r for r in inv["rows"] if r["pr"] is not None}
     cli = HarborCLI.find()
-    runs = []
+    runs: list[Doc] = []
     for pr in inv["prs"]:
         judged = pr["judged"]
         if not judged:

@@ -76,6 +76,7 @@ def test_job_meta_and_overrides():
         "stats": {"n_errored_trials": 1, "cost_usd": None},
     }
     run = job_meta(json.dumps(config).encode(), json.dumps(result).encode())
+    assert run is not None
     assert run["job_name"] == "my-run" and run["planned_trials"] == 4 and run["n_attempts"] == 2
     assert run["config_task_names"] == 2 and run["source"] == "harbor_job_folder"
     assert run["overrides"] == ["agent_setup_timeout_multiplier", "agents[].override_timeout_sec"]
@@ -206,6 +207,7 @@ def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
         "datasets": [fork],
     }
     meta = job_meta(json.dumps(config).encode(), b"{}")
+    assert meta is not None
     assert meta["canonical_dataset"] is False
     doc = {"scanner_version": "dev", "inputs": [], "coverage": {}, "runs": [meta]}
     from atif_scan.brief import brief

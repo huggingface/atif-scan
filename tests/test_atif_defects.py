@@ -187,6 +187,7 @@ def test_ratio_answer_only_ignores_reasoning_summaries():
     )
     assert ratio_status(raw) == Status.NO_MATCH
     r = output_ratio(parse_trace(raw))
+    assert r is not None
     assert r.answer_only and r.chars == 3_000 and r.tokens == 1_000
 
 
@@ -249,23 +250,27 @@ def test_ratio_in_report_and_brief(tmp_path, capsys):
 
 
 def test_output_ratio_spread_is_consistent_for_small_and_large_runs():
+    """Regression: with 2 traces the median (upper value) sat outside p5–p95 (lower value)."""
     import pytest
 
-    """Regression: with 2 traces the median (upper value) sat outside p5–p95 (lower value)."""
     from atif_scan.brief import output_ratios
 
-    two = output_ratios(
+    ratios = output_ratios(
         [{"chars_per_output_token": v, "output_ratio_basis": "all_text"} for v in (1.83, 0.6)]
-    )["all_text"]
+    )
+    assert ratios is not None
+    two = ratios["all_text"]
     assert two["median"] == pytest.approx(1.215)
     assert (two["min"], two["max"]) == (0.6, 1.83)
     assert two["p5"] <= two["median"] <= two["p95"]
 
-    many = output_ratios(
+    ratios = output_ratios(
         [
             {"chars_per_output_token": float(v), "output_ratio_basis": "answer_only"}
             for v in range(21)
         ]
-    )["answer_only"]
+    )
+    assert ratios is not None
+    many = ratios["answer_only"]
     assert many["median"] == 10.0
     assert many["p5"] == pytest.approx(1.0) and many["p95"] == pytest.approx(19.0)

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 
 from atif_scan.cli import main
 
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
+
 URL = "https://github.com/harbor-framework/terminal-bench-2-1/tree/main/tasks/demo-task/solution"
 
 
-def trace(result: str | None) -> dict:
+def trace(result: str | None) -> Doc:
     fetch = {
         "step_id": 2,
         "source": "agent",
@@ -56,13 +60,13 @@ def test_access_rollup(tmp_path, capsys, result, received, requested_only):
     assert found["access.benchmark_material_requested_only"] == requested_only
 
 
-def fetch_trace(url: str, result: str | None) -> dict:
+def fetch_trace(url: str, result: str | None) -> Doc:
     raw = trace(result)
     raw["steps"][1]["tool_calls"][0]["arguments"] = {"url": url}
     return raw
 
 
-def statuses(tmp_path, capsys, raw: dict) -> dict[str, str]:
+def statuses(tmp_path, capsys, raw: Doc) -> dict[str, str]:
     folder = tmp_path / "demo-task__aB1"
     folder.mkdir(exist_ok=True)
     (folder / "trajectory.json").write_text(json.dumps(raw))

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import importlib
+from typing import TYPE_CHECKING
 
 import pytest
 
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.packs import tb21
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 
 def agent(message="", reasoning=None, calls=(), results=()):
@@ -296,7 +300,7 @@ def test_benchmark_name_after_a_viewed_image_is_not_unprompted(image_result):
     assert result.status != "match" and not result.evidence
 
 
-def _search_trace(result: str | None) -> dict:
+def _search_trace(result: str | None) -> Doc:
     search = {
         "step_id": 2,
         "source": "agent",

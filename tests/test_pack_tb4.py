@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.packs import tb4
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 
 def call(name, arguments, cid="c1"):
@@ -13,7 +18,7 @@ def call(name, arguments, cid="c1"):
 
 
 def status(check, *calls, task="rs-archive-clone"):
-    steps = [{"source": "user", "message": "Implement /app/archive-clone."}]
+    steps: list[Doc] = [{"source": "user", "message": "Implement /app/archive-clone."}]
     steps += [{"source": "agent", "message": "", "tool_calls": [c]} for c in calls]
     engine = Engine([*builtin_detectors(), *tb4.checks()])
     found = engine.evaluate(

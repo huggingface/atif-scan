@@ -12,6 +12,7 @@ from atif_scan.report import finding_index, index_text
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "finding_index.py"
 spec = importlib.util.spec_from_file_location("finding_index_tool", TOOL)
+assert spec and spec.loader
 tool = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tool)
 

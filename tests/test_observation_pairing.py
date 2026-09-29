@@ -166,7 +166,9 @@ def test_question_prompt_carries_real_reconstruction_warning(tmp_path):
         raw(calls=[call("a", arguments={"command": "curl https://example.org"}), call("b")])
     )
     a = tuple(assessments(t).values())
-    prompt, meta = build(BY_ID["network_outcome"], t, a, Context(), "synthetic")
+    built = build(BY_ID["network_outcome"], t, a, Context(), "synthetic")
+    assert built is not None
+    prompt, meta = built
     assert WARNING in prompt and "reconstructed" in prompt
     assert meta["question"] == "network_outcome"
     writer = Writer(tmp_path, ["network_outcome"])

@@ -6,12 +6,18 @@ import json
 import stat
 import sys
 import textwrap
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pytest
+from typing_extensions import override
 
 from atif_scan.cli import main
-from atif_scan.harbor_hub import job_id, overrides
+from atif_scan.harbor_hub import HarborCLI, job_id, overrides
 from atif_scan.report import accuracy
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 JOB = "1fead079-8e3b-4fef-b893-1944558a3949"
 SECRET = "sk-live-abcdefghijklmnop1234"
@@ -181,7 +187,9 @@ def test_overrides_follow_leaderboard_rules():
 
 def test_accuracy_matches_leaderboard_formula():
     by_task = {"a": [True, False], "b": [True, True, False]}
-    acc, se = accuracy(by_task)
+    result = accuracy(by_task)
+    assert result is not None
+    acc, se = result
     assert acc == 60.0
     # s^2 = (1/n^2) * (0.5*0.5/1 + (2/3)(1/3)/2)
     assert se == round(100 * ((0.25 + (2 / 9) / 2) / 4) ** 0.5, 2)
@@ -431,14 +439,23 @@ def test_harbor_status_line_only_on_terminals(harbor, capsys, monkeypatch):
     assert JOB not in err
 
 
-class _PagedCLI:
-    """Stub `harbor` CLI: one job of 25 trials, served `size` per page."""
+@dataclass(frozen=True)
+class _PagedCLI(HarborCLI):
+    """Stub `harbor` CLI: one job of 25 trials, served `size` per page; it runs nothing."""
 
-    def __init__(self, size: int):
-        self.size, self.pages = size, []
-        self.trials = [{"id": f"t{i:02d}", "name": f"task__T{i:02d}"} for i in range(25)]
+    exe: str = "paged-harbor"
+    size: int = 10
+    pages: list[int] = field(default_factory=list)
+    trials: list[Doc] = field(
+        default_factory=lambda: [{"id": f"t{i:02d}", "name": f"task__T{i:02d}"} for i in range(25)]
+    )
 
-    def json(self, *args):
+    @override
+    def run(self, *args: str) -> str:
+        raise AssertionError(args)
+
+    @override
+    def json(self, *args: str) -> object:
         if args[:3] == ("hub", "job", "show"):
             return {"name": "paged-job"}
         page, limit = int(args[args.index("--page") + 1]), int(args[args.index("--limit") + 1])
@@ -517,7 +534,7 @@ def test_row_syncs_sharing_a_job_keep_each_others_listing_rows(tmp_path):
     (TB2.1: 1,779 of 2,219 trials of one combined job)."""
     from atif_scan.harbor_hub import SAVED_LISTING, save_listing, saved_listing
 
-    def row(n: int, task: str) -> dict:
+    def row(n: int, task: str) -> Doc:
         tid = f"00000000-0000-4000-8000-{n:012d}"
         return {"id": tid, "name": f"{task}__t{n}", "task_name": task, "reward": 1.0}
 

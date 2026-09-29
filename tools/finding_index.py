@@ -18,8 +18,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from atif_scan.report import RANK, finding_index
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 
 def _rate(value: float | None) -> str:
@@ -27,7 +31,7 @@ def _rate(value: float | None) -> str:
     return "—" if value is None else f"{value:.2f}"
 
 
-def index_of(doc: dict, minimum: str) -> dict | None:
+def index_of(doc: Doc, minimum: str) -> Doc | None:
     if "inputs" in doc:
         return finding_index(doc["inputs"], minimum)
     stored = (doc.get("overview") or doc).get("finding_index")

@@ -30,8 +30,12 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tb21_inventory import gh_json, label, pr_record, run
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 MARKER = re.compile(r"<!-- harbor-hosted-job:(\{.*?\}) -->")
 TASK_PATH = re.compile(r"tasks/([^/]+)/")
@@ -43,6 +47,7 @@ CHEAT_REPORT = re.compile(r"Cheating Agent Trial Results")
 CHEAT_CONFIRMED = re.compile(r"Successful Cheat", re.I)
 SUBMISSION_TITLE = re.compile(r"leaderboard submission", re.I)
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+PER_PAGE = 100  # GitHub search results per page (its maximum)
 
 
 def slug(task: object) -> str:
@@ -60,87 +65,99 @@ def search_prs(repo: str, phrase: str) -> list[int]:
             "-f",
             f'q=repo:{repo} is:pr "{phrase}" in:comments',
             "-f",
-            "per_page=100",
+            f"per_page={PER_PAGE}",
             "-f",
             f"page={page}",
         )
         items = (data or {}).get("items") or []
         numbers += [i["number"] for i in items if isinstance(i.get("number"), int)]
-        if len(items) < 100:
+        if len(items) < PER_PAGE:
             break
     return sorted(set(numbers))
 
 
-def hosted_jobs(repo: str, number: int) -> list[dict]:
+def legacy_kind(body: str, markers: list[str]) -> str | None:
+    """The kind of a comment's linked jobs: a confirmed cheat, an old cheat report, or none."""
+    if CHEAT_CONFIRMED.search(body):
+        return "cheat_confirmed"
+    return "cheat" if CHEAT_REPORT.search(body) and not markers else None
+
+
+def marker_job(number: int, raw: str) -> Doc | None:
+    """A hosted-job marker's allowlisted fields, or None if it isn't a valid job marker."""
+    try:
+        m = json.loads(raw)
+    except ValueError:
+        return None
+    job = str(m.get("job_id") or "").lower()
+    if not UUID.match(job):
+        return None
+    return {
+        "pr": number,
+        "kind": str(m.get("kind") or ""),
+        "job": job,
+        "task": slug(m.get("task_name")),
+        "tasks": [slug(t) for t in m.get("tasks") or []],
+        "head_sha": str(m.get("head_sha") or "")[:40],
+    }
+
+
+def comment_jobs(number: int, body: str) -> list[Doc]:
+    """Cheat runs, linked jobs and hosted-job markers in one PR comment, in that order."""
+    found: list[Doc] = []
+    markers = MARKER.findall(body)
+    legacy = legacy_kind(body, markers)
+    if CHEAT_REPORT.search(body):
+        # Older reports only link the Actions run; its `cheat-harbor-output-*`
+        # artifacts hold the Harbor job folders (see `download` below).
+        found += [
+            {
+                "pr": number,
+                "kind": "cheat_run",
+                "job": "",
+                "run": run_id,
+                "task": "",
+                "tasks": [],
+                "head_sha": "",
+            }
+            for run_id in dict.fromkeys(RUN_LINK.findall(body))
+        ]
+    if legacy:
+        found += [
+            {
+                "pr": number,
+                "kind": legacy,
+                "job": job.lower(),
+                "task": "",
+                "tasks": [],
+                "head_sha": "",
+            }
+            for job in dict.fromkeys(JOB_LINK.findall(body))
+            if UUID.match(job.lower())
+        ]
+    found += [h for raw in markers if (h := marker_job(number, raw)) is not None]
+    return found
+
+
+def hosted_jobs(repo: str, number: int) -> list[Doc]:
     view = gh_json("pr", "view", str(number), "-R", repo, "--json", "comments,files") or {}
     # Task folders the PR touches: which task a cheat run's artifacts are about.
     touched = sorted(
         {m.group(1) for f in view.get("files") or [] if (m := TASK_PATH.match(f.get("path", "")))}
     )
-    found = []
-    for comment in view.get("comments") or []:
-        body = comment.get("body") or ""
-        markers = MARKER.findall(body)
-        legacy = (
-            "cheat_confirmed"
-            if CHEAT_CONFIRMED.search(body)
-            else "cheat"
-            if CHEAT_REPORT.search(body) and not markers
-            else None
-        )
-        if CHEAT_REPORT.search(body):
-            # Older reports only link the Actions run; its `cheat-harbor-output-*`
-            # artifacts hold the Harbor job folders (see `download` below).
-            found += [
-                {
-                    "pr": number,
-                    "kind": "cheat_run",
-                    "job": "",
-                    "run": run_id,
-                    "task": "",
-                    "tasks": [],
-                    "head_sha": "",
-                }
-                for run_id in dict.fromkeys(RUN_LINK.findall(body))
-            ]
-        if legacy:
-            found += [
-                {
-                    "pr": number,
-                    "kind": legacy,
-                    "job": job.lower(),
-                    "task": "",
-                    "tasks": [],
-                    "head_sha": "",
-                }
-                for job in dict.fromkeys(JOB_LINK.findall(body))
-                if UUID.match(job.lower())
-            ]
-        for raw in markers:
-            try:
-                m = json.loads(raw)
-            except ValueError:
-                continue
-            job = str(m.get("job_id") or "").lower()
-            if not UUID.match(job):
-                continue
-            found.append(
-                {
-                    "pr": number,
-                    "kind": str(m.get("kind") or ""),
-                    "job": job,
-                    "task": slug(m.get("task_name")),
-                    "tasks": [slug(t) for t in m.get("tasks") or []],
-                    "head_sha": str(m.get("head_sha") or "")[:40],
-                }
-            )
+    found = [
+        h
+        for comment in view.get("comments") or []
+        for h in comment_jobs(number, comment.get("body") or "")
+    ]
     for h in found:
         h["pr_tasks"] = touched
     return found
 
 
-def job_trials(job: str) -> list[dict]:
-    trials, page = [], 1
+def job_trials(job: str) -> list[Doc]:
+    trials: list[Doc] = []
+    page = 1
     while True:
         out = run(
             "harbor",
@@ -177,7 +194,7 @@ def job_trials(job: str) -> list[dict]:
         page += 1
 
 
-def download(args) -> int:
+def download(args: argparse.Namespace) -> int:
     doc = json.loads((args.out / "inventory.json").read_text())
     only = {p.name for p in args.tasks_dir.iterdir() if p.is_dir()} if args.tasks_dir else None
     runs = sorted(

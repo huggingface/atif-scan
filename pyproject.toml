@@ -74,7 +74,9 @@ line-ending = "lf"
 
 [tool.ty.environment]
 python-version = "3.11"
-root = ["./src"]
+# tests import shared fixtures from sibling test modules, tools from sibling tools
+# (pytest rootdir and script-directory imports).
+root = ["./src", "./tests", "./tools"]
 
 [tool.ty.src]
 include = ["src", "tests", "tools"]

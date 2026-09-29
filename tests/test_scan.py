@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import pytest
@@ -324,6 +325,7 @@ def test_policy_strict_parsing():
             ]
         }
     )
+    assert isinstance(rules[0], Rule)
     assert rules[0].expression.dependencies() == {"a", "b", "c"}
     for value in [
         {"rules": [], "oops": 1},
@@ -377,10 +379,14 @@ def test_custom_tool_arguments_preserved_immutable_and_hidden():
     trace = parse_trace(raw)
     call = trace.steps[0].calls[0]
     assert call.name == "custom.task_checker"
-    assert call.arguments["nested"]["value"] == "PRIVATE"
-    assert call.arguments["list"] == (1,)
+    arguments = call.arguments
+    assert arguments is not None
+    nested = arguments["nested"]
+    assert isinstance(nested, Mapping)
+    assert nested["value"] == "PRIVATE"
+    assert arguments["list"] == (1,)
     with pytest.raises(TypeError):
-        call.arguments["nested"]["value"] = "mutated"
+        nested["value"] = "mutated"  # ty: ignore[invalid-assignment] - asserts it's read-only
     assert trace.steps[0].observations[0].source_call_id == call.id
     assert "PRIVATE" not in repr(trace)
 

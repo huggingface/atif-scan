@@ -19,15 +19,20 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 GOLD = Path(os.environ.get("ATIF_SCAN_GOLD_DIR", "reports/gold"))
 SEVERE = ("medium", "high", "critical")
 
 
-def scan(source: str, extra: list[str]) -> dict:
-    def run(*args: str) -> dict:
+def scan(source: str, extra: list[str]) -> Doc:
+    def run(*args: str) -> Doc:
         out = subprocess.run(
             [sys.executable, "-m", "atif_scan", source, *extra, *args, "--format", "json"],
+            check=False,  # the exit code is read below: exit 2 can still carry a report
             capture_output=True,
             text=True,
         )
@@ -58,7 +63,7 @@ def scan(source: str, extra: list[str]) -> dict:
     }
 
 
-def matches(snap: dict) -> dict[str, set[str]]:
+def matches(snap: Doc) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for label, item in snap["inputs"].items():
         for check, status in item["checks"].items():
@@ -67,7 +72,18 @@ def matches(snap: dict) -> dict[str, set[str]]:
     return out
 
 
-def diff(old: dict, new: dict) -> int:
+def severity(check: str, new: Doc, old: Doc) -> object:
+    """The check's severity in the new snapshot, else in the old one, else "?"."""
+    return next(
+        (i["severities"].get(check) for i in new["inputs"].values() if check in i["checks"]),
+        None,
+    ) or next(
+        (i["severities"].get(check) for i in old["inputs"].values() if check in i["checks"]),
+        "?",
+    )
+
+
+def diff(old: Doc, new: Doc) -> int:
     before, after = matches(old), matches(new)
     changed = 0
     for check in sorted(set(before) | set(after)):
@@ -76,18 +92,17 @@ def diff(old: dict, new: dict) -> int:
         if not (gained or lost):
             continue
         changed += 1
-        sev = next(
-            (i["severities"].get(check) for i in new["inputs"].values() if check in i["checks"]),
-            None,
-        ) or next(
-            (i["severities"].get(check) for i in old["inputs"].values() if check in i["checks"]),
-            "?",
-        )
+        sev = severity(check, new, old)
         print(f"{check} [{sev}]  {len(before.get(check, ()))} → {len(after.get(check, ()))}")
         for label in sorted(gained):
             print(f"   + {label}  (reward {new['inputs'][label]['reward']})")
         for label in sorted(lost):
             print(f"   - {label}  (reward {old['inputs'][label]['reward']})")
+    return changed + diff_dq(old, new)
+
+
+def diff_dq(old: Doc, new: Doc) -> int:
+    """Print DQ candidates gained and lost (and differing inputs); the number of DQ changes."""
     old_dq, new_dq = set(old["dq"]), set(new["dq"])
     print(
         f"DQ candidates {len(old_dq)} → {len(new_dq)}; accuracy if DQ "
@@ -100,7 +115,7 @@ def diff(old: dict, new: dict) -> int:
     missing = set(old["inputs"]) ^ set(new["inputs"])
     if missing:
         print(f"inputs differ: {len(missing)}")
-    return changed + len(new_dq ^ old_dq)
+    return len(new_dq ^ old_dq)
 
 
 def main(argv: list[str]) -> int:

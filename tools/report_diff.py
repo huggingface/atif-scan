@@ -17,10 +17,12 @@ from collections import Counter
 from pathlib import Path
 
 Key = tuple[str, str, str]  # (report file, input id, check id)
+Outcome = tuple[str, bool, int, bool]  # (status, complete, evidence count, expected)
+Change = tuple[str, str | None, str | None, str]  # (check id, old status, new status, what)
 
 
-def load(directory: Path) -> dict[Key, tuple]:
-    out = {}
+def load(directory: Path) -> dict[Key, Outcome]:
+    out: dict[Key, Outcome] = {}
     for path in sorted(directory.glob("*.json")):
         doc = json.loads(path.read_text())
         if "inputs" not in doc:  # a --brief/--overview report
@@ -40,13 +42,16 @@ def main() -> None:
     args = parser.parse_args()
     before, after = load(args.before), load(args.after)
     print(f"assessments: {len(before)} before, {len(after)} after")
-    changes: Counter[tuple] = Counter()
+    changes: Counter[Change] = Counter()
     for key in before.keys() | after.keys():
         old, new = before.get(key), after.get(key)
         if old != new:
             what = "evidence/expected" if old and new and old[0] == new[0] else ""
-            changes[(key[2], old and old[0], new and new[0], what)] += 1
-    for (check, old, new, what), n in sorted(changes.items()):
+            changes[(key[2], old[0] if old else None, new[0] if new else None, what)] += 1
+    # An assessment only on one side has status None: sort it as text, not against a str.
+    for (check, old, new, what), n in sorted(
+        changes.items(), key=lambda change: tuple(map(str, change[0]))
+    ):
         print(f"{n:7d}  {check:55s} {old} -> {new} {what}")
     if not changes:
         print("identical")

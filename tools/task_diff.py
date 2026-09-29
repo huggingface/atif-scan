@@ -25,6 +25,7 @@ failures. Only counts and task names are printed, never file contents.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import hashlib
 import json
@@ -32,8 +33,13 @@ import sys
 import tomllib
 from collections import Counter
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 RESOURCES = {"cpus", "memory_mb", "storage_mb", "gpus", "memory", "storage"}
+Change = tuple[str, str]  # (class, file or task.toml key)
 
 
 def files(root: Path) -> dict[str, str]:
@@ -44,77 +50,81 @@ def files(root: Path) -> dict[str, str]:
     return out
 
 
-def toml_changes(a: Path, b: Path) -> list[tuple[str, str]]:
+def key_kind(section: str, key: str) -> str:
+    """The class of a changed `[section].key` in task.toml."""
+    if section == "metadata":
+        return "docs"
+    if section == "environment":
+        return "resources" if key in RESOURCES else "infrastructure"
+    return "content"  # verifier, agent, anything else: grading or the agent's budget
+
+
+def section_changes(section: str, x: object, y: object) -> list[Change]:
+    """(class, key) for each differing key of one task.toml section (or top-level value)."""
+    if not isinstance(x, dict) or not isinstance(y, dict):
+        return [("content", section)] if x != y else []
+    return [
+        (key_kind(section, key), f"[{section}].{key}")
+        for key in sorted(set(x) | set(y))
+        if x.get(key) != y.get(key)
+    ]
+
+
+def toml_changes(a: Path, b: Path) -> list[Change]:
     """(class, key) for each differing task.toml key."""
     try:
         old, new = tomllib.loads(a.read_text()), tomllib.loads(b.read_text())
     except (OSError, tomllib.TOMLDecodeError):
         return [("content", "task.toml (unparseable)")]
-    out = []
+    out: list[Change] = []
     for section in sorted(set(old) | set(new)):
-        x, y = old.get(section, {}), new.get(section, {})
-        if not isinstance(x, dict) or not isinstance(y, dict):
-            if x != y:
-                out.append(("content", section))
-            continue
-        for key in sorted(set(x) | set(y)):
-            if x.get(key) == y.get(key):
-                continue
-            if section == "metadata":
-                kind = "docs"
-            elif section == "environment":
-                kind = "resources" if key in RESOURCES else "infrastructure"
-            else:  # verifier, agent, anything else: grading or the agent's budget
-                kind = "content"
-            out.append((kind, f"[{section}].{key}"))
+        out += section_changes(section, old.get(section, {}), new.get(section, {}))
     return out
 
 
 def classify(rel: str) -> str:
     top = rel.split("/", 1)[0]
-    if rel == "README.md" or rel.endswith("/README.md") and top not in ("tests", "solution"):
+    if rel == "README.md" or (rel.endswith("/README.md") and top not in ("tests", "solution")):
         return "docs"
     if top == "environment":
         return "infrastructure"
     return "content"  # instruction.md, tests/, solution/, anything unexpected
 
 
-def diff_tasks(canonical: Path, run: Path) -> dict:
+def presence(rel: str, fa: dict[str, str], fb: dict[str, str]) -> str:
+    """ "" for a file in both task folders, else " (added)" or " (removed)"."""
+    if rel in fa and rel in fb:
+        return ""
+    return " (added)" if rel in fb else " (removed)"
+
+
+def task_changes(a: Path, b: Path) -> list[Change]:
+    """(class, what) for each file (or task.toml key) that differs between two tasks."""
+    fa, fb = files(a), files(b)
+    changes: list[Change] = []
+    for rel in sorted(set(fa) | set(fb)):
+        if fa.get(rel) == fb.get(rel):
+            continue
+        if rel == "task.toml" and rel in fa and rel in fb:
+            changes += toml_changes(a / rel, b / rel)
+        else:
+            changes.append((classify(rel), rel + presence(rel, fa, fb)))
+    return changes
+
+
+def diff_tasks(canonical: Path, run: Path) -> Doc:
     tasks = sorted(
         {p.name for p in canonical.iterdir() if p.is_dir()}
         | {p.name for p in run.iterdir() if p.is_dir()}
     )
-    report = {"tasks": {}, "missing": [], "added": []}
+    report: Doc = {"tasks": {}, "missing": [], "added": []}
     for task in tasks:
         a, b = canonical / task, run / task
         if not a.is_dir():
             report["added"].append(task)
-            continue
-        if not b.is_dir():
+        elif not b.is_dir():
             report["missing"].append(task)
-            continue
-        fa, fb = files(a), files(b)
-        changes = []
-        for rel in sorted(set(fa) | set(fb)):
-            if fa.get(rel) == fb.get(rel):
-                continue
-            if rel == "task.toml" and rel in fa and rel in fb:
-                changes += toml_changes(a / rel, b / rel)
-            else:
-                changes.append(
-                    (
-                        classify(rel),
-                        rel
-                        + (
-                            ""
-                            if rel in fa and rel in fb
-                            else " (added)"
-                            if rel in fb
-                            else " (removed)"
-                        ),
-                    )
-                )
-        if changes:
+        elif changes := task_changes(a, b):
             report["tasks"][task] = changes
     return report
 
@@ -126,18 +136,16 @@ def _time(value: str | None) -> dt.datetime | None:
         return None
 
 
-def overruns(job: Path, run: Path) -> dict:
+def overruns(job: Path, run: Path) -> Doc:
     """Trials whose agent phase outlasted the (run's own) task agent timeout."""
-    limits = {}
+    limits: dict[str, float] = {}
     for toml in run.glob("*/task.toml"):
-        try:
+        with contextlib.suppress(KeyError, ValueError, TypeError, tomllib.TOMLDecodeError):
             limits[toml.parent.name] = float(
                 tomllib.loads(toml.read_text())["agent"]["timeout_sec"]
             )
-        except (KeyError, ValueError, TypeError, tomllib.TOMLDecodeError):
-            pass
     trials = rewarded = over = over_rewarded = 0
-    per_task: Counter = Counter()
+    per_task: Counter[str] = Counter()
     for result in job.glob("*/result.json"):
         try:
             r = json.loads(result.read_text())
@@ -183,23 +191,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(report, indent=1))
     else:
-        shown = " · ".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "no differences"
-        print(f"{len(report['tasks'])} task(s) differ · {shown}")
-        for task, changes in report["tasks"].items():
-            print(f"  {task}")
-            for kind, what in changes:
-                print(f"    {kind:<14} {what}")
-        for key in ("missing", "added"):
-            if report[key]:
-                print(f"  {key}: {', '.join(report[key])}")
-        t = report.get("timeouts")
-        if t:
-            print(
-                f"timeouts: {t['over_timeout']} of {t['trials']} trials ran past their task's "
-                f"agent timeout ({t['over_timeout_rewarded']} rewarded) · accuracy "
-                f"{t['accuracy']}% → {t['accuracy_if_overruns_failed']}% if those had failed"
-            )
+        print_text(report, kinds)
     return 1 if kinds.get("content") or report["missing"] else 0
+
+
+def print_text(report: Doc, kinds: Counter[str]) -> None:
+    shown = " · ".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "no differences"
+    print(f"{len(report['tasks'])} task(s) differ · {shown}")
+    for task, changes in report["tasks"].items():
+        print(f"  {task}")
+        for kind, what in changes:
+            print(f"    {kind:<14} {what}")
+    for key in ("missing", "added"):
+        if report[key]:
+            print(f"  {key}: {', '.join(report[key])}")
+    t = report.get("timeouts")
+    if t:
+        print(
+            f"timeouts: {t['over_timeout']} of {t['trials']} trials ran past their task's "
+            f"agent timeout ({t['over_timeout_rewarded']} rewarded) · accuracy "
+            f"{t['accuracy']}% → {t['accuracy_if_overruns_failed']}% if those had failed"
+        )
 
 
 if __name__ == "__main__":

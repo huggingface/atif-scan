@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 
 import pytest
 
@@ -148,7 +149,10 @@ def test_inspect_hub_listing_uses_sizes_without_opening(monkeypatch):
     from atif_scan import sources
 
     class ListingOnlyFS:
-        files = {"buckets/o/b/run/t1/trajectory.json": 10, "buckets/o/b/run/t1/summary.json": 2}
+        files: ClassVar[dict[str, int]] = {
+            "buckets/o/b/run/t1/trajectory.json": 10,
+            "buckets/o/b/run/t1/summary.json": 2,
+        }
 
         def info(self, path):
             return {"type": "directory"}

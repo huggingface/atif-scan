@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import io
 import json
 import sys
@@ -84,8 +85,7 @@ def test_cache_misses_when_an_allowance_expression_or_plugin_source_changes(tmp_
     )
     plugin.write_text(source.format("NO_MATCH"))
     monkeypatch.syspath_prepend(str(tmp_path))
-    import review_plugin_mod
-
+    review_plugin_mod = importlib.import_module("review_plugin_mod")
     before = checks_signature(Engine([review_plugin_mod.P()]))
     plugin.write_text(source.format("MATCH"))
     assert checks_signature(Engine([review_plugin_mod.P()])) != before

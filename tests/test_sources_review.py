@@ -9,16 +9,24 @@ import io
 import json
 import os
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+from typing_extensions import override
 
 from atif_scan import harbor_hub, harbor_runs, layout, sources, sync
 from atif_scan.harbor_files import dataset_source, job_meta, primary_reward, trial_result
 from atif_scan.harbor_hub import HarborCLI, harbor_sources, inspect_job, run_meta, trial_meta
-from atif_scan.jsonval import number
+from atif_scan.jsonval import Doc, number
 from atif_scan.sources import Entry, Listing, confined, list_input, resolve
 from atif_scan.sync import sync_remote
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from atif_scan.model import Trace
 
 JOB = "1d6abb23-0000-4000-8000-000000000000"
 ROOT = "buckets/o/b/job"
@@ -81,15 +89,14 @@ def test_remote_listing_drops_entries_outside_the_root(tmp_path):
 
 def test_sync_rejects_unsafe_listed_paths(tmp_path, monkeypatch):
     outside = tmp_path / "outside.json"
-    written = []
+    written: list[Path] = []
+
+    def fetch(entry: Entry, path: Path) -> None:
+        written.append(path)
+        path.write_bytes(b"{}")
+
     entries = (Entry(str(outside), 3), Entry("a/../../x/trajectory.json", 3), Entry("ok.json", 3))
-    listing = Listing(
-        True,
-        True,
-        entries,
-        lambda e: None,
-        fetch=lambda e, path: (written.append(path), path.write_bytes(b"{}")),
-    )
+    listing = Listing(True, True, entries, never_opened, fetch=fetch)
     monkeypatch.setattr(sync, "list_input", lambda value, fs=None: listing)
     dest = tmp_path / "dest"
     with pytest.raises(sources.SourceError, match="invalid_hf_path"):
@@ -119,11 +126,36 @@ def test_sync_skips_oversize_entries(tmp_path, monkeypatch):
 # 3: Hub trial ids and names are validated before becoming CLI args or folders.
 
 
-class StubCLI:
-    def __init__(self, rows, row_items=None):
-        self.rows, self.row_items, self.calls = rows, row_items or [], []
+def never_opened(entry: Entry) -> Callable[[], Trace]:
+    """A listing opener for tests that must not open any trace."""
+    raise AssertionError(entry)
 
-    def json(self, *args):
+
+@dataclass(frozen=True)
+class FakeCLI(HarborCLI):
+    """A `harbor` CLI double: every `--json` call returns `reply`; it never runs a process."""
+
+    exe: str = "fake-harbor"
+    reply: object = None
+
+    @override
+    def json(self, *args: str) -> object:
+        return self.reply
+
+    @override
+    def run(self, *args: str) -> str:
+        raise AssertionError(args)
+
+
+@dataclass(frozen=True)
+class StubCLI(HarborCLI):
+    exe: str = "stub-harbor"
+    rows: list[Doc] = field(default_factory=list)
+    row_items: list[Doc] = field(default_factory=list)
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    @override
+    def json(self, *args: str) -> object:
         self.calls.append(args)
         if args[:3] == ("hub", "job", "show"):
             return {"name": "demo"}
@@ -133,7 +165,8 @@ class StubCLI:
             return {"items": self.row_items, "total_pages": 1}
         raise AssertionError(args)
 
-    def run(self, *args):
+    @override
+    def run(self, *args: str) -> str:
         self.calls.append(args)
         out = Path(args[args.index("-o") + 1])
         row = next(r for r in self.rows if r["id"] == args[3])
@@ -151,7 +184,7 @@ def test_hub_rows_with_unsafe_ids_or_names_are_dropped_or_relabelled(tmp_path):
         {"id": "../../evil", "name": "task__C1"},
         {"id": renamed, "name": "a/../../x"},  # traversal in the name
     ]
-    cli = StubCLI(rows)
+    cli = StubCLI(rows=rows)
     dest = tmp_path / "dl"
     found, _ = harbor_sources(f"harbor://jobs/{JOB}", dest, workers=1, cli=cli)
     assert sorted(s.label for s in found) == sorted(["task__A1", renamed])
@@ -166,7 +199,7 @@ def test_hub_rows_with_unsafe_ids_or_names_are_dropped_or_relabelled(tmp_path):
 
 def test_row_trial_ids_must_be_uuids():
     good = "00000000-0000-4000-8000-000000000001"
-    cli = StubCLI([], row_items=[{"trial_id": good}, {"trial_id": "-o/tmp/x"}, {"x": 1}])
+    cli = StubCLI(row_items=[{"trial_id": good}, {"trial_id": "-o/tmp/x"}, {"x": 1}])
     assert harbor_hub.row_trials(cli, "r") == [good]
 
 
@@ -211,7 +244,7 @@ def test_inspect_report_has_no_raw_paths():
         Entry(f"{names[2]}/agent/trajectory.json", 2),
         Entry(f"{names[2]}/user-agent/trajectory.json", 2),
     )
-    listing = Listing(False, True, entries, lambda e: None)
+    listing = Listing(False, True, entries, never_opened)
     card = layout.inspect_listing(listing, "trajectory.json", 1)
     text = json.dumps(card)
     assert not any(n in text for n in names)
@@ -242,7 +275,7 @@ def test_row_labels_and_display_cost_are_validated(monkeypatch):
         "metadata": {"agent_display": {"label": "Demo CLI (v2)"}, "model_display": "see https://x"},
         "metrics": {"display_cost": "$1.20 (partial)\x1b[2J", "accuracy": float("nan")},
     }
-    cli = type("C", (), {"json": lambda self, *a: show})()
+    cli = FakeCLI(reply=show)
     run, _ = harbor_hub.row_listing(cli, "r")
     lb = run["leaderboard"]
     assert lb["agent"] == "Demo CLI (v2)" and lb["model"] is None
@@ -284,21 +317,15 @@ def test_cli_run_is_non_interactive_and_decodes_leniently(monkeypatch):
 
 @pytest.mark.parametrize("total", ["not-a-number <https://x>", None, -2, 1.5])
 def test_bad_total_pages_is_one_page(total):
-    class CLI:
-        def json(self, *args):
-            return {"items": [], "total_pages": total}
-
-    assert list(harbor_hub._pages(CLI(), "hub")) == [(1, 1, {"items": [], "total_pages": total})]
+    cli = FakeCLI(reply={"items": [], "total_pages": total})
+    assert list(harbor_hub._pages(cli, "hub")) == [(1, 1, {"items": [], "total_pages": total})]
 
 
 def test_pagination_is_capped(monkeypatch):
     monkeypatch.setattr(harbor_hub, "MAX_PAGES", 3)
 
-    class CLI:
-        def json(self, *args):
-            return {"items": [], "total_pages": 10**9}
-
-    assert [p for p, _, _ in harbor_hub._pages(CLI(), "hub")] == [1, 2, 3]
+    cli = FakeCLI(reply={"items": [], "total_pages": 10**9})
+    assert [p for p, _, _ in harbor_hub._pages(cli, "hub")] == [1, 2, 3]
 
 
 # 9: deeply nested JSON doesn't abort the scan.

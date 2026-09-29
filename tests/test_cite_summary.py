@@ -357,12 +357,12 @@ def test_cite_hides_low_only_trace_blocks(tmp_path, capsys, monkeypatch, fmt):
             raise ImportError
 
         monkeypatch.setattr(cli, "render_rich", no_rich)
-    for name, raw in (
+    for name, original in (
         ("low-only", trace(step("This is a benchmark."))),
         ("high-finding", HACKY),
         ("clean", trace(step("Done."))),
     ):
-        raw = json.loads(json.dumps(raw))
+        raw = json.loads(json.dumps(original))
         raw["steps"].insert(
             0,
             {

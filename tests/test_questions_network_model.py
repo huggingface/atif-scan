@@ -59,20 +59,19 @@ def prompt_for(qid, raw=None, context=None):
 
 def test_exact_builtin_contract():
     assert len({q.id for q in QUESTIONS}) == len(QUESTIONS)
-    assert NETWORK_ACTIONS == frozenset(
-        {
-            "network.external_url",
-            "network.http_or_git",
-            "network.package_install",
-            "network.web_search",
-            "network.remote_script",
-            "side_channel.fetch_proxy",
-            "side_channel.model_call",
-        }
-    )
+    network_actions = {
+        "network.external_url",
+        "network.http_or_git",
+        "network.package_install",
+        "network.web_search",
+        "network.remote_script",
+        "side_channel.fetch_proxy",
+        "side_channel.model_call",
+    }
+    assert frozenset(network_actions) == NETWORK_ACTIONS
     assert BY_ID[IDS[0]].triggers == NETWORK_ACTIONS
     assert BY_ID[IDS[1]].triggers == frozenset({"side_channel.model_call"})
-    assert NETWORK_ACTIONS <= {d.spec.id for d in builtin_detectors()}
+    assert {d.spec.id for d in builtin_detectors()} >= NETWORK_ACTIONS
     assert set(BY_ID[IDS[0]].answers) == {
         "confirmed_external_content",
         "explicit_policy_denial",
@@ -235,7 +234,9 @@ def test_reconstructed_pairing_assessment_is_context_not_a_trigger(qid):
         CheckSpec(WARNING),
         Detection(Status.MATCH, (Locator(1, Channel.MESSAGE),)),
     )
-    prompt, meta = build(BY_ID[qid], trace, iter([*assessments, warning]), Context(), "synthetic")
+    built = build(BY_ID[qid], trace, iter([*assessments, warning]), Context(), "synthetic")
+    assert built is not None
+    prompt, meta = built
     assert "Pairing warning:" in prompt and "Treat those links as assumptions" in prompt
     assert WARNING not in meta["checks"]
     assert build(BY_ID[qid], trace, [warning], Context(), "synthetic") is None
@@ -381,7 +382,9 @@ def test_native_fetch_pairing_warning_and_missing_response():
         CheckSpec(WARNING),
         Detection(Status.MATCH, (Locator(1, Channel.MESSAGE),)),
     )
-    prompt, meta = build(BY_ID[IDS[0]], trace, [*assessments, warning], Context(), "synthetic")
+    built = build(BY_ID[IDS[0]], trace, [*assessments, warning], Context(), "synthetic")
+    assert built is not None
+    prompt, meta = built
     assert "Pairing warning:" in prompt
     assert "Treat those links as assumptions" in prompt
     assert meta["checks"] == ["network.external_url"]
@@ -395,7 +398,9 @@ def test_native_fetch_filters_mentions_before_evidence_limit():
     ]
     raw["steps"][1:1] = mentions
     trace, assessments = evaluated(raw)
-    prompt, meta = build(BY_ID[IDS[0]], trace, assessments, Context(), "synthetic")
+    built = build(BY_ID[IDS[0]], trace, assessments, Context(), "synthetic")
+    assert built is not None
+    prompt, meta = built
     assert meta["checks"] == ["network.external_url"]
     assert "### step 2 · url" in prompt
     assert "### step 2 · message" not in prompt

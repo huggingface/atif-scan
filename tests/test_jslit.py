@@ -80,7 +80,7 @@ def test_large_programs_are_read_in_linear_time(linear, program):
         ("text(1)", []),
         # Other uses of `tools` can't be read: unknown, never silently dropped.
         ('tools["exec_command"]({cmd: "ls"})', UNKNOWN),
-        ('tools.exec_command?.({cmd: "ls"}); tools.a(1)', UNKNOWN + [("a", 1)]),
+        ('tools.exec_command?.({cmd: "ls"}); tools.a(1)', [*UNKNOWN, ("a", 1)]),
         ('const t = tools; t.exec_command({cmd: "ls"})', UNKNOWN),
         ("const f = tools.a; f(1)", UNKNOWN),
         ("mytools.a(1); $tools.b(2); tools_c(3)", []),

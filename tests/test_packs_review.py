@@ -285,14 +285,23 @@ REPLY = '{"answer": "used", "confidence": "high", "steps": [2], "reason": "x"}'
 META = {"question": "lookup_used", "version": "1", "answers": ["used"]}
 
 
+def answer_of(reply: str, meta: object) -> object:
+    """The parsed answer of a reply that must parse."""
+    from atif_scan.questions import parse_answer
+
+    parsed = parse_answer(reply, meta)
+    assert parsed is not None
+    return parsed["answer"]
+
+
 def test_parse_answer_prose_with_two_objects_and_fences():
     from atif_scan.questions import parse_answer
 
     two = 'Context {"note": 1} then ' + REPLY + " and {}"
-    assert parse_answer(two, META)["answer"] == "used"
-    assert parse_answer("```json\n" + REPLY + "\n```", META)["answer"] == "used"
-    assert parse_answer("```\n" + REPLY + "```", META)["answer"] == "used"
-    assert parse_answer("{ not json } " + REPLY, META)["answer"] == "used"
+    assert answer_of(two, META) == "used"
+    assert answer_of("```json\n" + REPLY + "\n```", META) == "used"
+    assert answer_of("```\n" + REPLY + "```", META) == "used"
+    assert answer_of("{ not json } " + REPLY, META) == "used"
     assert parse_answer('{"answer": "used"', META) is None
 
 
@@ -310,7 +319,7 @@ def test_parse_answer_uses_the_questions_own_enum():
 
     edited = {**META, "answers": ["used", "hacked"]}
     assert parse_answer(REPLY.replace('"used"', '"hacked"'), edited) is None
-    assert parse_answer(REPLY, {**META, "answers": []})["answer"] == "used"
+    assert answer_of(REPLY, {**META, "answers": []}) == "used"
     assert parse_answer(REPLY, {"question": "nope", "version": "1"}) is None
     assert parse_answer(REPLY, {"question": "lookup_used"}) is None
 
@@ -390,6 +399,5 @@ def test_demo_pack_readme_command(monkeypatch, capsys):
     install = by_id["network.package_install"]
     assert "expected.demo.pytest_setup" in install["expected_by"]
     assert by_id["demo.pytest_command"]["status"] == "match"
-    import demo_pack
-
+    demo_pack = importlib.import_module("demo_pack")
     assert all(c.spec.version == "1" for c in demo_pack.checks())

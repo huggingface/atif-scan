@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 
 from atif_scan import sources
 from atif_scan.cli import main
 from atif_scan.estimates import cost_estimate, missing_activity
+
+if TYPE_CHECKING:
+    from atif_scan.jsonval import Doc
 
 SECRET = "sk-live-abcdefghijklmnop1234"
 RATES = (2.5, 0.6, 10.0)  # $/M uncached, cached, output
@@ -59,12 +63,12 @@ def test_cost_estimate_recovers_the_runs_own_prices():
         "output_tokens": None,
         "cost_usd": None,
     }
-    est = cost_estimate(items + [zero, blank])
+    est = cost_estimate([*items, zero, blank])
     assert est["unpriced_ids"] == ["t102"] and est["no_usage"] == 1
 
 
 def test_missing_activity_range_brackets_the_truth():
-    refs = [
+    refs: list[Doc] = [
         {
             "input_id": f"r{i}",
             "input_tokens": 100_000 * (20 + i),
@@ -75,13 +79,13 @@ def test_missing_activity_range_brackets_the_truth():
     ]  # ~100k prompt tokens per recorded call
     # A compacted trial that really made 400 calls but recorded 10.
     comp = {"input_id": "c1", "input_tokens": 100_000 * 400, "llm_calls": 10, "compacted": True}
-    est = missing_activity(refs + [comp])
+    est = missing_activity([*refs, comp])
     lo, hi = est["compacted_recorded_pct"]
     assert lo <= 100 * 10 / 400 <= hi * 1.1
     run_lo, run_hi = est["missing_calls_pct"]
     total = sum(r["llm_calls"] for r in refs) + 400
     assert run_lo - 0.1 <= 100 * 390 / total <= run_hi + 1  # estimates are rounded
-    assert missing_activity(refs[:5] + [comp])["missing_calls_pct"] is None  # too few references
+    assert missing_activity([*refs[:5], comp])["missing_calls_pct"] is None  # too few references
     assert missing_activity(refs)["compacted"] == 0
 
 
@@ -226,11 +230,12 @@ def test_brief_colour_only_on_terminals(tmp_path, capsys):
 
     from rich.console import Console
 
-    from atif_scan.brief import brief, brief_text, colourise, print_brief
+    from atif_scan.brief import brief_text, colourise, print_brief
 
     root = write_run(tmp_path)
     main([str(root), "--brief", "--format", "json"])
-    text = brief_text(json.loads(capsys.readouterr().out))
+    doc = json.loads(capsys.readouterr().out)
+    text = brief_text(doc)
     # Piped / non-terminal: byte-identical plain text, no escape codes.
     buffer = io.StringIO()
     print_brief(text, file=buffer)
@@ -240,10 +245,11 @@ def test_brief_colour_only_on_terminals(tmp_path, capsys):
     assert styled.plain == text
     styles = {str(span.style) for span in styled.spans}
     assert {"bold cyan", "bold yellow", "bold magenta"} <= styles
-    console = Console(file=io.StringIO(), force_terminal=True, color_system="standard")
+    terminal = io.StringIO()
+    console = Console(file=terminal, force_terminal=True, color_system="standard")
     console.print(styled, end="")
-    assert "\x1b[" in console.file.getvalue()
-    assert brief  # the JSON brief itself is uncoloured by construction
+    assert "\x1b[" in terminal.getvalue()
+    assert "\x1b[" not in json.dumps(doc)  # the JSON brief is uncoloured by construction
 
 
 def test_brief_names_the_task_pack_for_a_known_dataset_without_loading_it():

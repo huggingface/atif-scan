@@ -72,9 +72,10 @@ def surface(text, channel=Channel.COMMAND):
     return Surface(Locator(0, channel), Content(text))
 
 
-def alternatives(pattern: str) -> list[str]:
+def alternatives(pattern: str) -> list[str]:  # noqa: C901 - a small regex scanner; splitting it would hide the state machine
     """Top-level `|` alternatives of a regex source (escapes, classes and groups kept)."""
-    out, depth, start, i, in_class = [], 0, 0, 0, False
+    out: list[str] = []
+    depth, start, i, in_class = 0, 0, 0, False
     while i < len(pattern):
         c = pattern[i]
         if c == "\\":
@@ -210,7 +211,7 @@ def test_token_shape_lookahead_lists_every_first_character():
     for branch, example in zip(branches, TOKEN_EXAMPLES, strict=True):
         assert re.fullmatch(branch, example, re.S), (branch, example)
         assert example[0] in first
-        assert [f.span for f in credentials.find(example)][0] == (0, len(example))
+        assert next(f.span for f in credentials.find(example)) == (0, len(example))
 
 
 # --- equivalence of rewritten patterns -------------------------------------------
@@ -369,7 +370,7 @@ def test_detection_of_dedupes_and_decides_status():
 
 def test_locator_requires_a_step():
     with pytest.raises(ValueError):
-        Locator(None, Channel.MESSAGE)
+        Locator(None, Channel.MESSAGE)  # ty: ignore[invalid-argument-type] - runtime validation of a bad step
     with pytest.raises(ValueError):
         Locator(-1, Channel.MESSAGE)
 

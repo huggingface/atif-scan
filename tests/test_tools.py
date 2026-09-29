@@ -8,6 +8,7 @@ from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "task_diff.py"
 spec = importlib.util.spec_from_file_location("task_diff", TOOL)
+assert spec and spec.loader
 task_diff = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(task_diff)
 

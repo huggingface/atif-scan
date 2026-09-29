@@ -210,7 +210,8 @@ def test_trajectory_totals_that_differ_from_step_usage_are_flagged(tmp_path, cap
     # Steps that never record cached tokens leave them unknown, not a mismatching 0.
     raw = trajectory([step()], (100, 10, 50))
     raw["steps"][0]["metrics"] = {"prompt_tokens": 100, "completion_tokens": 10}
-    assert parse_trace(raw).step_usage.cached_tokens is None
+    usage = parse_trace(raw).step_usage
+    assert usage is not None and usage.cached_tokens is None
 
 
 def test_step_usage_is_the_fallback_when_totals_are_missing():
@@ -219,8 +220,10 @@ def test_step_usage_is_the_fallback_when_totals_are_missing():
     # although every step records its own usage, except for a retried call.
     trace = parse_trace(trajectory([step((100, 10, 50)), step((200, 20, 150), calls=2), step()]))
     assert trace.usage is None
-    assert (trace.step_usage.prompt_tokens, trace.step_usage.completion_tokens) == (300, 30)
-    assert trace.step_usage.cached_tokens == 200
+    usage = trace.step_usage
+    assert usage is not None
+    assert (usage.prompt_tokens, usage.completion_tokens) == (300, 30)
+    assert usage.cached_tokens == 200
     assert trace.calls_without_usage == 2  # the retried call + the unmetered step
     full = parse_trace(trajectory([step((100, 10, 50)), step((200, 20, 150), calls=1)]))
     assert full.calls_without_usage == 0

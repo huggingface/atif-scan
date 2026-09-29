@@ -15,7 +15,7 @@ def writes(text: str) -> list[str]:
     return [path for command in script.commands for path, _ in shell.writes(command)]
 
 
-def names(text: str) -> list[str | None]:
+def names(text: str) -> list[str]:
     return sorted(c.name or "" for c in shell.parse(text).commands)
 
 
