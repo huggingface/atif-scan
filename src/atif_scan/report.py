@@ -607,12 +607,21 @@ def summary_text(s: Doc) -> str:
 MIN_ATTEMPTS_FOR_SE = 2
 
 
-def accuracy(by_task: dict[str, list[bool]]) -> tuple[float, float] | None:
-    total = sum(len(v) for v in by_task.values())
-    if not total:
+def accuracy(
+    by_task: dict[str, list[bool]], unknown: Sequence[bool] = ()
+) -> tuple[float, float | None] | None:
+    """(accuracy %, its standard error %) over what's given. Accuracy counts every scored
+    trial, with or without a known task (`unknown`: outcomes of trials without one). The
+    SE is the leaderboard's per-task one, so it uses the trials with a known task only;
+    None when no trial has one. Trials without a task are never grouped into a stand-in
+    task: that would invent task coverage and per-task spread."""
+    outcomes = [ok for v in by_task.values() for ok in v] + list(unknown)
+    if not outcomes:
         return None
-    acc = 100.0 * sum(sum(v) for v in by_task.values()) / total
+    acc = 100.0 * sum(outcomes) / len(outcomes)
     n = len(by_task)
+    if not n:
+        return round(acc, 2), None
     var = sum(
         (sum(v) / len(v)) * (1 - sum(v) / len(v)) / (len(v) - 1)
         for v in by_task.values()
@@ -831,13 +840,21 @@ def _dq_split(items: Sequence[Doc], threshold: int) -> tuple[list[str], list[str
     return dq_ids, uncleared
 
 
-def _by_task(scored: Sequence[Doc], flagged: set[str] | None = None) -> dict[str, list[bool]]:
-    """Outcomes per task; `flagged` trials count as failures (the DQ scenario)."""
+def _by_task(
+    scored: Sequence[Doc], flagged: set[str] | None = None
+) -> tuple[dict[str, list[bool]], list[bool]]:
+    """(outcomes per known task, outcomes of trials without a task); `flagged` trials
+    count as failures (the DQ scenario)."""
     by_task: dict[str, list[bool]] = {}
+    unknown: list[bool] = []
     for i in scored:
         ok = bool(_outcome(i)) and i["input_id"] not in (flagged or set())
-        by_task.setdefault(i.get("task") or "?", []).append(ok)
-    return by_task
+        task = i.get("task")
+        if task:
+            by_task.setdefault(task, []).append(ok)
+        else:
+            unknown.append(ok)
+    return by_task, unknown
 
 
 def _trial_counts(items: Sequence[Doc], planned: int | None, scored: int) -> Doc:
@@ -856,10 +873,15 @@ def _trial_counts(items: Sequence[Doc], planned: int | None, scored: int) -> Doc
     }
 
 
-def _task_counts(by_task: dict[str, list[bool]], k: int | None, expect_tasks: int | None) -> Doc:
+def _task_counts(
+    by_task: dict[str, list[bool]], k: int | None, expect_tasks: int | None, no_task: int = 0
+) -> Doc:
+    """Known tasks only: trials without a task are counted, never grouped as a task."""
     counts = sorted(len(v) for v in by_task.values())
     return {
         "count": len(by_task),
+        # Scored trials without a known task: in the accuracy, not in task counts or SE.
+        "scored_without_task": no_task,
         "min_trials": counts[0] if counts else None,
         "median_trials": counts[len(counts) // 2] if counts else None,
         "max_trials": counts[-1] if counts else None,
@@ -884,7 +906,7 @@ def _disqualification(
         "candidates": len(dq_ids),
         "candidate_ids": dq_ids,
         "rate_pct": round(100.0 * len(dq_ids) / len(scored), 2) if scored else None,
-        "accuracy_if_disqualified": accuracy(_by_task(scored, flagged)) if dq_ids else None,
+        "accuracy_if_disqualified": accuracy(*_by_task(scored, flagged)) if dq_ids else None,
         "rewarded_not_cleared": len(uncleared),
         "rewarded_not_cleared_ids": uncleared,
         "not_cleared_reasons": uncleared_reasons(
@@ -949,15 +971,15 @@ def overview(
     uncleared = [label for label in uncleared if label not in flagged]
     planned = sum(r["planned_trials"] for r in runs if r.get("planned_trials")) or None
     k = min_trials or max((r.get("n_attempts") or 0 for r in runs), default=0) or None
-    by_task = _by_task(scored)
+    by_task, no_task = _by_task(scored)
     sync_failed = doc.get("coverage", {}).get("sync_failed_files")
     return {
         "runs": runs,
         "trials": _trial_counts(items, planned, len(scored)),
         "reruns": reruns(items, runs),
-        "tasks": _task_counts(by_task, k, expect_tasks),
+        "tasks": _task_counts(by_task, k, expect_tasks, len(no_task)),
         **({"sync_failed_files": sync_failed} if sync_failed else {}),
-        "accuracy": accuracy(by_task),
+        "accuracy": accuracy(by_task, no_task),
         "disqualification": {
             **_disqualification(items, dq, scored, dq_ids, uncleared),
             # Why: a finding at the threshold, or only the model (a fallback's reward).
@@ -1004,7 +1026,8 @@ def _overview_run_lines(ov: Doc) -> list[str]:
     for r in ov["runs"]:
         ref = (r.get("dataset_refs") or [""])[0][:19]
         lines.append(
-            f"  job        {r.get('job_name') or '?'} (harbor {r['job_id'][:8]})"
+            f"  job        {r.get('job_name') or '?'}"
+            + (f" (harbor {str(r['job_id'])[:8]})" if r.get("job_id") else "")
             + (f" · {', '.join(r['datasets'])}@{ref}" if r.get("datasets") else "")
         )
     return lines
@@ -1052,9 +1075,16 @@ def _overview_accuracy_lines(ov: Doc) -> list[str]:
     if not ov["accuracy"]:
         return []
     acc, se = ov["accuracy"]
-    return [
-        f"  accuracy   {acc:.1f}% ± {se:.1f} (successes / all trials; errored without a reward = 0)"
+    spread = f" ± {se:.1f}" if se is not None else ""
+    lines = [
+        f"  accuracy   {acc:.1f}%{spread} (successes / all trials; errored without a reward = 0)"
     ]
+    no_task = ov["tasks"].get("scored_without_task") or 0
+    if no_task and se is not None:
+        lines.append(
+            f"             ± from the trials with a known task ({no_task} scored trials have none)"
+        )
+    return lines
 
 
 def _overview_dq_lines(d: Doc | None) -> list[str]:
@@ -1068,7 +1098,8 @@ def _overview_dq_lines(d: Doc | None) -> list[str]:
         acc, se = d["accuracy_if_disqualified"]
         noun = "success is" if d["candidates"] == 1 else "successes are"
         lines.append(
-            f"  scenario   {acc:.1f}% ± {se:.1f} if {d['candidates']} flagged {noun}"
+            f"  scenario   {acc:.1f}%{f' ± {se:.1f}' if se is not None else ''} if"
+            f" {d['candidates']} flagged {noun}"
             " zeroed (not a verdict)"
         )
     if d["candidate_ids"]:

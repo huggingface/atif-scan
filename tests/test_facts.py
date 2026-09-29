@@ -46,9 +46,30 @@ def test_recorded_tokens_beat_the_trajectory_and_attempt_cost_fills_a_missing_co
     assert facts["recorded_vs_trajectory"] == "differs" and facts["cost_records_agree"] is None
     facts = run_facts({"cost_usd": 1.0, "attempt_cost_usd": 1.005}, traced)
     assert facts["input_tokens"] == 9 and facts["usage_basis"] == "final_metrics"
-    # Without recorded tokens the trajectory's cost is reported, and checked against
-    # harbor-hf's attempt cost.
-    assert facts["cost_usd"] == 9.0 and facts["cost_records_agree"] is False
+    # Cost is decided separately from tokens: the recorded cost wins even when the tokens
+    # come from the trajectory, and it's checked against the attempt cost and the
+    # trajectory's own cost.
+    assert facts["cost_usd"] == 1.0 and facts["cost_records_agree"] is True
+    assert facts["cost_vs_trajectory"] == "differs"
+
+
+def test_cost_is_decided_separately_from_tokens():
+    # Regression (review): a recorded cost was replaced by the trajectory's (even None)
+    # whenever the tokens came from the trajectory; and recorded tokens hid a trajectory
+    # cost when no cost was recorded.
+    def traced(cost):
+        usage = {"cost_usd": cost, "input_tokens": 100, "cache_tokens": 0, "output_tokens": 10}
+        return {**NO_TRACE, "usage": usage, "usage_basis": "final_metrics"}
+
+    assert run_facts({"cost_usd": 12.0}, traced(None))["cost_usd"] == 12.0
+    tokens = {"input_tokens": 100, "cache_tokens": 0, "output_tokens": 10}
+    facts = run_facts(tokens, traced(3.0))
+    assert (facts["cost_usd"], facts["usage_basis"]) == (3.0, "run")
+    # harbor-hf's attempt cost beats the trajectory's, and agrees within a cent.
+    facts = run_facts({"attempt_cost_usd": 3.0}, traced(3.004))
+    assert (facts["cost_usd"], facts["cost_vs_trajectory"]) == (3.0, "same")
+    facts = run_facts({"cost_usd": 12.0}, traced(3.0))
+    assert (facts["cost_usd"], facts["cost_vs_trajectory"]) == (12.0, "differs")
 
 
 def test_record_counting_uncached_input_is_a_convention_and_is_normalised():

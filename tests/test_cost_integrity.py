@@ -12,6 +12,7 @@ from test_brief import section
 from atif_scan.brief import brief, brief_text
 from atif_scan.cli import main
 from atif_scan.estimates import choose_pricing, partial_usage, unmetered_work
+from atif_scan.facts import trace_facts
 from atif_scan.harbor_files import attempt_cost, declared_prices, trial_result
 from atif_scan.loader import parse_trace
 from atif_scan.sync import sync_cap
@@ -257,7 +258,7 @@ def test_partial_step_usage_is_priced_as_a_lower_bound(tmp_path, capsys):
     assert b["unmetered_work"]["trials"] == 0  # not "no usage": its steps record it
     flat = " ".join(out.split())  # unwrapped: phrases may span lines
     assert "⚠ 1 trial (1 rewarded) recorded no totals" in flat
-    assert "missing 1 LLM call (a lower bound)" in flat
+    assert "their steps are summed as a lower bound: 1 LLM call record no usage" in flat
     assert "· est. +<$0.01 for the 1 LLM call without usage" in flat
     assert b["usage"]["basis"] == {"run": 3, "steps_partial": 1}
 
@@ -284,6 +285,7 @@ def test_unmetered_work_is_estimated_from_trials_priced_at_given_rates():
         "trials": 0,
         "ids": [],
         "calls_without_usage": 0,
+        "kinds_partial": {},
         "rewarded": 0,
         "estimate_usd": None,
     }
@@ -352,3 +354,32 @@ def test_rates_are_chosen_once_given_then_declared_then_fitted():
     assert fitted.trial_cost(unpriced) is None
     assert choose_pricing(items, None, declared).trial_cost(unpriced) == 2.0
     assert choose_pricing(items[:5]).rates is None  # too few priced trials: no rates
+
+
+def test_a_token_kind_on_only_some_steps_is_a_lower_bound_not_unrecorded_calls():
+    # Regression (review): a step recording output tokens but no input tokens counted as
+    # fully metered. Without totals the step sum passed as complete; with totals the gap
+    # read as "LLM calls made but not recorded as steps", a cause the data doesn't show.
+    steps = [step((2000, 10, 0), calls=1), step((None, 20, None), calls=1)]
+    steps[1]["metrics"] = {"completion_tokens": 20}
+    trace = parse_trace(trajectory(steps, (5000, 30, 0)))
+    assert trace.step_kinds_partial == ("input", "cached")
+    facts = trace_facts(trace)
+    assert (facts["steps_vs_totals"], facts["tokens_outside_steps"]) == ("same", 0)
+    facts = trace_facts(parse_trace(trajectory(steps)))
+    assert facts["usage_basis"] == "steps_partial"
+    assert facts["step_kinds_partial"] == ["input", "cached"]
+    assert facts["usage"]["output_tokens"] == 30  # complete kinds are still summed
+
+
+def test_partial_kinds_are_named_in_the_brief(tmp_path, capsys):
+    full = [step((1000, 100, 500), calls=1)]
+    omitting = [step((1000, 100, 500), calls=1), step((None, 100, None), calls=1)]
+    omitting[1]["metrics"] = {"completion_tokens": 100}
+    trials = [(result(i), trajectory(full, (1000, 100, 500))) for i in range(3)]
+    trials.append((result(3, tokens=None), trajectory(omitting)))
+    b, out = scan(harbor_hf_run(tmp_path, trials), capsys)
+    assert b["usage"]["partial"]["kinds_partial"] == {"input": 1, "cached": 1}
+    flat = " ".join(out.split())
+    assert "input tokens are missing on some steps in 1 trial" in flat
+    assert "record no usage" not in flat  # no call went unmetered

@@ -10,10 +10,12 @@ The same fact can be recorded in several places. From highest precedence to lowe
 - error_type: result.json > the run listing > Harbor's `exception.txt` marker, which
   only says "exception". (`recorded_facts`, `listed_facts`)
 - status, hub_trial_id, overrides: the run listing (Harbor Hub records only).
-- duration_sec, cost_usd and input/cache/output tokens: result.json > the run listing.
-  Without recorded tokens, the trajectory's tokens and cost (final_metrics totals, else
-  its steps' summed usage) are reported instead. Without any cost, harbor-hf's
-  `attempt-costs` record; with both, whether they agree. (`run_facts`)
+- duration_sec and input/cache/output tokens: result.json > the run listing > the
+  trajectory (final_metrics totals, else its steps' summed usage).
+- cost_usd, decided separately from the tokens: result.json > the run listing >
+  harbor-hf's `attempt-costs` record > the trajectory's final_metrics cost. A recorded
+  cost is checked against the attempt-costs record and against the trajectory's cost
+  when those exist too (`cost_records_agree`, `cost_vs_trajectory`). (`run_facts`)
 - in_job_result: the job's own result.json (does it account for this trial folder?).
 - agent, model, LLM calls, reasoning exposure, output ratio: the trajectory only.
 
@@ -56,6 +58,7 @@ TRACE_FACTS = (
     "usage",
     "usage_basis",
     "calls_without_usage",
+    "step_kinds_partial",
     "cache_write_tokens",
     "steps_vs_totals",
     "tokens_outside_steps",
@@ -111,12 +114,13 @@ def trial_task(
 def _usage(trace: Trace) -> tuple[Doc | None, str | None]:
     """(tokens and cost, where from): final_metrics totals, else the steps' own usage
     (e.g. the harness died before writing totals); `steps_partial` when some LLM calls
-    recorded none."""
+    recorded none, or some steps omit a token kind others record (a lower bound)."""
     usage = trace.usage
     basis = "final_metrics" if usage is not None else None
     if not _has_totals(trace) and trace.step_usage is not None:
         usage = replace(trace.step_usage, cost_usd=usage.cost_usd if usage else None)
-        basis = "steps_partial" if trace.calls_without_usage else "steps"
+        partial = trace.calls_without_usage or trace.step_kinds_partial
+        basis = "steps_partial" if partial else "steps"
     if usage is None:
         return None, basis
     tokens = {
@@ -161,44 +165,50 @@ def trace_facts(trace: Trace | None) -> Doc:
         # summed step metrics, `steps_partial` when some agent steps recorded none).
         "usage_basis": basis,
         "calls_without_usage": trace.calls_without_usage if basis == "steps_partial" else 0,
+        # Token kinds only some metered steps record (their step sums are lower bounds).
+        "step_kinds_partial": list(trace.step_kinds_partial) or None,
         "cache_write_tokens": trace.usage.cache_write_tokens if trace.usage else None,
         **steps_vs_totals(trace),
     }
 
 
-def _step_pairs(trace: Trace) -> list[tuple[int, int]]:
-    """(total, sum of steps) per token kind both record: prompt, output, cached. Empty
-    when they can't be compared like for like: no totals or no step usage, steps without
-    usage, or compacted history (the steps cover only the last context)."""
+def _step_pairs(trace: Trace) -> dict[str, tuple[int, int]]:
+    """{kind: (total, sum of steps)} for the token kinds both record completely: input,
+    output, cached. A kind only some steps record is left out (its step sum is a lower
+    bound, not a total). Empty when they can't be compared like for like: no totals or
+    no step usage, steps without usage, or compacted history (the steps cover only the
+    last context)."""
     totals, steps = trace.usage, trace.step_usage
     if not _has_totals(trace) or totals is None or steps is None:
-        return []
+        return {}
     if trace.calls_without_usage or trace.compacted:
-        return []
-    return [
-        (a, b)
-        for a, b in (
-            (totals.prompt_tokens, steps.prompt_tokens),
-            (totals.completion_tokens, steps.completion_tokens),
-            (totals.cached_tokens, steps.cached_tokens),
-        )
-        if a is not None and b is not None
-    ]
+        return {}
+    kinds = {
+        "input": (totals.prompt_tokens, steps.prompt_tokens),
+        "output": (totals.completion_tokens, steps.completion_tokens),
+        "cached": (totals.cached_tokens, steps.cached_tokens),
+    }
+    return {
+        k: (a, b)
+        for k, (a, b) in kinds.items()
+        if a is not None and b is not None and k not in trace.step_kinds_partial
+    }
 
 
 def steps_vs_totals(trace: Trace) -> Doc:
     """How the trajectory's final_metrics totals compare with the sum of its steps' own
     usage: `same`; `steps_short` when the totals are larger in some kind and smaller in
     none (the harness made LLM calls it didn't record as steps, e.g. retries), with the
-    prompt + output tokens outside the steps; `differs` otherwise; None when not
+    input + output tokens outside the steps; `differs` otherwise; None when not
     comparable (see _step_pairs)."""
     pairs = _step_pairs(trace)
     code, outside = None, None
-    if pairs and all(a == b for a, b in pairs):
+    if pairs and all(a == b for a, b in pairs.values()):
         code, outside = "same", 0
-    elif pairs and all(a >= b for a, b in pairs):
-        # Prompt and output only: cached tokens are part of the prompt tokens.
-        code, outside = "steps_short", sum(a - b for a, b in pairs[:2])
+    elif pairs and all(a >= b for a, b in pairs.values()):
+        # Input and output only: cached tokens are part of the input tokens.
+        code = "steps_short"
+        outside = sum(a - b for k, (a, b) in pairs.items() if k in ("input", "output"))
     elif pairs:
         code = "differs"
     return {"steps_vs_totals": code, "tokens_outside_steps": outside}
@@ -243,35 +253,55 @@ def run_facts(recorded: Mapping[str, object], traced: Mapping[str, object]) -> D
 
     `recorded` is read fresh on every scan (never cached); `traced` is `trace_facts`."""
     has_tokens = recorded.get("input_tokens") is not None
+    usage = traced.get("usage")
+    usage = usage if isinstance(usage, dict) else None
     facts: Doc = {k: recorded.get(k) for k in RECORDED}
     # in_job_result False: the job's own result.json doesn't list this trial (rerun/resume).
     facts["overrides"] = recorded.get("overrides") or []
-    facts["cost_usd"] = recorded.get("cost_usd")
+    facts["cost_usd"] = None  # decided below, independently of the tokens
     facts.update({k: recorded.get(k) for k in TOKENS})
     facts.update({k: v for k, v in traced.items() if k not in ("usage", "usage_basis")})
     # Fixed codes: where the tokens come from ("run" = the run's own records), and
     # whether they agree with the trajectory's (None when there's nothing to compare).
     facts["usage_basis"] = "run" if has_tokens else traced.get("usage_basis")
     facts["recorded_vs_trajectory"] = recorded_vs_trajectory(recorded, traced)
-    usage = traced.get("usage")
-    if facts["recorded_vs_trajectory"] == "uncached_input" and isinstance(usage, dict):
+    if facts["recorded_vs_trajectory"] == "uncached_input" and usage:
         # The record counts uncached input only: report input with cache, like the rest.
         facts["input_tokens"] = usage.get("input_tokens")
-    # harbor-hf's attempt-costs record, when it and the trial's own record both have a
-    # cost (None otherwise): a cost recorded twice must agree.
-    facts["cost_records_agree"] = None
-    if not has_tokens and isinstance(usage, dict):
-        facts.update(usage)  # the trajectory's tokens, and its cost over a recorded one
+    if not has_tokens and usage:
+        facts.update({k: usage.get(k) for k in TOKENS})  # the trajectory's tokens
     elif not has_tokens:
         facts["usage_basis"] = None
-    beside = recorded.get("attempt_cost_usd")
-    cost = facts["cost_usd"]
-    if isinstance(beside, int | float):
-        if cost is None:
-            facts["cost_usd"] = beside
-        elif isinstance(cost, int | float):
-            facts["cost_records_agree"] = _costs_agree(cost, beside)
+    facts.update(_cost(recorded, usage))
     return facts
+
+
+def _cost(recorded: Mapping[str, object], usage: Mapping[str, object] | None) -> Doc:
+    """cost_usd: the run's record > harbor-hf's attempt-costs > the trajectory's; and
+    whether a recorded cost agrees with the other two where they exist (None: nothing to
+    compare). A cost recorded in several places must agree."""
+    costs = [
+        c if isinstance(c, int | float) else None
+        for c in (
+            recorded.get("cost_usd"),
+            recorded.get("attempt_cost_usd"),
+            usage.get("cost_usd") if usage else None,
+        )
+    ]
+    run, beside, traced = costs
+    chosen = next((c for c in costs if c is not None), None)
+    first = run if run is not None else beside
+    return {
+        "cost_usd": chosen,
+        # harbor-hf's attempt-costs record, when the trial's own record has a cost too.
+        "cost_records_agree": _costs_agree(run, beside)
+        if run is not None and beside is not None
+        else None,
+        # The trajectory's own cost, when a recorded one exists too.
+        "cost_vs_trajectory": ("same" if _costs_agree(first, traced) else "differs")
+        if first is not None and traced is not None
+        else None,
+    }
 
 
 def assemble(scanned: Mapping[str, object], facts: Mapping[str, object]) -> Doc:

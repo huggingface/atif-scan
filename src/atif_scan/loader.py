@@ -607,7 +607,7 @@ def parse_trace(value: object) -> Trace:
     steps = [parse_step(index, raw) for index, raw in enumerate(raw_steps)]
     metrics = value.get("final_metrics")
     tokens = as_object(as_object(metrics).get("extra")).get("total_tool_use_tokens")
-    per_step, unmetered = step_usage(raw_steps)
+    per_step, unmetered, partial_kinds = step_usage(raw_steps)
     return Trace(
         version,
         tuple(steps),
@@ -622,6 +622,7 @@ def parse_trace(value: object) -> Trace:
         agent=agent_info(value.get("agent")),
         step_usage=per_step,
         calls_without_usage=unmetered if per_step is not None else 0,
+        step_kinds_partial=partial_kinds,
     )
 
 
@@ -764,16 +765,18 @@ def _observation(value: object) -> Observation:
     return Observation(source_call_id, content(value.get("content")))
 
 
-def step_usage(raw_steps: list[object]) -> tuple[Usage | None, int]:
-    """(summed per-step token usage, LLM calls without usage). Steps record
-    `metrics.{prompt,completion,cached}_tokens`; the sum is the fallback when
-    final_metrics has no totals (e.g. the harness died before writing them). A step
-    without metrics leaves all its calls (`llm_call_count`, else 1) unmetered; a step
-    with metrics but several calls is read as metering one of them (a retry's usage is
-    often lost), so the sum is a lower bound. None when no agent step recorded usage."""
+def step_usage(raw_steps: list[object]) -> tuple[Usage | None, int, tuple[str, ...]]:
+    """(summed per-step token usage, LLM calls without usage, token kinds only some
+    metered steps record). Steps record `metrics.{prompt,completion,cached}_tokens`; the
+    sum is the fallback when final_metrics has no totals (e.g. the harness died before
+    writing them). A step without metrics leaves all its calls (`llm_call_count`, else 1)
+    unmetered; a step with metrics but several calls is read as metering one of them (a
+    retry's usage is often lost). A kind is complete only when every metered step records
+    it: recorded on some steps it's a lower bound (a partial kind), on none it's unknown
+    (None), never 0. None when no agent step recorded usage."""
     totals = [0, 0, 0]
     seen = missing = 0
-    recorded = [False, False, False]  # a kind no step records stays unknown, not 0
+    recorded = [0, 0, 0]  # metered steps recording each kind
     for raw in raw_steps:
         if not is_object(raw) or raw.get("source") != "agent":
             continue
@@ -786,13 +789,18 @@ def step_usage(raw_steps: list[object]) -> tuple[Usage | None, int]:
         seen += 1
         missing += max((calls or 1) - 1, 0)
         totals = [t + (v or 0) for t, v in zip(totals, values, strict=True)]
-        recorded = [r or v is not None for r, v in zip(recorded, values, strict=True)]
+        recorded = [r + (v is not None) for r, v in zip(recorded, values, strict=True)]
     if not seen:
-        return None, missing
+        return None, missing, ()
     kinds = [t if r else None for t, r in zip(totals, recorded, strict=True)]
-    return Usage(None, *kinds), missing
+    partial = tuple(
+        name for name, r in zip(TOKEN_KIND_NAMES, recorded, strict=True) if 0 < r < seen
+    )
+    return Usage(None, *kinds), missing, partial
 
 
+# How the report names each step token kind (usage fields: input, output, cache).
+TOKEN_KIND_NAMES = ("input", "output", "cached")
 STEP_TOKEN_KINDS = ("prompt_tokens", "completion_tokens", "cached_tokens")
 
 

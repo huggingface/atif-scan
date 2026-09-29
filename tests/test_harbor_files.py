@@ -324,3 +324,13 @@ def test_job_listed_trials_tolerates_malformed_stats():
     assert listed({"evals": {"e": {"reward_stats": {"reward": {"1.0": ["a", 3, ""]}}}}}) == {"a"}
     assert listed({"evals": {"e": {"exception_stats": {"E": ["b"]}}, "f": None}}) == {"b"}
     assert job_listed_trials(b"not json") is None and job_listed_trials(None) is None
+
+
+def test_overview_of_a_job_folder_without_a_job_id(tmp_path, capsys):
+    # Regression (review follow-up): a job folder whose job result.json is missing (an
+    # interrupted job) has no job ID, and --overview crashed on it.
+    job = harbor_job(tmp_path)
+    (job / "result.json").unlink()
+    assert main([str(job), "--overview", "--format", "text"]) == 0
+    out = capsys.readouterr().out
+    assert "  job        my-run" in out and "harbor None" not in out

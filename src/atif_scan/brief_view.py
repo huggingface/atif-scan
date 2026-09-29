@@ -6,6 +6,7 @@ Written to be read top to bottom by someone deciding whether a run's score stand
     SCORE     the recorded result, and what it would be without the flagged successes
     REVIEW    which rewarded trials need a human, and why
     FINDINGS  what the checks found, by review priority, in plain words
+    AWARENESS whether the agent worked out it was being benchmarked, stage by stage
     EVIDENCE  whether the trials and their recordings are complete enough to rely on
     TOKENS    token accounting: independent records of usage, checked against each other
     COST      priced from those tokens
@@ -270,7 +271,10 @@ def _shape(b: Doc) -> str:
     per = f"{low}" if low == high else f"{low}–{high}"
     # Task counts are over scored trials: say so when some trials have no reward.
     scored = " scored" if b["overview"]["trials"]["reward_unknown"] else ""
-    return f"{plural(n, 'trial')} of {plural(k['count'], 'task')}, {per}{scored} per task"
+    shape = f"{plural(n, 'trial')} of {plural(k['count'], 'task')}, {per}{scored} per task"
+    if no_task := k.get("scored_without_task"):
+        shape += f", and {plural(no_task, 'scored trial')} without a known task"
+    return shape
 
 
 def _leaderboard(lb: Doc) -> str:
@@ -299,8 +303,9 @@ def run_section(b: Doc) -> Lines:
 def _has_se(b: Doc) -> bool:
     """The per-task SE needs tasks and repeat attempts (one attempt per task: not
     estimable, so it's left out rather than shown as 0)."""
-    tasks = b["overview"]["tasks"]
-    return bool(b["tasks_known"]) and (tasks.get("max_trials") or 0) >= MIN_ATTEMPTS_FOR_SE
+    tasks, acc = b["overview"]["tasks"], b["overview"]["accuracy"]
+    known = bool(acc) and acc[1] is not None and bool(tasks.get("count"))
+    return known and (tasks.get("max_trials") or 0) >= MIN_ATTEMPTS_FOR_SE
 
 
 def _reported(lb: Doc, n: int) -> Lines:
@@ -339,7 +344,13 @@ def score_section(b: Doc) -> Lines:
     if ov["trials"]["reward_unknown"]:
         body.append(f"{WARN} {plural(ov['trials']['reward_unknown'], 'trial')} without a reward")
     body += _scenario(ov["disqualification"], has_se)
-    if has_se:
+    no_task = ov["tasks"].get("scored_without_task") or 0
+    if has_se and no_task:
+        body.append(
+            f"{INFO} ± is one standard error, from the spread of attempts per task, over the"
+            f" {scored - no_task:,} scored trials with a known task"
+        )
+    elif has_se:
         body.append(f"{INFO} ± is one standard error, from the spread of attempts per task")
     elif b["tasks_known"] and ov["tasks"].get("count"):
         body.append(f"{INFO} no ± with one attempt per task (the error isn't estimable)")
@@ -528,6 +539,35 @@ def findings_section(b: Doc) -> Lines:
             + counts((k, by[k]) for k in PRIORITIES if by.get(k))
         )
     return wrap("FINDINGS", body)
+
+
+# --- AWARENESS: did the agent work out it was being benchmarked? --------------------------
+
+
+def awareness_section(b: Doc) -> Lines:
+    aw = b.get("awareness") or {}
+    stages = aw.get("stages") or []
+    if not stages:
+        return []
+    n, known = aw.get("scanned") or _present(b), _rewards_known(b)
+    head = (
+        f"{plural(aw['trials'], 'trial')} of {n:,} scanned ({pct(aw['trials'], n)}) show"
+        " benchmark awareness, at any review priority"
+        if aw["trials"]
+        else f"{OK} no scanned trial shows benchmark awareness"
+    )
+    rows = [" trials  rewarded  the agent"] if aw["trials"] else []
+    for st in stages if aw["trials"] else []:
+        rewarded = f"{st['rewarded']:>9,}" if known else f"{'—':>9}"
+        rows.append(f" {st['trials']:>6,} {rewarded}  {st['label']}")
+    talk = aw.get("verifier_talk")
+    if talk and talk["trials"]:
+        rewarded = f" ({talk['rewarded']:,} rewarded)" if known else ""
+        rows.append(
+            f"{INFO} {plural(talk['trials'], 'trial')}{rewarded} talked about hidden tests or"
+            " the verifier (common in ordinary work, so not counted above)"
+        )
+    return wrap("AWARENESS", [head, *rows])
 
 
 # --- EVIDENCE: are the trials and their recordings complete? -----------------------------
@@ -769,10 +809,16 @@ def _usage_gaps(b: Doc) -> Lines:
     texts = []
     if pu.get("trials"):
         rewarded = f" ({pu['rewarded']:,} rewarded)" if pu["rewarded"] else ""
+        gaps = []
+        if pu["calls_without_usage"]:
+            gaps.append(f"{plural(pu['calls_without_usage'], 'LLM call')} record no usage")
+        gaps += [
+            f"{kind} tokens are missing on some steps in {plural(n, 'trial')}"
+            for kind, n in (pu.get("kinds_partial") or {}).items()
+        ]
         texts.append(
-            f"{WARN} {plural(pu['trials'], 'trial')}{rewarded} recorded no totals: their"
-            f" steps are summed, missing {plural(pu['calls_without_usage'], 'LLM call')}"
-            " (a lower bound)"
+            f"{WARN} {plural(pu['trials'], 'trial')}{rewarded} recorded no totals, so their"
+            " steps are summed as a lower bound: " + "; ".join(gaps)
         )
     if um["trials"]:
         why = ", ".join(
@@ -943,6 +989,18 @@ def _price_checks(b: Doc) -> Lines:
         )
     elif pc and b["cost_estimate"].get("price_source") != "declared":
         texts.append(f"{INFO} no recorded cost to check the declared prices against")
+    vt = {str(k): int(v) for k, v in (ci.get("cost_vs_trajectory") or {}).items()}
+    compared = sum(vt.values())
+    if vt.get("differs"):
+        texts.append(
+            f"{WARN} {vt['differs']:,} of {plural(compared, 'trial')}: the recorded cost"
+            " differs from the trajectory's own (the recorded one is used)"
+        )
+    elif compared:
+        texts.append(
+            f"{OK} recorded costs match the trajectories' own in {compared:,} of"
+            f" {plural(compared, 'compared trial')}"
+        )
     if cr.get("mismatched"):
         texts.append(
             f"{WARN} {cr['mismatched']:,} of {plural(cr['compared'], 'trial')}: result.json and"
@@ -1045,6 +1103,7 @@ SECTIONS: tuple[Callable[[Doc], Lines], ...] = (
     score_section,
     review_section,
     findings_section,
+    awareness_section,
     evidence_section,
     tokens_section,
     cost_section,
@@ -1068,7 +1127,7 @@ def brief_text(b: Doc) -> str:
 # Styles are applied to the plain text by pattern, so the coloured and plain views can
 # never say different things. rich honours NO_COLOR and disables colour when piped.
 
-LABELS = "RUN|SCORE|REVIEW|FINDINGS|EVIDENCE|TOKENS|COST|SETTINGS|MORE"
+LABELS = "RUN|SCORE|REVIEW|FINDINGS|AWARENESS|EVIDENCE|TOKENS|COST|SETTINGS|MORE"
 SEVERITY_STYLE = {**STYLE, "none": "dim", "unavailable": "yellow"}
 PATTERNS = [
     (r"^atif-scan .*$", "bold"),
@@ -1081,6 +1140,7 @@ PATTERNS = [
     (r"(?<=^SCORE {6})\d+\.\d+%(?: ± \d+\.\d+)?", "bold"),
     (r"\best\. [^;·(]*?\d[\d.,–%$<]*", "magenta"),
     (r"^ {11}priority +trials +rewarded +finding$", "dim underline"),
+    (r"^ {11}trials +rewarded +the agent$", "dim underline"),
     (r"^ {33,}[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$", "dim"),
     (r"^--summary .*$", "dim"),
 ]

@@ -117,3 +117,44 @@ def test_brief_overview_and_tool_show_the_index(tmp_path, capsys, monkeypatch):
     assert "row-full" in table and "row-brief" in table and "50.0%" in table
     assert "1 report(s) skipped" in table
     assert "input-0001" not in table and "echo" not in table
+
+
+def test_unknown_tasks_are_counted_as_given_never_grouped_as_a_task():
+    # Regression (review): trials without a task were grouped as one task "?", so two
+    # unidentified trials read as 1 task with 50% ± 50% and "1 task below 5 trials".
+    # Unknown tasks are allowed (runs mix sources): accuracy covers every scored trial,
+    # task counts and the per-task SE cover the trials with a known task.
+    from atif_scan.brief import brief, brief_text
+    from atif_scan.report import overview
+
+    def item(i, reward, task=None):
+        return {
+            "input_id": f"t{i}",
+            "input_status": "available",
+            "incomplete": False,
+            "task": task,
+            "reward": reward,
+            "assessments": [],
+        }
+
+    runs = [
+        {"source": "harbor_hub", "job_id": "11111111-1111-4111-8111-111111111111", "n_attempts": 5}
+    ]
+    doc = {
+        "scanner_version": "dev",
+        "inputs": [item(0, 1.0), item(1, 0.0)],
+        "coverage": {},
+        "runs": runs,
+    }
+    ov = overview(doc)
+    assert ov["accuracy"] == (50.0, None)
+    assert ov["tasks"]["count"] == 0 and ov["tasks"]["below_expected"] == []
+    mixed = [item(0, 1.0, "a"), item(1, 0.0, "a"), item(2, 1.0, "b"), item(3, 1.0, "b")]
+    mixed += [item(4, 1.0), item(5, 0.0)]
+    doc["inputs"] = mixed
+    ov = overview(doc)
+    assert ov["accuracy"][0] == round(100 * 4 / 6, 2)  # every scored trial
+    assert ov["tasks"]["count"] == 2 and ov["tasks"]["scored_without_task"] == 2
+    text = " ".join(brief_text(brief(doc)).split())
+    assert "6 trials of 2 tasks, 2 per task, and 2 scored trials without a known task" in text
+    assert "over the 4 scored trials with a known task" in text

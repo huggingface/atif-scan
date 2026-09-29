@@ -236,6 +236,9 @@ class Trace:
     # has no totals.
     step_usage: Usage | None = None
     calls_without_usage: int = 0
+    # Token kinds ("input", "output", "cached") only some metered steps record: their
+    # step sums are lower bounds, never complete totals.
+    step_kinds_partial: tuple[str, ...] = ()
 
     @cached_property
     def step_models(self) -> dict[str, int]:

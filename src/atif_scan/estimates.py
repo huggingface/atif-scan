@@ -260,9 +260,10 @@ def price_check(items: Sequence[Doc], price: Rates | None) -> Doc | None:
 
 
 def partial_usage(items: Sequence[Doc], pricing: Pricing | None = None) -> Doc:
-    """Trials whose tokens come from step metrics with some LLM calls unmetered: their
-    tokens (and cost) are lower bounds. With a cost (recorded, else at known rates), the
-    unmetered calls are estimated at the trial's own metered cost per call (rough)."""
+    """Trials whose tokens come from step metrics with some LLM calls unmetered, or some
+    token kinds on only some steps: their tokens (and cost) are lower bounds. With a cost
+    (recorded, else at known rates), the unmetered calls are estimated at the trial's own
+    metered cost per call (rough)."""
     pricing = pricing or Pricing()
     rows = [i for i in items if i.get("usage_basis") == "steps_partial"]
     estimate, priced = 0.0, 0
@@ -273,10 +274,16 @@ def partial_usage(items: Sequence[Doc], pricing: Pricing | None = None) -> Doc:
         if cost and metered > 0:
             estimate += cost * missing / metered
             priced += 1
+    kinds: dict[str, int] = {}
+    for i in rows:
+        for kind in i.get("step_kinds_partial") or []:
+            kinds[kind] = kinds.get(kind, 0) + 1
     return {
         "trials": len(rows),
         "ids": [i["input_id"] for i in rows],
         "calls_without_usage": sum(i.get("calls_without_usage") or 0 for i in rows),
+        # Token kind -> trials where only some steps record it (a lower bound).
+        "kinds_partial": dict(sorted(kinds.items())),
         "rewarded": sum(1 for i in rows if (i.get("reward") or 0) > 0),
         # Only when every such trial could be priced: a partial sum would read as whole.
         "estimate_usd": round(estimate, 4) if rows and priced == len(rows) else None,
