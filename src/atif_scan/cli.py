@@ -22,6 +22,7 @@ from .cite import citations
 from .detectors import builtin_detectors
 from .engine import Engine, effective_context
 from .facts import assemble, recorded_facts, run_facts, trace_facts, trial_reward, trial_task
+from .harbor_files import SUBMISSION_BYTES, submission, text_label
 from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .layout import document as inspection
 from .loader import TraceError
@@ -377,6 +378,14 @@ def _input_arguments(parser: argparse.ArgumentParser) -> None:
         "without reading any trace",
     )
     parser.add_argument("--manifest", type=Path, help="explicit input manifest (JSON)")
+    parser.add_argument(
+        "--submission",
+        type=Path,
+        metavar="FILE",
+        help="a leaderboard submission file (e.g. terminal-bench leaderboard/submissions/"
+        "*.json): scan its source_jobs from the Harbor Hub as one run, and check every trial "
+        "against its source_filter",
+    )
     harbor = parser.add_argument_group("Harbor Hub jobs (harbor://jobs/<id> or a hub URL)")
     harbor.add_argument(
         "--sync",
@@ -570,11 +579,30 @@ def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespac
         parser.error("--cite requires detail or summary output, not brief/overview/inspect")
 
 
+def _submission(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Doc | None:
+    """--submission FILE: its source jobs join the inputs as harbor://jobs/<id>; the file's
+    name (a label) and source filter go into the report."""
+    if args.submission is None:
+        return None
+    if args.manifest:
+        parser.error("--submission can't be combined with --manifest")
+    try:
+        found = submission(args.submission.read_bytes()[: SUBMISSION_BYTES + 1])
+    except OSError:
+        found = None
+    if found is None:
+        parser.error("--submission: not a readable leaderboard submission (no source_jobs)")
+    args.paths = [*args.paths, *(f"harbor://jobs/{job}" for job in found["jobs"])]
+    name = text_label(args.submission.stem, 120)
+    return {"name": name, **found}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     _check_combinations(parser, args)
     args.price_rates = price(args.price)  # validate early, whatever the output format
+    args.submission_doc = _submission(parser, args)
     if args.inspect:
         return inspect(args)
     args.sync_root = args.sync_dir or default_sync_root()
@@ -720,6 +748,8 @@ def _document(output: list[Doc], args: argparse.Namespace, sync_failed: int, eng
         doc["runs"] = args.runs
     if args.packs_loaded:
         doc["packs"] = args.packs_loaded
+    if args.submission_doc:
+        doc["submission"] = args.submission_doc
     return doc
 
 

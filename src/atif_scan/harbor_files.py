@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
+from itertools import pairwise
 
 from .checks import identifier
 from .jsonval import (
@@ -274,6 +275,68 @@ def attempt_cost(data: bytes | None, attempt_id: str, trial: str) -> float | Non
     if d.get("attempt_id") != attempt_id or d.get("trial_name") != trial:
         return None
     return number(d.get("cost_usd"), 0)
+
+
+# A Harbor job whose trials start after a gap this long (and are at most this share of
+# the job) was topped up later: replacements or reruns added after the job itself ran.
+LATE_GAP_SEC = 3600
+LATE_SHARE = 0.1
+LATE_MIN_TRIALS = 2  # a small job may still have one or two late trials
+MIN_STARTS = 2  # a gap needs two start times
+
+
+def started(record: Mapping[str, object]) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(record["started_at"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def late_trials(records: Sequence[Mapping[str, object]]) -> Doc | None:
+    """Trials of one job that started after a gap of LATE_GAP_SEC or more following all of
+    its others (at most LATE_SHARE of the job): added to the job after it had run, e.g.
+    replacements of failed trials. {trials, rewarded, gap_hours}, or None when there are
+    none (or start times are missing)."""
+    timed = sorted(((t, r) for r in records if (t := started(r)) is not None), key=lambda tr: tr[0])
+    if len(timed) < len(records) or len(timed) < MIN_STARTS:
+        return None
+    gaps = [(b[0] - a[0]).total_seconds() for a, b in pairwise(timed)]
+    cut = max(range(len(gaps)), key=gaps.__getitem__)
+    tail = timed[cut + 1 :]
+    if gaps[cut] < LATE_GAP_SEC or len(tail) > max(LATE_MIN_TRIALS, LATE_SHARE * len(timed)):
+        return None
+    return {
+        "trials": len(tail),
+        "rewarded": sum(1 for _, r in tail if (number(r.get("reward")) or 0) > 0),
+        "gap_hours": round(gaps[cut] / 3600, 1),
+    }
+
+
+SUBMISSION_BYTES = 1024 * 1024
+UUID_TEXT = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+FILTER_KEYS = ("agent", "agent_version", "model_name", "reasoning_effort")
+
+
+def submission(data: bytes | None) -> Doc | None:
+    """A leaderboard submission file (terminal-bench leaderboard/submissions/*.json): the
+    Hub jobs it assembles (`source_jobs`, as job UUIDs) and the `source_filter` that picks
+    its trials from them (agent, agent_version, model_name, reasoning_effort labels).
+    None when it isn't one."""
+    d = load_object(data, SUBMISSION_BYTES)
+    jobs = [
+        m.group(0).lower()
+        for j in as_list(d.get("source_jobs"))
+        if isinstance(j, str) and (m := UUID_TEXT.search(j))
+    ]
+    if not jobs:
+        return None
+    raw = as_object(d.get("source_filter"))
+    return {
+        "jobs": list(dict.fromkeys(jobs)),
+        "filter": {k: v for k in FILTER_KEYS if (v := text_label(raw.get(k)))},
+    }
 
 
 def configured_agents(cfg: Mapping[str, object]) -> int | None:

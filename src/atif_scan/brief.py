@@ -32,8 +32,10 @@ from .report import (
     RANK,
     events,
     is_counted,
+    model_key,
     overview,
     review_metadata,
+    served_models,
 )
 
 if TYPE_CHECKING:
@@ -221,6 +223,59 @@ def _agent_rows(items: Sequence[Doc]) -> list[Doc]:
     ]
 
 
+def _jobs(runs: Sequence[Doc]) -> Doc:
+    """How the scanned jobs fit together: tasks shared between jobs (a task's trials
+    from separate runs of it), jobs with a constructed (UUIDv5) ID, and trials added to a
+    job long after it ran (harbor_files.late_trials)."""
+    seen: Counter[str] = Counter(t for r in runs for t in set(r.get("tasks") or []))
+    return {
+        "count": len(runs),
+        "with_tasks": sum(1 for r in runs if r.get("tasks")),
+        "tasks": len(seen),
+        "shared_tasks": sorted(t for t, n in seen.items() if n > 1),
+        "constructed": [r["job_id"] for r in runs if r.get("constructed_id") and r.get("job_id")],
+        "late": [
+            {"job_id": r.get("job_id"), **r["late_trials"]} for r in runs if r.get("late_trials")
+        ],
+    }
+
+
+def _matches(item: Doc, want: dict[str, str]) -> str:
+    """How a trial's recorded agent, version and model fit a submission's filter:
+    `matched` (every filtered field recorded and equal), `partial` (the recorded ones
+    equal, some not recorded), `mismatched`, or `unrecorded` (none recorded, e.g. no
+    trajectory)."""
+    served = served_models(item)
+    got = {
+        "agent": item.get("agent_name"),
+        "agent_version": item.get("agent_version"),
+        "model_name": max(served, key=served.__getitem__) if served else None,
+    }
+    checked = [k for k in got if k in want]
+    known = [k for k in checked if got[k] is not None]
+    if not known:
+        return "unrecorded"
+    for key in known:
+        expected = model_key(want[key]) if key == "model_name" else want[key]
+        if got[key] != expected:
+            return "mismatched"
+    return "matched" if len(known) == len(checked) else "partial"
+
+
+def _submission_check(sub: Doc | None, items: Sequence[Doc]) -> Doc | None:
+    """The submission file's source_filter checked against every trial's own record."""
+    if not sub:
+        return None
+    want = dict(sub.get("filter") or {})
+    results = Counter(_matches(i, want) for i in items)
+    return {
+        "name": sub.get("name"),
+        "jobs": len(sub.get("jobs") or []),
+        "filter": want,
+        **{k: results[k] for k in ("matched", "partial", "mismatched", "unrecorded")},
+    }
+
+
 def _suggested_packs(items: Sequence[Doc], runs: Sequence[Doc]) -> list[str]:
     """A bundled pack the run's dataset has but the scan didn't load (e.g. --packs none)."""
     loaded = {a["id"].split(".", 1)[0] for item in items for a in item["assessments"]}
@@ -305,6 +360,8 @@ def brief(
         "reasoning": reasoning_exposure(items),
         "recording": recording,
         "findings": findings,
+        "jobs": _jobs(ov["runs"]),
+        "submission": _submission_check(doc.get("submission"), items),
         # Plain-English titles of the checks this brief names (the report's catalog).
         "titles": {
             c: t

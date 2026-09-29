@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import threading
+import uuid
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ from .harbor_files import (
     _flatten,
     configured_agents,
     duration,
+    late_trials,
     overrides,
     text_label,
 )
@@ -207,6 +209,16 @@ def _datasets(config: JsonObject) -> list[JsonObject]:
     return [as_object(d) for d in as_list(config.get("datasets")) if is_object(d)]
 
 
+UUID_V5 = 5
+
+
+def _uuid_version(value: str) -> int | None:
+    try:
+        return uuid.UUID(value).version
+    except ValueError:
+        return None
+
+
 def run_meta(job: str, show: Mapping[str, object], rows: Sequence[Mapping[str, object]]) -> Doc:
     config = as_object(show.get("config"))
     datasets = _datasets(config)
@@ -227,6 +239,12 @@ def run_meta(job: str, show: Mapping[str, object], rows: Sequence[Mapping[str, o
         "configured_agents": configured_agents(config),
         "cost_usd": number(show.get("cost_usd"), 0),
         "overrides": overrides(config),
+        # A deterministic (UUIDv5) job ID is minted by a tool that assembled the job from
+        # other trials (e.g. a filtered mirror), not by a job run as launched.
+        "constructed_id": _uuid_version(job) == UUID_V5,
+        # The job's tasks, to check that jobs scanned together don't share a task.
+        "tasks": sorted({t for r in rows if (t := trial_meta(r).get("task"))}),
+        "late_trials": late_trials(rows),
     }
 
 

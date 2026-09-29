@@ -207,6 +207,31 @@ def _run_ref(r: Doc) -> str:
     return f"{where} · {name}" if name and name != "job" else where
 
 
+def _run_refs(b: Doc) -> Lines:
+    """One line per run, or, for several jobs (a submission's shards), one line naming
+    them with their trial counts and the task source once when they share it."""
+    runs, sub = b["runs"], b.get("submission")
+    lines: Lines = [f"submission {sub['name']}"] if sub and sub.get("name") else []
+    if len(runs) <= 1:
+        for r in runs:
+            lines.append(_run_ref(r))
+            if tasks := _tasks_source(r):
+                lines.append(tasks)
+            if lb := r.get("leaderboard"):
+                lines.append(_leaderboard(lb))
+        return lines
+    kinds = {RUN_KINDS.get(r.get("source") or "", "job") for r in runs}
+    kind = kinds.pop() if len(kinds) == 1 else "job"
+    listed = [
+        (str(r.get("job_id") or "?")[:8], r.get("listed_trials") or r.get("planned_trials") or 0)
+        for r in runs
+    ]
+    lines.append(f"{len(runs)} {kind}s, trials in each: " + counts(listed))
+    sources = {t for r in runs if (t := _tasks_source(r))}
+    lines += sorted(sources)
+    return lines
+
+
 def _tasks_source(r: Doc) -> str | None:
     if not r.get("datasets"):
         return None
@@ -262,12 +287,7 @@ def run_section(b: Doc) -> Lines:
             f"{WARN} {plural(b['overview']['sync_failed_files'], 'file')} failed to sync:"
             " this report is incomplete"
         )
-    for r in b["runs"]:
-        body.append(_run_ref(r))
-        if tasks := _tasks_source(r):
-            body.append(tasks)
-        if lb := r.get("leaderboard"):
-            body.append(_leaderboard(lb))
+    body += _run_refs(b)
     body += _agent_texts(b)
     body.append(_shape(b))
     return wrap("RUN", body)
@@ -628,11 +648,43 @@ def _recording_texts(b: Doc) -> Lines:
     return texts
 
 
+def _job_texts(b: Doc) -> Lines:
+    """How several jobs fit together, and trials added to a job after it ran."""
+    jobs = b.get("jobs") or {}
+    texts: Lines = []
+    if jobs.get("count", 0) > 1 and jobs.get("with_tasks") == jobs["count"]:
+        shared = jobs["shared_tasks"]
+        if shared:
+            texts.append(
+                f"{WARN} {plural(len(shared), 'task')} {'is' if len(shared) == 1 else 'are'} in"
+                " more than one job: their trials come from separate runs of the task, so"
+                " check none were picked by outcome"
+            )
+        else:
+            texts.append(
+                f"{OK} the {jobs['count']} jobs cover {plural(jobs['tasks'], 'task')} with no"
+                " task in two jobs"
+            )
+    for job in jobs.get("constructed") or []:
+        texts.append(
+            f"{WARN} job {job[:8]} has a constructed (UUIDv5) ID: its trials were assembled"
+            " into it (e.g. a filtered mirror), not run as one job"
+        )
+    for late in jobs.get("late") or []:
+        texts.append(
+            f"{WARN} {plural(late['trials'], 'trial')} in job {str(late['job_id'])[:8]}"
+            f" started {late['gap_hours']:g} h after the rest of it (added later, e.g."
+            f" replacements); {late['rewarded']:,} {was(late['rewarded'])} rewarded"
+        )
+    return texts
+
+
 def evidence_section(b: Doc) -> Lines:
     return wrap(
         "EVIDENCE",
         [
             *_trial_texts(b),
+            *_job_texts(b),
             *_rerun_texts(b["overview"].get("reruns")),
             *_recording_texts(b),
         ],
@@ -927,6 +979,7 @@ def settings_section(b: Doc) -> Lines:
                 + ", ".join(r.get("datasets") or ["unknown"])
                 + "): diff them with tools/task_diff.py"
             )
+    body += _submission_texts(b)
     body += [
         f"{OK} task pack {p['pack']} loaded (recognised by {p['reason'].replace('_', ' ')})"
         for p in b.get("packs") or []
@@ -936,6 +989,48 @@ def settings_section(b: Doc) -> Lines:
         for p in b.get("suggested_packs") or []
     ]
     return wrap("SETTINGS", body)
+
+
+FILTER_WORDS = (("agent", "agent"), ("agent_version", "version"), ("model_name", "model"))
+
+
+def _submission_texts(b: Doc) -> Lines:
+    """The submission file's source_filter, checked against each trial's own record."""
+    sub = b.get("submission")
+    if not sub:
+        return []
+    want = sub.get("filter") or {}
+    shown = " · ".join(f"{word} {want[k]}" for k, word in FILTER_WORDS if want.get(k))
+    total = sum(sub.get(k, 0) for k in ("matched", "partial", "mismatched", "unrecorded"))
+    texts = []
+    if sub["mismatched"]:
+        texts.append(
+            f"{WARN} {sub['mismatched']:,} of {plural(total, 'trial')}"
+            f" {'doesn' if sub['mismatched'] == 1 else 'don'}'t match the"
+            f" submission's filter ({shown})"
+        )
+    agree = sub["matched"] + sub.get("partial", 0)
+    if agree:
+        texts.append(
+            f"{OK} {agree:,} of {plural(total, 'trial')} match the submission's filter ({shown})"
+        )
+    if sub.get("partial"):
+        texts.append(
+            f"{INFO} {plural(sub['partial'], 'trial')} of those"
+            f" {'records' if sub['partial'] == 1 else 'record'} only some of these"
+            " fields (e.g. no model in the header), so only those were checked"
+        )
+    if sub["unrecorded"]:
+        texts.append(
+            f"{INFO} {plural(sub['unrecorded'], 'trial')}"
+            f" {'records' if sub['unrecorded'] == 1 else 'record'} no agent or model to check"
+        )
+    if want.get("reasoning_effort"):
+        texts.append(
+            f"{INFO} reasoning effort {want['reasoning_effort']} isn't recorded per trial,"
+            " so it isn't checked"
+        )
+    return texts
 
 
 def more_section(b: Doc) -> Lines:

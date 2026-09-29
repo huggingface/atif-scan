@@ -935,9 +935,10 @@ def overview(
     runs = doc.get("runs") or []
     scored = [i for i in items if _outcome(i) is not None]
     dq_ids, uncleared = _dq_split(items, RANK[dq])
-    models = model_mismatch(
-        items, sum(r.get("configured_agents") or 1 for r in runs) if runs else 1
-    )
+    # Models the scan expects: a comparison job plans several agents in one run; shards
+    # of one submission are several runs of one agent each. The most any run plans, so
+    # scanning a submission's shards together still flags a fallback to another model.
+    models = model_mismatch(items, max((r.get("configured_agents") or 1 for r in runs), default=1))
     flagged = set(dq_ids)
     by_findings = len(dq_ids)
     if models:

@@ -394,6 +394,21 @@ def test_comparison_job_models_are_planned_not_substitutions():
     assert b["overview"]["model_mismatch"] is None
 
 
+def test_shards_of_one_submission_still_flag_a_fallback_model():
+    # Regression (TB2.1 PR #220: one submission as six Hub jobs, one agent each): the
+    # planned model count was summed over runs (6), so the top six models all counted as
+    # planned and a fallback to a second model was never flagged.
+    from atif_scan.brief import brief
+
+    items = [_item(i, "grok-4.6", 1.0) for i in range(8)]
+    items += [_item(8, "fallback-model", 1.0)]
+    shards = [{"source": "harbor_hub", "job_id": f"j{k}", "configured_agents": 1} for k in range(6)]
+    b = brief({"scanner_version": "dev", "inputs": items, "coverage": {}, "runs": shards})
+    mm = b["overview"]["model_mismatch"]
+    assert mm is not None and mm["expected"] == "grok-4.6" and mm["trial_ids"] == ["t8"]
+    assert b["overview"]["disqualification"]["candidate_ids"] == ["t8"]
+
+
 def test_configured_agents_from_job_config():
     from atif_scan.harbor_files import configured_agents
 
