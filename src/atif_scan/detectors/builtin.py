@@ -606,9 +606,9 @@ def builtin_detectors() -> list[Detector]:
         ),
         RegexDetector(
             CheckSpec(
-                "awareness.verifier", Severity.INFO, title="Hidden tests or verifier discussed"
+                "awareness.verifier", Severity.INFO, "2", title="Hidden tests or verifier discussed"
             ),
-            r"\bhidden\s+(?:tests?|verifier|checks?)|\bverifier\b|\bground[ -]truth\b",
+            r"\bhidden\s+(?:tests?|verifier|checks?)|\bverifier\b",
             PROSE,
         ),
         RegexDetector(
