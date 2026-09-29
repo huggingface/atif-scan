@@ -10,8 +10,11 @@ The same fact can be recorded in several places. From highest precedence to lowe
 - error_type: result.json > the run listing > Harbor's `exception.txt` marker, which
   only says "exception". (`recorded_facts`, `listed_facts`)
 - status, hub_trial_id, overrides: the run listing (Harbor Hub records only).
-- duration_sec and input/cache/output tokens: result.json > the run listing > the
-  trajectory (final_metrics totals, else its steps' summed usage).
+- duration_sec: result.json > the run listing (whole-trial started_at/finished_at).
+- agent_duration_sec: result.json's agent_execution interval only; never inferred from
+  trajectory step timestamps or substituted with whole-trial time.
+- input/cache/output tokens: result.json > the run listing > the trajectory
+  (final_metrics totals, else its steps' summed usage).
 - cost_usd, decided separately from the tokens: result.json > the run listing >
   harbor-hf's `attempt-costs` record > the trajectory's final_metrics cost. A recorded
   cost is checked against the attempt-costs record and against the trajectory's cost
@@ -43,7 +46,14 @@ if TYPE_CHECKING:
     from .model import Trace
 
 # Run facts reported as recorded (None when no record has them), in report order.
-RECORDED = ("error_type", "status", "hub_trial_id", "in_job_result", "duration_sec")
+RECORDED = (
+    "error_type",
+    "status",
+    "hub_trial_id",
+    "in_job_result",
+    "duration_sec",
+    "agent_duration_sec",
+)
 TOKENS = ("input_tokens", "cache_tokens", "output_tokens")
 # Facts derived from the trajectory alone (cacheable with its scan), in report order.
 TRACE_FACTS = (

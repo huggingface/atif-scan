@@ -89,9 +89,10 @@ def duration(record: Mapping[str, object]) -> float | None:
     try:
         start = datetime.fromisoformat(str(record["started_at"]))
         end = datetime.fromisoformat(str(record["finished_at"]))
+        seconds = (end - start).total_seconds()
     except (KeyError, TypeError, ValueError):
         return None
-    return max((end - start).total_seconds(), 0.0)
+    return seconds if seconds >= 0 else None
 
 
 # (name, ref, canonical) of a dataset, each None when unknown.
@@ -180,6 +181,7 @@ def trial_result(data: bytes | None) -> Doc:
         "cache_tokens": count(agent.get("n_cache_tokens")),
         "output_tokens": count(agent.get("n_output_tokens")),
         "duration_sec": duration(d),
+        "agent_duration_sec": duration(as_object(d.get("agent_execution"))),
         # Harbor's trial id (a UUID): the key of harbor-hf's attempt-costs file. Used for
         # that lookup only, never reported.
         "attempt_id": attempt if attempt and ATTEMPT_ID.fullmatch(attempt) else None,

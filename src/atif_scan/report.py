@@ -1074,6 +1074,47 @@ def _token_totals(items: Sequence[Doc]) -> Doc | None:
     }
 
 
+def walltime_totals(items: Sequence[Doc]) -> Doc:
+    """Sum recorded per-trial walltimes, not elapsed job time or CPU time.
+    Missing intervals stay unknown; agent and whole-trial coverage are independent."""
+    totals: Doc = {"trials": len(items)}
+    for name, field in (("agent", "agent_duration_sec"), ("trial", "duration_sec")):
+        values = [i[field] for i in items if i.get(field) is not None]
+        totals[name] = {
+            "seconds": sum(values) if values else None,
+            "recorded_trials": len(values),
+        }
+    return totals
+
+
+def walltime_text(seconds: float) -> str:
+    """Human-readable summed walltime, rounded to seconds (JSON keeps the precision)."""
+    if 0 < seconds < 1:
+        return "<1s"
+    hours, rest = divmod(round(seconds), 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = [f"{hours:,}h"] if hours else []
+    if hours or minutes:
+        parts.append(f"{minutes}m")
+    return " ".join([*parts, f"{secs}s"])
+
+
+def walltime_lines(totals: Doc) -> list[str]:
+    if not totals or all(totals[k]["seconds"] is None for k in ("agent", "trial")):
+        return ["walltime not recorded"]
+    lines = []
+    for key, label in (
+        ("agent", "agent execution"),
+        ("trial", "full trial (setup + agent + verifier)"),
+    ):
+        timing = totals[key]
+        value = "not recorded" if timing["seconds"] is None else walltime_text(timing["seconds"])
+        lines.append(
+            f"{label}: {value} · {timing['recorded_trials']:,} of {totals['trials']:,} trials"
+        )
+    return [*lines, "summed trial walltime, not elapsed job time; parallel trials overlap"]
+
+
 def overview(
     doc: Doc,
     dq: str = "high",
@@ -1121,6 +1162,7 @@ def overview(
         "model_mismatch": models,
         "cost": _cost_totals(items, runs),
         "tokens": _token_totals(items),
+        "walltime": walltime_totals(items),
         "overrides": sorted(
             {o for r in runs for o in r.get("overrides") or []}
             | {o for i in items for o in i.get("overrides") or []}
@@ -1282,5 +1324,6 @@ def overview_text(ov: Doc) -> list[str]:
         *_overview_dq_lines(ov["disqualification"]),
         *([f"  index      {index_text(ov['finding_index'])}"] if ov.get("finding_index") else []),
         _overview_cost_line(ov["cost"]),
+        *(f"  walltime   {line}" for line in walltime_lines(ov.get("walltime") or {})),
         *_overview_tail_lines(ov),
     ]
