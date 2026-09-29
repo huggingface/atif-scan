@@ -81,7 +81,7 @@ For several traces, the default text view is the run brief. It reads top to bott
 the questions a reviewer asks about a run, each answered once (a TB4 leaderboard job):
 
 ```text
-atif-scan 0.3.1 · run integrity report
+atif-scan 0.4.0 · run integrity report
 Findings set review priority, not verdicts.  ✓ checked  ⚠ needs attention  · context  est. estimate
 
 RUN        Harbor job 30225ce2 · tb4-grok-4.7-xhigh
