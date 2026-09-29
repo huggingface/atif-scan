@@ -21,9 +21,16 @@ from __future__ import annotations
 import importlib
 import os
 import re
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from ..checks import Detector
+    from ..jsonval import Doc
+    from ..rules import Allowance, Rule
 
 TASK_SHARE = 0.9  # of the traces' known tasks, to recognise a pack by task names alone
 
@@ -46,19 +53,21 @@ class Pack:
         names = self.tasks()
         return sum(t in names for t in known) >= TASK_SHARE * len(known)
 
-    def load(self) -> list:
+    def load(self) -> list[Detector | Rule | Allowance]:
         module, _, factory = self.plugin.partition(":")
-        return getattr(importlib.import_module(module), factory)()
+        checks = getattr(importlib.import_module(module), factory)()
+        # Bundled packs' factories return their checks; the engine validates them on use.
+        return cast("list[Detector | Rule | Allowance]", checks)
 
 
 def _tb21_tasks() -> frozenset[str]:
-    from .tb21 import TASK_NAMES
+    from .tb21 import TASK_NAMES  # noqa: PLC0415 - lazy: only when tasks are compared
 
     return frozenset(TASK_NAMES)
 
 
 def _tb4_tasks() -> frozenset[str]:
-    from .tb4 import TASK_NAMES
+    from .tb4 import TASK_NAMES  # noqa: PLC0415 - lazy: only when tasks are compared
 
     return TASK_NAMES
 
@@ -81,7 +90,7 @@ BUNDLED = (
 )
 
 
-def tasks_needed(runs: Iterable[dict]) -> bool:
+def tasks_needed(runs: Iterable[Doc]) -> bool:
     """Whether recognising packs needs the traces' tasks: no dataset was recorded, or a
     recorded one only pins its pack together with the tasks."""
     recorded = " ".join(d for run in runs for d in run.get("datasets") or [])
@@ -91,11 +100,11 @@ def tasks_needed(runs: Iterable[dict]) -> bool:
     )
 
 
-def recognise(runs: Iterable[dict], tasks: Iterable[str | None]) -> list[tuple[Pack, str]]:
+def recognise(runs: Iterable[Doc], tasks: Iterable[str | None]) -> list[tuple[Pack, str]]:
     """(pack, reason) for every bundled pack that applies to these runs and traces."""
     recorded = " ".join(d for run in runs for d in run.get("datasets") or [])
     known = [t.rsplit("/", 1)[-1] for t in tasks if t]
-    found = []
+    found: list[tuple[Pack, str]] = []
     for pack in BUNDLED:
         if pack.env is not None:
             root = os.environ.get(pack.env)

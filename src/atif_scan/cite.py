@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import functools
 import re
+from typing import TYPE_CHECKING
 
 from . import credentials
-from .checks import Severity
-from .engine import Assessment
-from .model import Channel, Content, Locator, Step, Trace
+from .model import Channel, Content, Locator, Step, ToolCall, Trace
+
+if TYPE_CHECKING:
+    from .checks import Severity
+    from .engine import Assessment
+    from .jsonval import Doc
 
 WINDOW = 160  # characters of context on each side of a matched span
 CONTEXT = 240  # characters of before/after context
@@ -46,12 +50,15 @@ KEYED_VALUE = re.compile(r"[^\s'\"&]+")
 
 def _keyed(text: str) -> list[tuple[int, int, int]]:
     """(match start, value start, value end) of secret-named values."""
-    out = []
+    out: list[tuple[int, int, int]] = []
     pos = 0
     for m in KEYED.finditer(text):
         if m.start() < pos or not SECRET_WORD.search(m[1]):
             continue
-        end = KEYED_VALUE.match(text, m.end()).end()
+        value = KEYED_VALUE.match(text, m.end())
+        if value is None:  # can't happen: KEYED's lookahead saw 4+ value characters here
+            raise AssertionError("KEYED matched without a value")
+        end = value.end()
         out.append((m.start(), m.end(), end))
         pos = end
     return out
@@ -76,7 +83,8 @@ def mask(text: str, known: frozenset[str] = frozenset()) -> str:
 
 
 def _mask_keyed(text: str) -> str:
-    out, last = [], 0
+    out: list[str] = []
+    last = 0
     for _, value, end in _keyed(text):
         out += [text[last:value], "***"]
         last = end
@@ -124,6 +132,7 @@ def _tail(text: str, limit: int = CONTEXT, known: frozenset[str] = frozenset()) 
 
 
 MARK = "\x00"
+MARKED_PARTS = 3  # before, match, after: text split at the two markers
 
 
 def _window(
@@ -137,7 +146,7 @@ def _window(
             return None
     marked = mask(text[:start] + MARK + text[start:end] + MARK + text[end:], known)
     parts = marked.split(MARK)
-    if len(parts) != 3:
+    if len(parts) != MARKED_PARTS:
         return None  # a secret overlapped the match; show the masked head instead
     before, match, after = parts
     return (
@@ -155,13 +164,16 @@ def _surface(step: Step, at: Locator) -> tuple[Content | None, str | None]:
         return step.reasoning, None
     if at.channel == Channel.OBSERVATION and at.observation is not None:
         return step.observations[at.observation].content, None
-    if at.call is not None:
-        call = step.calls[at.call]
-        fields = [c for ch, c in call.fields if ch == at.channel]
-        if at.field is not None:
-            return call.fields[at.field][1], call.name
-        return (Content("\n".join(c.text for c in fields)) if fields else None), call.name
-    return None, None
+    call = step.calls[at.call] if at.call is not None else None
+    return (_call_surface(call, at), call.name) if call is not None else (None, None)
+
+
+def _call_surface(call: ToolCall, at: Locator) -> Content | None:
+    """One recorded argument field, or every field on the cited channel joined."""
+    if at.field is not None:
+        return call.fields[at.field][1]
+    fields = [c for ch, c in call.fields if ch == at.channel]
+    return Content("\n".join(c.text for c in fields)) if fields else None
 
 
 def _metadata(step: Step) -> str:
@@ -173,12 +185,12 @@ def _metadata(step: Step) -> str:
     return " ".join(parts) or "no step metadata recorded"
 
 
-def cite(trace: Trace, at: Locator, known: frozenset[str] | None = None) -> dict:
+def cite(trace: Trace, at: Locator, known: frozenset[str] | None = None) -> Doc:
     """One citation: `text` split around the match, plus `before`/`after` context."""
     if known is None:
         known = trace_secrets(trace)
     step = trace.steps[at.step]
-    result: dict = {
+    result: Doc = {
         "step": at.step,
         "step_id": trace.step_numbers[at.step],
         "channel": at.channel.value,
@@ -192,53 +204,56 @@ def cite(trace: Trace, at: Locator, known: frozenset[str] | None = None) -> dict
     content, tool = _surface(step, at)
     if tool is not None:
         result["tool"] = tool
-    text = content.text if content is not None else ""
+    before, match, after = _excerpt(content.text if content is not None else "", at, known)
+    result.update(before=before, match=match, after=after)
+    # Keys already set (pairing_reconstructed) keep their place in the citation.
+    result.update(_context(step, at, known))
+    return result
+
+
+def _excerpt(text: str, at: Locator, known: frozenset[str]) -> tuple[str, str, str]:
+    """The match with masked context on each side, else the masked head of the text."""
     window = (
         _window(text.replace(MARK, " "), *at.span, known)
         if at.span and at.span[1] <= len(text)
         else None
     )
-    if window is not None:
-        result.update(before=window[0], match=window[1], after=window[2])
-    else:
-        result.update(before="", match=_head(text, 2 * WINDOW, known), after="")
-    # Context: why the agent did it (same step's reasoning/message) and what came back.
+    return window if window is not None else ("", _head(text, 2 * WINDOW, known), "")
+
+
+def _fields_head(call: ToolCall | None, known: frozenset[str]) -> str:
+    return _head("\n".join(c.text for _, c in call.fields), known=known) if call else ""
+
+
+def _context(step: Step, at: Locator, known: frozenset[str]) -> Doc:
+    """Why the agent did it (same step's reasoning/message) and what came back."""
     if at.call is not None:
-        intent = step.reasoning.text or step.message.text
-        call = step.calls[at.call]
-        observation = next(
-            (o for o in step.observations if o.source_call_id == call.result_key), None
-        )
-        output = observation.content.text if observation is not None else None
-        if observation is not None and observation.pairing_reconstructed:
-            result["pairing_reconstructed"] = True
-        result["context_before"] = _tail(intent, known=known) if intent else ""
-        result["context_after"] = _head(output, known=known) if output else ""
-    elif at.channel == Channel.OBSERVATION and at.observation is not None:
+        return _call_context(step, step.calls[at.call], known)
+    if at.channel == Channel.OBSERVATION and at.observation is not None:
         source = step.observations[at.observation].source_call_id
         call = next((c for c in step.calls if c.id == source), None)
-        result["context_before"] = (
-            _head("\n".join(c.text for _, c in call.fields), known=known)
-            if call is not None
-            else ""
-        )
-        result["context_after"] = ""
-    else:
-        first = step.calls[0] if step.calls else None
-        result["context_before"] = ""
-        result["context_after"] = (
-            _head("\n".join(c.text for _, c in first.fields), known=known)
-            if first is not None
-            else ""
-        )
-    return result
+        return {"context_before": _fields_head(call, known), "context_after": ""}
+    first = step.calls[0] if step.calls else None
+    return {"context_before": "", "context_after": _fields_head(first, known)}
+
+
+def _call_context(step: Step, call: ToolCall, known: frozenset[str]) -> Doc:
+    intent = step.reasoning.text or step.message.text
+    observation = next((o for o in step.observations if o.source_call_id == call.result_key), None)
+    output = observation.content.text if observation is not None else None
+    out: Doc = {}
+    if observation is not None and observation.pairing_reconstructed:
+        out["pairing_reconstructed"] = True
+    out["context_before"] = _tail(intent, known=known) if intent else ""
+    out["context_after"] = _head(output, known=known) if output else ""
+    return out
 
 
 def citations(
     trace: Trace, assessments: tuple[Assessment, ...], minimum: Severity
-) -> dict[str, list[dict]]:
+) -> dict[str, list[Doc]]:
     """Citations for unexcused findings at/above `minimum`, keyed by check ID."""
-    out: dict[str, list[dict]] = {}
+    out: dict[str, list[Doc]] = {}
     known = trace_secrets(trace)
     for a in assessments:
         if a.counts and a.spec.severity >= minimum and a.result.evidence:

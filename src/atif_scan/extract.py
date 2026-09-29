@@ -21,10 +21,16 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .cite import mask, trace_secrets
 from .loader import TraceError, load_trace
-from .model import Channel, Trace
+from .model import Channel, Step, Trace
+
+if TYPE_CHECKING:
+    from collections.abc import Set
+
+    from .jsonval import Doc
 
 PARTS = ("message", "reasoning", "calls", "results")
 
@@ -49,32 +55,41 @@ def outline(trace: Trace) -> list[str]:
     for step in trace.steps:
         sid = trace.step_numbers[step.index]
         tools = ",".join(c.name for c in step.calls)
-        sizes = []
-        for name, text in (("msg", step.message.text), ("reasoning", step.reasoning.text)):
-            if text:
-                sizes.append(f"{name} {len(text)}")
-        if step.observations:
-            total = sum(len(o.content.text) for o in step.observations)
-            sizes.append(f"results {len(step.observations)}×/{total}")
-        flags = []
-        if step.index in trace.compacted:
-            flags.append("COMPACTION-SUMMARY")
-        if any(o.content.media for o in step.observations) or step.message.media:
-            flags.append("media")
-        if step.copied:
-            flags.append("copied")
-        if any(o.pairing_reconstructed for o in step.observations):
-            flags.append("PAIRING-RECONSTRUCTED")
+        flags = _flags(trace, step)
         lines.append(
-            f"{sid:>5} {step.source:<6} {tools[:60]:<60} {' · '.join(sizes)}"
+            f"{sid:>5} {step.source:<6} {tools[:60]:<60} {' · '.join(_sizes(step))}"
             + (f"  [{', '.join(flags)}]" if flags else "")
         )
     return lines
 
 
-def step_record(trace: Trace, index: int, parts, limit: int, known) -> dict:
+def _sizes(step: Step) -> list[str]:
+    sizes = [
+        f"{name} {len(text)}"
+        for name, text in (("msg", step.message.text), ("reasoning", step.reasoning.text))
+        if text
+    ]
+    if step.observations:
+        total = sum(len(o.content.text) for o in step.observations)
+        sizes.append(f"results {len(step.observations)}×/{total}")
+    return sizes
+
+
+def _flags(trace: Trace, step: Step) -> list[str]:
+    flags = {
+        "COMPACTION-SUMMARY": step.index in trace.compacted,
+        "media": any(o.content.media for o in step.observations) or step.message.media,
+        "copied": step.copied,
+        "PAIRING-RECONSTRUCTED": any(o.pairing_reconstructed for o in step.observations),
+    }
+    return [flag for flag, on in flags.items() if on]
+
+
+def step_record(
+    trace: Trace, index: int, parts: Set[str], limit: int, known: frozenset[str]
+) -> Doc:
     step = trace.steps[index]
-    out: dict = {"step": trace.step_numbers[index], "source": step.source}
+    out: Doc = {"step": trace.step_numbers[index], "source": step.source}
     if "message" in parts and step.message.text:
         out["message"] = _cut(mask(step.message.text, known), limit)
     if "reasoning" in parts and step.reasoning.text:
@@ -106,7 +121,7 @@ def step_record(trace: Trace, index: int, parts, limit: int, known) -> dict:
     return out
 
 
-def render(record: dict) -> str:
+def render(record: Doc) -> str:
     lines = [f"===== step {record['step']} ({record['source']}) ====="]
     for key in ("message", "reasoning"):
         if key in record:
@@ -128,8 +143,10 @@ def render(record: dict) -> str:
     return "\n".join(lines)
 
 
-def grep(trace: Trace, pattern: re.Pattern[str], known, window: int = 160) -> list[dict]:
-    hits = []
+def grep(
+    trace: Trace, pattern: re.Pattern[str], known: frozenset[str], window: int = 160
+) -> list[Doc]:
+    hits: list[Doc] = []
     for step in trace.steps:
         texts = [("message", step.message.text), ("reasoning", step.reasoning.text)]
         texts += [
@@ -163,7 +180,7 @@ def grep(trace: Trace, pattern: re.Pattern[str], known, window: int = 160) -> li
     return hits
 
 
-def select(trace: Trace, args) -> list[int]:
+def select(trace: Trace, args: argparse.Namespace) -> list[int]:
     numbers = trace.step_numbers
     by_number = {n: i for i, n in enumerate(numbers)}
     wanted: set[int] = set(args.step)
@@ -175,7 +192,7 @@ def select(trace: Trace, args) -> list[int]:
     return [by_number[n] for n in sorted(wanted) if n in by_number]
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="atif-inspect",
         description="Read parts of one ATIF trajectory (masked). Never runs trace content.",
@@ -189,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--grep", help="regex over all parts (case-insensitive)")
     parser.add_argument("--max-chars", type=int, default=4000, help="per field; 0 = no limit")
     parser.add_argument("--json", action="store_true")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _parser()
     args = parser.parse_args(argv)
     parts = {p.strip() for p in args.part.split(",") if p.strip()}
     if parts - set(PARTS):
@@ -200,33 +222,42 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     known = trace_secrets(trace)
     if args.grep:
-        hits = grep(trace, re.compile(args.grep, re.I), known)
-        if args.json:
-            print(json.dumps(hits, indent=1))
-        else:
-            for h in hits:
-                print(f"{h['step']:>5} {h['part']}: {h['text'].replace(chr(10), ' ⏎ ')}")
-        return 0 if hits else 1
+        return _print_grep(trace, args, known)
     indices = select(trace, args)
     if not indices:
-        if args.step or args.steps or args.around:
-            print("atif-inspect: no such step(s)", file=sys.stderr)
-            return 1
-        lines = outline(trace)
-        if args.json:
-            print(json.dumps(lines, indent=1))
-        else:
-            print(
-                f"{len(trace.steps)} steps · {trace.agent_steps} agent · "
-                f"{trace.tool_calls} tool calls" + (" · compacted" if trace.compacted else "")
-            )
-            print("\n".join(lines))
-        return 0
+        return _print_outline(trace, args)
     records = [step_record(trace, i, parts, args.max_chars, known) for i in indices]
     if args.json:
         print(json.dumps(records, indent=1))
     else:
         print("\n\n".join(render(r) for r in records))
+    return 0
+
+
+def _print_grep(trace: Trace, args: argparse.Namespace, known: frozenset[str]) -> int:
+    hits = grep(trace, re.compile(args.grep, re.I), known)
+    if args.json:
+        print(json.dumps(hits, indent=1))
+    else:
+        for h in hits:
+            print(f"{h['step']:>5} {h['part']}: {h['text'].replace(chr(10), ' ⏎ ')}")
+    return 0 if hits else 1
+
+
+def _print_outline(trace: Trace, args: argparse.Namespace) -> int:
+    """The outline when no step was asked for; exit 1 if the asked-for steps don't exist."""
+    if args.step or args.steps or args.around:
+        print("atif-inspect: no such step(s)", file=sys.stderr)
+        return 1
+    lines = outline(trace)
+    if args.json:
+        print(json.dumps(lines, indent=1))
+    else:
+        print(
+            f"{len(trace.steps)} steps · {trace.agent_steps} agent · "
+            f"{trace.tool_calls} tool calls" + (" · compacted" if trace.compacted else "")
+        )
+        print("\n".join(lines))
     return 0
 
 
