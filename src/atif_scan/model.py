@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import StrEnum
 from functools import cached_property
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+    from datetime import datetime
 
 
 class Channel(StrEnum):
@@ -37,6 +40,9 @@ SUMMARY_CHARS_PER_TOKEN = 1.5
 REASONING_EXPOSURE = ("full", "recorded", "summarised", "withheld", "none")
 
 
+SPAN_LENGTH = 2  # (start, end)
+
+
 @dataclass(frozen=True)
 class Locator:
     step: int
@@ -58,7 +64,7 @@ class Locator:
             raise ValueError("invalid locator channel")
         if self.span is not None and not (
             isinstance(self.span, tuple)
-            and len(self.span) == 2
+            and len(self.span) == SPAN_LENGTH
             and all(type(v) is int for v in self.span)
             and 0 <= self.span[0] <= self.span[1]
         ):
@@ -177,6 +183,10 @@ class Usage:
     reasoning_tokens: int | None = None  # final_metrics.extra.total_reasoning_tokens
 
 
+# A trace's results read as status-only when at least this many are recorded and this
+# share of them is a bare status word.
+MIN_STATUS_RESULTS = 5
+STATUS_ONLY_SHARE = 0.9
 STATUS_ONLY = frozenset(
     {
         "success",
@@ -241,7 +251,9 @@ class Trace:
         texts = [
             o.content.text.strip().strip('"').lower() for s in self.steps for o in s.observations
         ]
-        return len(texts) >= 5 and sum(t in STATUS_ONLY for t in texts) >= 0.9 * len(texts)
+        return len(texts) >= MIN_STATUS_RESULTS and sum(
+            t in STATUS_ONLY for t in texts
+        ) >= STATUS_ONLY_SHARE * len(texts)
 
     @property
     def actions_unrecorded(self) -> bool:

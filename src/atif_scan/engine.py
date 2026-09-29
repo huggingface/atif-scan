@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from .checks import CheckSpec, Context, Detection, Detector, Status
 from .detectors.context import ContextCheck
-from .model import Trace
 from .rules import Allowance, Rule
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from .model import Trace
 
 
 def validate_evidence(trace: Trace, result: object) -> None:
@@ -66,13 +71,69 @@ def kind(check: object) -> str:
     return "detector"
 
 
+def dependencies(check: Detector | Rule) -> tuple[str, ...]:
+    return check.dependencies if isinstance(check, Rule) else ()
+
+
+def dependency_order(checks: Mapping[str, Detector | Rule]) -> list[str]:
+    """Check IDs with every rule after its dependencies (ties in ID order)."""
+    order: list[str] = []
+    active: set[str] = set()
+    done: set[str] = set()
+
+    def visit(key: str) -> None:
+        if key in active:
+            raise ValueError("dependency_cycle")
+        if key in done:
+            return
+        if key not in checks:
+            raise ValueError("missing_dependency")
+        active.add(key)
+        for dependency in dependencies(checks[key]):
+            visit(dependency)
+        active.remove(key)
+        done.add(key)
+        order.append(key)
+
+    for key in sorted(checks):
+        visit(key)
+    return order
+
+
+def _out_of_scope(spec: CheckSpec, context: Context) -> Detection | None:
+    """The result of a task-scoped check outside (or not known to be in) its tasks."""
+    if spec.tasks and context.task is None:
+        return Detection(Status.UNKNOWN, complete=False)
+    if spec.tasks and context.task not in spec.tasks:
+        return Detection(Status.NOT_APPLICABLE)
+    return None
+
+
+def _evaluate(
+    check: Detector | Rule | Allowance,
+    trace: Trace,
+    context: Context,
+    results: Mapping[str, Detection],
+) -> Detection:
+    """The check's validated result; an error result when it raises or returns garbage."""
+    try:
+        if isinstance(check, Rule | Allowance):
+            result = check.evaluate(results)
+        else:
+            result = check.evaluate(trace, context)
+        validate_evidence(trace, result)
+    except Exception:  # noqa: BLE001 - plugins can see raw data; never emit their exception text
+        return Detection(Status.ERROR, complete=False)
+    return result
+
+
 class Engine:
     """Evaluates detectors and rules in dependency order, then allowances.
 
     Allowances may reference detectors and rules; nothing may reference an allowance.
     """
 
-    def __init__(self, checks: list[Detector | Rule | Allowance]):
+    def __init__(self, checks: Sequence[Detector | Rule | Allowance]) -> None:
         ids = [c.spec.id for c in checks]
         if len(set(ids)) != len(ids):
             raise ValueError("duplicate_check_id")
@@ -80,53 +141,29 @@ class Engine:
             (c for c in checks if isinstance(c, Allowance)), key=lambda c: c.spec.id
         )
         self.checks = {c.spec.id: c for c in checks if not isinstance(c, Allowance)}
-        self.order: list[str] = []
-        active: set[str] = set()
-        done: set[str] = set()
-
-        def visit(key: str) -> None:
-            if key in active:
-                raise ValueError("dependency_cycle")
-            if key in done:
-                return
-            if key not in self.checks:
-                raise ValueError("missing_dependency")
-            active.add(key)
-            check = self.checks[key]
-            if isinstance(check, Rule):
-                for dependency in check.dependencies:
-                    visit(dependency)
-            active.remove(key)
-            done.add(key)
-            self.order.append(key)
-
-        for key in sorted(self.checks):
-            visit(key)
+        self.order = dependency_order(self.checks)
         for allowance in self.allowances:
             if not set(allowance.dependencies) | allowance.covers <= set(self.checks):
                 raise ValueError("missing_dependency")
 
-    def _run(self, check, trace: Trace | None, context: Context, results) -> Detection:
-        if check.spec.tasks and context.task is None:
-            result = Detection(Status.UNKNOWN, complete=False)
-        elif check.spec.tasks and context.task not in check.spec.tasks:
-            result = Detection(Status.NOT_APPLICABLE)
-        elif trace is None:
-            result = Detection(Status.UNKNOWN, complete=False)
-        else:
-            try:
-                if isinstance(check, Rule | Allowance):
-                    result = check.evaluate(results)
-                else:
-                    result = check.evaluate(trace, context)
-                validate_evidence(trace, result)
-            except Exception:
-                # Plugins can see raw data; never emit their exception text.
-                result = Detection(Status.ERROR, complete=False)
+    def _run(
+        self,
+        check: Detector | Rule | Allowance,
+        trace: Trace | None,
+        context: Context,
+        results: Mapping[str, Detection],
+    ) -> Detection:
+        result = _out_of_scope(check.spec, context)
+        if result is None:
+            result = (
+                Detection(Status.UNKNOWN, complete=False)
+                if trace is None
+                else _evaluate(check, trace, context, results)
+            )
         if context.partial and result.status == Status.NO_MATCH:
-            result = Detection(Status.UNKNOWN, complete=False)
-        elif context.partial and result.status == Status.MATCH:
-            result = Detection(Status.MATCH, result.evidence, complete=False)
+            return Detection(Status.UNKNOWN, complete=False)
+        if context.partial and result.status == Status.MATCH:
+            return Detection(Status.MATCH, result.evidence, complete=False)
         return result
 
     def evaluate(
@@ -156,7 +193,7 @@ class Engine:
             Assessment(
                 self.checks[key].spec,
                 results[key],
-                self.checks[key].dependencies if isinstance(self.checks[key], Rule) else (),
+                dependencies(self.checks[key]),
                 kind(self.checks[key]),
                 expected_by=tuple(excused.get(key, ()))
                 if results[key].status == Status.MATCH

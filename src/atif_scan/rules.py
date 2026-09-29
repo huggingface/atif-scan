@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .checks import CheckSpec, Detection, Status, identifier
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 Truth = bool | None
 
@@ -52,7 +54,7 @@ class All:
     children: tuple[Expression, ...]
 
     def dependencies(self) -> frozenset[str]:
-        return frozenset().union(*(c.dependencies() for c in self.children))
+        return frozenset[str]().union(*(c.dependencies() for c in self.children))
 
     def evaluate(self, results: Mapping[str, Detection]) -> Truth:
         values = [c.evaluate(results) for c in self.children]
@@ -64,7 +66,7 @@ class AnyOf:
     children: tuple[Expression, ...]
 
     def dependencies(self) -> frozenset[str]:
-        return frozenset().union(*(c.dependencies() for c in self.children))
+        return frozenset[str]().union(*(c.dependencies() for c in self.children))
 
     def evaluate(self, results: Mapping[str, Detection]) -> Truth:
         # A check that doesn't apply to this task can't have matched: it's no evidence

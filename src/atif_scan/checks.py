@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .model import Locator, Trace
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def identifier(value: str) -> str:
@@ -71,6 +73,11 @@ class CheckSpec:
             identifier(task)
 
 
+def _locators(values: tuple[object, ...]) -> bool:
+    # Plugins build detections: check what they passed, whatever the annotations say.
+    return all(isinstance(x, Locator) for x in values)
+
+
 @dataclass(frozen=True)
 class Detection:
     status: Status
@@ -80,9 +87,7 @@ class Detection:
     def __post_init__(self) -> None:
         if not isinstance(self.status, Status) or type(self.complete) is not bool:
             raise ValueError("invalid_detection")
-        if not isinstance(self.evidence, tuple) or any(
-            not isinstance(x, Locator) for x in self.evidence
-        ):
+        if not isinstance(self.evidence, tuple) or not _locators(self.evidence):
             raise ValueError("invalid_evidence")
         if self.status == Status.NO_MATCH and not self.complete:
             raise ValueError("incomplete_negative_must_be_unknown")
@@ -100,6 +105,7 @@ class Detection:
 
 
 class Detector(Protocol):
-    spec: CheckSpec
+    @property
+    def spec(self) -> CheckSpec: ...  # read-only, so frozen dataclasses qualify
 
     def evaluate(self, trace: Trace, context: Context) -> Detection: ...

@@ -20,8 +20,11 @@ Findings carry spans only; values never leave memory except as masking input.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
 
 # The leading lookahead lists every alternative's first character (`-----BEGIN`, sk/pk/rk,
 # hf_, gh*_/github_pat_, xox*, AKIA/AIza, eyJ, LLM|): it adds nothing to the match, but lets
@@ -104,17 +107,28 @@ def secret_name(name: str) -> bool:
     return bool(_SECRET_PART.search(joined)) and not _NOT_SECRET_PART.search(joined)
 
 
+# Shorter values (and all-digit ones) are never treated as secrets.
+MIN_SECRET_LENGTH = 8
+
+
 def plausible_value(value: str) -> bool:
     """Historical masking heuristic, retained independently of exposure filtering."""
-    if len(value) < 8 or _PLACEHOLDER.match(value) or value.isdigit():
+    if len(value) < MIN_SECRET_LENGTH or _PLACEHOLDER.match(value) or value.isdigit():
         return False
-    if value[0] in "/~." or "://" in value or value.startswith(("$(", "`")):
-        return False
-    if any(c in value for c in "()[]{}<>\\") or value.endswith(",") or _CODE_VALUE.fullmatch(value):
-        return False
-    if _IDENTIFIER.fullmatch(value):
-        return False
-    return any(c.isalpha() for c in value)
+    return not _code_like(value) and any(c.isalpha() for c in value)
+
+
+def _code_like(value: str) -> bool:
+    """A path, URL, substitution, code expression or bare identifier (non-empty value)."""
+    return bool(
+        value[0] in "/~."
+        or "://" in value
+        or value.startswith(("$(", "`"))
+        or any(c in value for c in "()[]{}<>\\")
+        or value.endswith(",")
+        or _CODE_VALUE.fullmatch(value)
+        or _IDENTIFIER.fullmatch(value)
+    )
 
 
 # These exclusions apply only to exposure findings, never to masking. A generic
@@ -192,17 +206,15 @@ def _exposure_name(name: str) -> bool:
 def _exposure_value(value: str) -> bool:
     # Keep the historical length/numeric boundary: collected values are replaced
     # globally in prompts and citations, not just at the assignment site.
-    if len(value) < 8 or value.isdigit():
+    if len(value) < MIN_SECRET_LENGTH or value.isdigit():
         return False
     if _LITERAL_PLACEHOLDER.fullmatch(value) or _DUMMY_CREDENTIAL.fullmatch(value):
         return False
-    if value[0] in "/~." or "://" in value or value.startswith(("$(", "`")):
-        return False
-    if any(c in value for c in "()[]{}<>\\") or value.endswith(",") or _CODE_VALUE.fullmatch(value):
-        return False
-    if _IDENTIFIER.fullmatch(value):
-        return False
-    return any(c.isalpha() for c in value)
+    return not _code_like(value) and any(c.isalpha() for c in value)
+
+
+def _masked_value(value: str) -> bool:
+    return plausible_value(value) or _exposure_value(value)
 
 
 @dataclass(frozen=True)
@@ -223,15 +235,7 @@ def find(text: str) -> Iterator[Found]:
         return
     for m in TOKEN_SHAPES.finditer(text):
         yield Found("token", m.span(), m.span())
-    for pattern in (_ENV, _KEYED):
-        for m in pattern.finditer(text):
-            if secret_name(m.group("name")) and (
-                plausible_value(m.group("value")) or _exposure_value(m.group("value"))
-            ):
-                yield Found("named", m.span("name"), m.span("value"))
-    for m in _FLAG.finditer(text):
-        if plausible_value(m.group("value")) or _exposure_value(m.group("value")):
-            yield Found("named", m.span(), m.span("value"))
+    yield from _named(text, secret_name, _masked_value)
 
 
 def find_exposures(text: str) -> Iterator[Found]:
@@ -245,23 +249,30 @@ def find_exposures(text: str) -> Iterator[Found]:
         value = m.group()
         if not _DUMMY_CREDENTIAL.fullmatch(value) and not _PEM_PLACEHOLDER.fullmatch(value):
             yield Found("token", m.span(), m.span())
+    yield from _named(text, _exposure_name, _exposure_value)
+
+
+def _named(
+    text: str, secret: Callable[[str], bool], plausible: Callable[[str], bool]
+) -> Iterator[Found]:
+    """Secret-named assignments (`secret` names, `plausible` values) and secret flags."""
     for pattern in (_ENV, _KEYED):
         for m in pattern.finditer(text):
-            if _exposure_name(m.group("name")) and _exposure_value(m.group("value")):
+            if secret(m.group("name")) and plausible(m.group("value")):
                 yield Found("named", m.span("name"), m.span("value"))
     for m in _FLAG.finditer(text):
-        if _exposure_value(m.group("value")):
+        if plausible(m.group("value")):
             yield Found("named", m.span(), m.span("value"))
 
 
 def values(texts: Iterable[str]) -> frozenset[str]:
     """Distinct credential values in `texts`: used to mask the same secret wherever it
     reappears (a bare value printed on its own line, copied into code)."""
-    out = set()
+    out: set[str] = set()
     for text in texts:
         for f in find(text):
             out.add(text[f.value[0] : f.value[1]])
-    return frozenset(v for v in out if len(v) >= 8)
+    return frozenset(v for v in out if len(v) >= MIN_SECRET_LENGTH)
 
 
 def mask(text: str, known: Iterable[str] = ()) -> str:
@@ -281,7 +292,8 @@ def mask(text: str, known: Iterable[str] = ()) -> str:
             merged[-1][1] = max(merged[-1][1], end)
         else:
             merged.append([start, end])
-    out, last = [], 0
+    out: list[str] = []
+    last = 0
     for start, end in merged:
         out.append(text[last:start])
         block = text[start:end]

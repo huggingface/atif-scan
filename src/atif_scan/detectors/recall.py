@@ -10,12 +10,15 @@ negative is `unknown`.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
 from ..model import Channel, Locator, Surface, Trace
+
+if TYPE_CHECKING:
+    import re
 
 PROSE_AND_INPUT = frozenset(
     {Channel.MESSAGE, Channel.REASONING, Channel.QUERY, Channel.COMMAND, Channel.ARGUMENTS}
@@ -70,54 +73,83 @@ class UnprimedDetector:
         if trace.head_missing:
             # The prompt wasn't recorded: anything could have been primed by it.
             return Detection(Status.UNKNOWN, (), False)
-        seen: list[str] = []
-        # Tokens already found in `seen`: it only grows, so they stay primed.
-        primed: set[str] = set()
         found: dict[str, Locator] = {}
+        scanned = self._scan(trace, context, found)
         # Withheld reasoning can't prime anything (it's the agent's own); the recorded
         # text is what's judged, and `Trace.reasoning_exposure` says what it covers.
-        complete = trace.agent_steps > 0
-        first_compaction = min(trace.compacted) if trace.compacted else None
-        blind = unrecorded_web_result(trace)
-        for authored, surface in walk(trace):
-            text = surface.content.text
-            if first_compaction is not None and surface.at.step >= first_compaction:
-                complete = False  # earlier context is gone: nothing after it is unprimed
-                break
-            if blind is not None and surface.at.step > blind:
-                complete = False  # the agent saw a web result the trace doesn't hold
-                break
-            if not authored:
-                if surface.content.media or not surface.content.understood:
-                    # An image's text, or a prompt/result that couldn't be read, can prime
-                    # anything written after it.
-                    complete = False
-                    break
-                if text:
-                    seen.append(self.fold(text))
-                continue
-            if self.stop is not None and self.stop(surface):
-                break  # e.g. a benchmark lookup: what follows may be primed by it
-            if surface.at.channel not in self.channels:
-                continue
-            if surface.at.channel == Channel.PAYLOAD and surface.tool == "shell":
-                continue
-            complete = complete and surface.content.understood
-            for token, span in self.candidates(surface, context):
-                key = self.fold(token)
-                if key in found or key in primed:
-                    continue
-                if any(key in s for s in seen):
-                    primed.add(key)
-                    continue
-                found[key] = replace(surface.at, span=span)
+        complete = trace.agent_steps > 0 and scanned
         if self.enough(set(found), context):
             return Detection(Status.MATCH, tuple(found.values()), complete)
         return Detection.of((), complete)
 
+    def _scan(self, trace: Trace, context: Context, found: dict[str, Locator]) -> bool:
+        """Collect unprimed tokens into `found` (by folded token); False when earlier
+        context is missing, so a negative can't be trusted."""
+        seen: list[str] = []
+        # Tokens already found in `seen`: it only grows, so they stay primed.
+        primed: set[str] = set()
+        complete = True
+        horizon = _horizon(trace)
+        for authored, surface in walk(trace):
+            if horizon is not None and surface.at.step >= horizon:
+                return False
+            if not authored:
+                if not self._read_context(surface, seen):
+                    return False
+                continue
+            if self.stop is not None and self.stop(surface):
+                break  # e.g. a benchmark lookup: what follows may be primed by it
+            if self._judged(surface):
+                complete = complete and surface.content.understood
+                self._collect(surface, context, seen, primed, found)
+        return complete
+
+    def _read_context(self, surface: Surface, seen: list[str]) -> bool:
+        """Add a prompt/result to `seen`; False when it can't be read."""
+        if surface.content.media or not surface.content.understood:
+            # An image's text, or a prompt/result that couldn't be read, can prime
+            # anything written after it.
+            return False
+        if surface.content.text:
+            seen.append(self.fold(surface.content.text))
+        return True
+
+    def _judged(self, surface: Surface) -> bool:
+        channel = surface.at.channel
+        return channel in self.channels and not (
+            channel == Channel.PAYLOAD and surface.tool == "shell"
+        )
+
+    def _collect(
+        self,
+        surface: Surface,
+        context: Context,
+        seen: list[str],
+        primed: set[str],
+        found: dict[str, Locator],
+    ) -> None:
+        for token, span in self.candidates(surface, context):
+            key = self.fold(token)
+            if key in found or key in primed:
+                continue
+            if any(key in s for s in seen):
+                primed.add(key)
+                continue
+            found[key] = replace(surface.at, span=span)
+
+
+def _horizon(trace: Trace) -> int | None:
+    """The first step whose earlier context is incomplete: a compaction summary (earlier
+    context is gone), or the step after a web result the trace doesn't hold."""
+    limits = list(trace.compacted)
+    blind = unrecorded_web_result(trace)
+    if blind is not None:
+        limits.append(blind + 1)
+    return min(limits, default=None)
+
 
 def regex_candidates(pattern: re.Pattern[str]) -> Candidates:
-    def candidates(surface: Surface, context: Context):
+    def candidates(surface: Surface, context: Context) -> Iterator[tuple[str, tuple[int, int]]]:
         for m in pattern.finditer(surface.content.text):
             yield m.group(0), m.span()
 

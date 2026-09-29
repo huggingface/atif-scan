@@ -45,14 +45,17 @@ def timestamp_missing(trace: Trace) -> Detection:
     return _result(hits, complete=True)
 
 
+MIN_ORDERED_STEPS = 2  # an order needs two steps
+
+
 def timestamp_regression(trace: Trace) -> Detection:
     """Recorded timestamps that go backwards. Scope: steps that carry a timestamp;
     copied context is excluded because it may legitimately carry older times."""
-    timed = [s for s in trace.steps if not s.copied and s.timestamp is not None]
-    if sum(not s.copied for s in trace.steps) < 2:
+    timed = [(s, t) for s in trace.steps if not s.copied and (t := s.timestamp) is not None]
+    if sum(not s.copied for s in trace.steps) < MIN_ORDERED_STEPS:
         return Detection(Status.NO_MATCH)
-    hits = [_meta(b) for a, b in pairwise(timed) if b.timestamp < a.timestamp]
-    return _result(hits, complete=len(timed) >= 2)
+    hits = [_meta(b) for (_, earlier), (b, later) in pairwise(timed) if later < earlier]
+    return _result(hits, complete=len(timed) >= MIN_ORDERED_STEPS)
 
 
 def timestamp_smearing(trace: Trace) -> Detection:
@@ -284,7 +287,7 @@ def output_ratio(trace: Trace) -> OutputRatio | None:
         steps, tokens, whole = agent, usage.completion_tokens, True
     else:  # per-step metrics: compare only the steps that report tokens
         steps = [s for s in agent if s.completion_tokens is not None]
-        tokens, whole = sum(s.completion_tokens for s in steps), False
+        tokens, whole = sum(s.completion_tokens or 0 for s in steps), False
     reasoning = usage.reasoning_tokens if usage is not None and whole else None
     chars = sum(
         len(s.message.text) + sum(_string_chars(c.arguments) for c in s.calls) for s in steps

@@ -15,8 +15,16 @@ from __future__ import annotations
 import re
 from bisect import bisect_right
 from collections import Counter
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 UNREAD = object()  # a non-literal value: present but not statically readable
+_EXPRESSION = object()  # not the start of a literal (so the value is UNREAD)
+UNICODE_END = 0x110000  # past the last code point
+MAX_NESTING = 50  # literal nesting depth read before giving up (unreadable)
 # Any reference to `tools`; group 1 is the name when it is the plain `tools.NAME(` form.
 CALL = re.compile(r"(?<![\w$])tools(?![\w$])(?:\s*\.\s*([A-Za-z_$][\w$]*)\s*\()?")
 QUOTES = ('"', "'", "`")
@@ -36,51 +44,90 @@ _REGEX_AFTER = frozenset("(,=:[!&|?{};+-*%<>~^")  # else `/` is division (stays 
 _PAIRS = {")": "(", "]": "[", "}": "{"}
 
 
-def _lex(text: str) -> tuple[list[int], list[int], dict[int, int]]:
+# (non-code span starts, their ends, matched bracket positions both ways)
+Lexed = tuple[list[int], list[int], dict[int, int]]
+
+
+def _lex(text: str) -> Lexed:
     """One pass: sorted non-code (start, end) spans and matched bracket positions (both
     ways). Unsure whether `/` starts a regex: treat it as code, so calls are still seen."""
-    starts, ends, pairs, stack = [], [], {}, []  # stack: bracket positions, None = `${`
+    lexer = _Lexer(text)
     pos = 0
     while match := _TOKEN.search(text, pos):
+        pos = lexer.token(match)
+    return lexer.starts, lexer.ends, lexer.pairs
+
+
+def _end(pattern: re.Pattern[str], text: str, pos: int) -> int:
+    """Where `pattern` (one that always matches at `pos`) stops."""
+    match = pattern.match(text, pos)
+    return match.end() if match else pos
+
+
+class _Lexer:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.starts: list[int] = []
+        self.ends: list[int] = []
+        self.pairs: dict[int, int] = {}
+        self.stack: list[int | None] = []  # open bracket positions, None = `${`
+
+    def token(self, match: re.Match[str]) -> int:
+        """Record one token; the position to search on from."""
         tok, i = match.group(), match.start()
-        end = match.end()
+        in_template = bool(self.stack) and self.stack[-1] is None
+        if tok in "()[]{}" and not (tok == "}" and in_template):
+            self.bracket(tok, i)
+            return match.end()
+        end = self.not_code(tok, i, match.end())
+        if end is None:  # a `/` that is division
+            return match.end()
+        self.starts.append(i)
+        self.ends.append(end)
+        return end
+
+    def bracket(self, tok: str, i: int) -> None:
+        stack = self.stack
+        if tok in "([{":
+            stack.append(i)
+        elif stack and (top := stack[-1]) is not None and self.text[top] == _PAIRS[tok]:
+            self.pairs[top] = i
+            self.pairs[i] = top
+            stack.pop()
+
+    def not_code(self, tok: str, i: int, end: int) -> int | None:
+        """The end of the comment, string, template text or regex literal starting at `i`
+        (None when a `/` is division)."""
+        text = self.text
         if tok in ("//", "/*"):
             close = text.find("\n" if tok == "//" else "*/", end)
-            end = len(text) if close < 0 else close + (0 if tok == "//" else 2)
-        elif tok in ("'", '"'):
-            end = _STRING[tok].match(text, i).end()
-        elif tok == "`" or (tok == "}" and stack and stack[-1] is None):
-            if tok == "}":
-                stack.pop()
-            chunk = _TEMPLATE.match(text, end)
-            end = chunk.end()
-            if chunk.group(1) == "${":
-                stack.append(None)
-        elif tok == "/":
-            j = i - 1
-            while j >= 0 and text[j].isspace():
-                j -= 1
-            regex = _REGEX.match(text, i) if j < 0 or text[j] in _REGEX_AFTER else None
-            if not regex:
-                pos = end
-                continue
-            end = regex.end()
-        else:
-            if tok in "([{":
-                stack.append(i)
-            elif stack and stack[-1] is not None and text[stack[-1]] == _PAIRS[tok]:
-                pairs[stack[-1]] = i
-                pairs[i] = stack.pop()
-            pos = end
-            continue
-        starts.append(i)
-        ends.append(end)
-        pos = end
-    return starts, ends, pairs
+            return len(text) if close < 0 else close + (0 if tok == "//" else 2)
+        if tok in ("'", '"'):
+            return _end(_STRING[tok], text, i)
+        return self.regex(i) if tok == "/" else self.template(tok, end)
+
+    def template(self, tok: str, end: int) -> int:
+        """After "`" or the "}" closing a `${`: template text up to its end or next `${`."""
+        if tok == "}":
+            self.stack.pop()
+        chunk = _TEMPLATE.match(self.text, end)
+        if chunk is None:  # never: the pattern matches the empty string
+            return end
+        if chunk.group(1) == "${":
+            self.stack.append(None)
+        return chunk.end()
+
+    def regex(self, i: int) -> int | None:
+        text = self.text
+        j = i - 1
+        while j >= 0 and text[j].isspace():
+            j -= 1
+        regex = _REGEX.match(text, i) if j < 0 or text[j] in _REGEX_AFTER else None
+        return regex.end() if regex else None
 
 
 class _Reader:
-    def __init__(self, text: str, lexed, bindings: dict[str, tuple[int, str]]):
+    def __init__(self, text: str, lexed: Lexed, bindings: dict[str, tuple[int, str]]) -> None:
         self.text, self.pos, self.bindings = text, 0, bindings
         self.starts, self.ends, self.pairs = lexed
 
@@ -106,28 +153,25 @@ class _Reader:
         self.skip()
         return self.text[self.pos] if self.pos < len(self.text) else ""
 
-    def string(self):
+    def string(self) -> object:
+        """The string or template literal at `pos` (UNREAD when it interpolates)."""
+        text, readable = self.quoted()
+        return text if readable else UNREAD
+
+    def quoted(self) -> tuple[str, bool]:
+        """(text, readable) of the string or template literal at `pos`."""
         text, quote = self.text, self.text[self.pos]
         self.pos += 1
-        out, readable = [], True
+        out: list[str] = []
+        readable = True
         while self.pos < len(text):
             ch = text[self.pos]
             if ch == "\\":
-                nxt = text[self.pos + 1 : self.pos + 2]
-                code = _HEX.match(text, self.pos + 1)
-                if code:
-                    point = int(next(g for g in code.groups() if g), 16)
-                    out.append(chr(point) if point < 0x110000 else "\ufffd")
-                    self.pos = code.end()
-                    continue
-                if text.startswith("\r\n", self.pos + 1):
-                    nxt = "\r\n"
-                out.append("" if nxt[:1] in _CONTINUATION else _ESCAPES.get(nxt, nxt))
-                self.pos += 1 + max(len(nxt), 1)
+                out.append(self.escape())
                 continue
             if ch == quote:
                 self.pos += 1
-                return "".join(out) if readable else UNREAD
+                return "".join(out), readable
             if quote != "`" and ch == "\n":
                 break  # quoted strings end at the line
             if quote == "`" and text.startswith("${", self.pos):
@@ -136,33 +180,60 @@ class _Reader:
             self.pos += 1
         raise ValueError("unterminated string")
 
-    def value(self, depth: int = 0):
-        if depth > 50:
+    def escape(self) -> str:
+        """What the backslash escape at `pos` stands for; moves past it."""
+        text = self.text
+        code = _HEX.match(text, self.pos + 1)
+        if code:
+            point = int(next(g for g in code.groups() if g), 16)
+            self.pos = code.end()
+            return chr(point) if point < UNICODE_END else "\ufffd"
+        nxt = "\r\n" if text.startswith("\r\n", self.pos + 1) else text[self.pos + 1 : self.pos + 2]
+        self.pos += 1 + max(len(nxt), 1)
+        return "" if nxt[:1] in _CONTINUATION else _ESCAPES.get(nxt, nxt)
+
+    def value(self, depth: int = 0) -> object:
+        if depth > MAX_NESTING:
             raise ValueError("too deep")
+        value = self.literal(depth)
+        # `"a" + b`, `x.join(" ")`, ternaries...: not a plain literal.
+        if value is _EXPRESSION or self.peek() not in (",", "}", "]", ")", ""):
+            self.expression()
+            return UNREAD
+        return value
+
+    def literal(self, depth: int) -> object:
+        """The literal at `pos`, or _EXPRESSION when it doesn't start one."""
         ch = self.peek()
+        if ch in QUOTES:
+            return self.string()
+        if ch == "{":
+            entries: dict[str, object] = {}
+            self.items("}", lambda: self.entry(entries, depth))
+            return entries
+        if ch == "[":
+            elements: list[object] = []
+            self.items("]", lambda: elements.append(self.value(depth + 1)))
+            return elements
+        return self.scalar()
+
+    def scalar(self) -> object:
+        """A number, keyword or bound name at `pos`, else _EXPRESSION."""
         number = _NUMBER.match(self.text, self.pos)
+        if number:
+            self.pos, text = number.end(), number.group()
+            return float(text) if any(c in text for c in ".eE") else int(text)
         ident = _IDENT.match(self.text, self.pos)
         name = ident.group() if ident else None
-        if ch in QUOTES:
-            value = self.string()
-        elif ch == "{":
-            value = self.items("}", lambda out: self.entry(out, depth), {})
-        elif ch == "[":
-            value = self.items("]", lambda out: out.append(self.value(depth + 1)), [])
-        elif number:
-            self.pos, text = number.end(), number.group()
-            value = float(text) if any(c in text for c in ".eE") else int(text)
-        elif name in _KEYWORDS:
-            self.pos, value = ident.end(), _KEYWORDS[name]
+        if ident is None or name is None:
+            return _EXPRESSION
+        if name in _KEYWORDS:
+            value = _KEYWORDS[name]
         elif name in self.bindings and self.bindings[name][0] <= self.pos:
-            self.pos, value = ident.end(), self.bindings[name][1]
+            value = self.bindings[name][1]
         else:
-            self.expression()
-            return UNREAD
-        # `"a" + b`, `x.join(" ")`, ternaries...: not a plain literal.
-        if self.peek() not in (",", "}", "]", ")", ""):
-            self.expression()
-            return UNREAD
+            return _EXPRESSION
+        self.pos = ident.end()
         return value
 
     def expression(self) -> None:
@@ -179,23 +250,23 @@ class _Reader:
                 return
             self.pos += 1
 
-    def items(self, close: str, item, out):
+    def items(self, close: str, item: Callable[[], None]) -> None:
+        """Read `item`s separated by commas up to `close`."""
         self.pos += 1
         while (ch := self.peek()) != close:
             start = self.pos
             if not ch:
                 raise ValueError("unterminated")
-            item(out)
+            item()
             if self.peek() == ",":
                 self.pos += 1
             elif self.peek() != close or self.pos == start:
                 raise ValueError("bad literal")
         self.pos += 1
-        return out
 
-    def entry(self, out: dict, depth: int) -> None:
+    def entry(self, out: dict[str, object], depth: int) -> None:
         if self.peek() in ("'", '"'):
-            key = self.string()
+            key = self.quoted()[0]  # always readable: only templates interpolate
         elif self.text.startswith("...", self.pos):
             self.pos += 3
             self.value(depth + 1)
@@ -228,45 +299,81 @@ _DESTRUCTURE = re.compile(r"[\]}]\s*=(?![=>])")
 _END_LITERAL = re.compile(r"[ \t]*(?:[;,\n})]|$)")
 
 
+@dataclass
+class _Declarations:
+    declared: Counter[str] = field(default_factory=Counter)  # declarations per name
+    values: dict[str, tuple[int, object]] = field(default_factory=dict)  # (after, value)
+    shadowed: set[str] = field(default_factory=set)  # destructured names
+
+
 def _string_bindings(program: str, reader: _Reader) -> dict[str, tuple[int, str]]:
     """Names declared exactly once, to a string literal, and never reassigned, destructured,
     or used as a parameter: name -> (position after the binding, value). Strings are
     immutable, so such a name holds that literal wherever it's in scope. One pass each."""
-    declared: Counter[str] = Counter()
-    values: dict[str, tuple[int, object]] = {}
-    shadowed: set[str] = set()
+    found = _Declarations()
     for match in _DECLARE.finditer(program):
         if not reader.code(match.start()):
             continue
         reader.pos = match.end()
         try:
-            while True:
-                if reader.peek() in ("{", "["):  # destructuring: never a literal
-                    end = reader.pairs[reader.pos]
-                    shadowed.update(_IDENT.findall(program, reader.pos, end))
-                    reader.pos, name = end + 1, None
-                elif ident := _IDENT.match(program, reader.pos):
-                    reader.pos, name = ident.end(), ident.group()
-                    declared[name] += 1
-                else:
-                    break
-                value, after = UNREAD, reader.pos
-                if reader.peek() == "=" and program[reader.pos + 1 : reader.pos + 2] not in "=>":
-                    reader.pos += 1
-                    if reader.peek() in QUOTES:
-                        value = reader.string()
-                    if not _END_LITERAL.match(program, reader.pos):
-                        value = UNREAD  # `"a" + b`, `"x".repeat(3)`: an expression
-                    after = reader.pos
-                    reader.expression()
-                if name:
-                    values[name] = (after, value)
-                if reader.peek() != ",":
-                    break
-                reader.pos += 1
+            _declaration(program, reader, found)
         except (ValueError, IndexError, KeyError):
             continue
     assigned = Counter(m[1] for m in _ASSIGN.finditer(program) if reader.code(m.start()))
+    shadowed = found.shadowed | _rebound(program, reader)
+    return {
+        name: (pos, value)
+        for name, (pos, value) in found.values.items()
+        if isinstance(value, str)
+        and found.declared[name] == 1
+        and assigned[name] == 1
+        and name not in shadowed
+    }
+
+
+def _declaration(program: str, reader: _Reader, found: _Declarations) -> None:
+    """The declarators after `const`/`let`/`var` at `reader.pos` (`a = "x", {b} = y, c`)."""
+    while _declarator(program, reader, found):
+        if reader.peek() != ",":
+            return
+        reader.pos += 1
+
+
+def _declarator(program: str, reader: _Reader, found: _Declarations) -> bool:
+    """One declarator at `reader.pos`; False when there is none."""
+    if reader.peek() in ("{", "["):  # destructuring: never a literal
+        end = reader.pairs[reader.pos]
+        found.shadowed.update(_IDENT.findall(program, reader.pos, end))
+        reader.pos, name = end + 1, None
+    elif ident := _IDENT.match(program, reader.pos):
+        reader.pos, name = ident.end(), ident.group()
+        found.declared[name] += 1
+    else:
+        return False
+    after, value = _initializer(program, reader)
+    if name:
+        found.values[name] = (after, value)
+    return True
+
+
+def _initializer(program: str, reader: _Reader) -> tuple[int, object]:
+    """(position after the value, the value when it's a string literal, else UNREAD)."""
+    after = reader.pos
+    if reader.peek() != "=" or program[reader.pos + 1 : reader.pos + 2] in "=>":
+        return after, UNREAD
+    reader.pos += 1
+    value = reader.string() if reader.peek() in QUOTES else UNREAD
+    if not _END_LITERAL.match(program, reader.pos):
+        value = UNREAD  # `"a" + b`, `"x".repeat(3)`: an expression
+    after = reader.pos
+    reader.expression()
+    return after, value
+
+
+def _rebound(program: str, reader: _Reader) -> set[str]:
+    """Names rebound in code other than by assignment: parameters, catch, function/class
+    names, ++/--, destructuring assignment."""
+    shadowed: set[str] = set()
     for m in _SHADOW.finditer(program):
         if reader.code(m.start()):
             for group in filter(None, m.groups()):
@@ -274,14 +381,7 @@ def _string_bindings(program: str, reader: _Reader) -> dict[str, tuple[int, str]
     for m in _DESTRUCTURE.finditer(program):  # `[a, b] = x`, `({a} = x)`
         if reader.code(m.start()) and m.start() in reader.pairs:
             shadowed.update(_IDENT.findall(program, reader.pairs[m.start()], m.start()))
-    return {
-        name: (pos, value)
-        for name, (pos, value) in values.items()
-        if isinstance(value, str)
-        and declared[name] == 1
-        and assigned[name] == 1
-        and name not in shadowed
-    }
+    return shadowed
 
 
 def tool_calls(program: str) -> list[tuple[str, object]]:
@@ -293,7 +393,7 @@ def tool_calls(program: str) -> list[tuple[str, object]]:
         reader.bindings = _string_bindings(program, reader)
     except (ValueError, IndexError, KeyError, RecursionError):
         return [("?", UNREAD)] if CALL.search(program) else []
-    calls = []
+    calls: list[tuple[str, object]] = []
     for match in CALL.finditer(program):
         if not reader.code(match.start()):
             continue  # inside a string, template text, comment or regex literal

@@ -7,11 +7,15 @@ report incomplete by itself (a rule that depends on it will be unknown instead).
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
-from ..model import Trace
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ..model import Trace
 
 
 @dataclass(frozen=True)

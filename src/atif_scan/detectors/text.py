@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
-from ..model import TOOL_INPUT_CHANNELS, Channel, Locator, Surface, Trace
+from ..model import SPAN_LENGTH, TOOL_INPUT_CHANNELS, Channel, Locator, Surface
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from ..model import Trace
+
+# What a predicate found in a surface: a `re.Match` or (start, end) span to cite, or just
+# truthy (the whole surface) / falsy (nothing).
+Hit = re.Match[str] | tuple[int, int] | bool | None
+Predicate = Callable[[Surface], Hit]
 
 
 @dataclass(frozen=True)
@@ -45,7 +56,7 @@ def matched(surface: Surface, result: object) -> Locator | None:
         return None
     if isinstance(result, re.Match):
         return replace(surface.at, span=result.span())
-    if isinstance(result, tuple) and len(result) == 2:
+    if isinstance(result, tuple) and len(result) == SPAN_LENGTH:
         return replace(surface.at, span=(int(result[0]), int(result[1])))
     return surface.at
 
@@ -63,11 +74,11 @@ class SurfaceDetector:
 
     spec: CheckSpec
     channels: frozenset[Channel]
-    predicate: Callable[[Surface], bool] = field(repr=False)
+    predicate: Predicate = field(repr=False)
     undecidable: Callable[[Surface], bool] | None = field(default=None, repr=False)
 
     def evaluate(self, trace: Trace, context: Context) -> Detection:
-        hits = []
+        hits: list[Locator] = []
         # Reads the recorded text. Withheld or summarised reasoning is how many models
         # work, not a recording gap (`Trace.reasoning_exposure` reports it).
         complete = trace.agent_steps > 0
@@ -110,10 +121,10 @@ class ObservationDetector:
     """
 
     spec: CheckSpec
-    predicate: Callable[[Surface], bool] = field(repr=False)
+    predicate: Predicate = field(repr=False)
 
     def evaluate(self, trace: Trace, context: Context) -> Detection:
-        hits = []
+        hits: list[Locator] = []
         surfaces = list(trace.observation_surfaces())
         complete = trace.agent_steps > 0 and (bool(surfaces) or trace.tool_calls == 0)
         for surface in surfaces:
@@ -134,7 +145,7 @@ class PromptDetector:
     pattern: re.Pattern[str] = field(repr=False)
 
     def evaluate(self, trace: Trace, context: Context) -> Detection:
-        hits = []
+        hits: list[Locator] = []
         complete = True
         for step in trace.steps:
             if step.source == "agent":
@@ -182,7 +193,7 @@ class OwnTaskFiles:
             re.I,
         )
 
-        def predicate(surface: Surface):
+        def predicate(surface: Surface) -> Hit:
             if surface.at.channel == Channel.PAYLOAD and surface.tool == "shell":
                 return False
             return pattern.search(surface.content.text)
@@ -220,7 +231,7 @@ class TaskNamedSkill:
             re.I,
         )
 
-        def predicate(surface: Surface):
+        def predicate(surface: Surface) -> Hit:
             if surface.at.channel == Channel.PAYLOAD:
                 return False
             if surface.tool == "write":
