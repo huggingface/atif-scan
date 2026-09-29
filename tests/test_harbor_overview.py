@@ -10,10 +10,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
-from typing_extensions import override
 
 from atif_scan.cli import main
-from atif_scan.harbor_hub import HarborCLI, job_id, overrides
+from atif_scan.harbor_hub import job_id, overrides
 from atif_scan.report import accuracy
 
 if TYPE_CHECKING:
@@ -440,21 +439,18 @@ def test_harbor_status_line_only_on_terminals(harbor, capsys, monkeypatch):
 
 
 @dataclass(frozen=True)
-class _PagedCLI(HarborCLI):
+class _PagedCLI:
     """Stub `harbor` CLI: one job of 25 trials, served `size` per page; it runs nothing."""
 
-    exe: str = "paged-harbor"
     size: int = 10
     pages: list[int] = field(default_factory=list)
     trials: list[Doc] = field(
         default_factory=lambda: [{"id": f"t{i:02d}", "name": f"task__T{i:02d}"} for i in range(25)]
     )
 
-    @override
     def run(self, *args: str) -> str:
         raise AssertionError(args)
 
-    @override
     def json(self, *args: str) -> object:
         if args[:3] == ("hub", "job", "show"):
             return {"name": "paged-job"}

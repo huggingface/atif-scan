@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from typing_extensions import override
 
 from atif_scan import harbor_hub, harbor_runs, layout, sources, sync
 from atif_scan.harbor_files import dataset_source, job_meta, primary_reward, trial_result
@@ -132,29 +131,24 @@ def never_opened(entry: Entry) -> Callable[[], Trace]:
 
 
 @dataclass(frozen=True)
-class FakeCLI(HarborCLI):
+class FakeCLI:
     """A `harbor` CLI double: every `--json` call returns `reply`; it never runs a process."""
 
-    exe: str = "fake-harbor"
     reply: object = None
 
-    @override
     def json(self, *args: str) -> object:
         return self.reply
 
-    @override
     def run(self, *args: str) -> str:
         raise AssertionError(args)
 
 
 @dataclass(frozen=True)
-class StubCLI(HarborCLI):
-    exe: str = "stub-harbor"
+class StubCLI:
     rows: list[Doc] = field(default_factory=list)
     row_items: list[Doc] = field(default_factory=list)
     calls: list[tuple[str, ...]] = field(default_factory=list)
 
-    @override
     def json(self, *args: str) -> object:
         self.calls.append(args)
         if args[:3] == ("hub", "job", "show"):
@@ -165,7 +159,6 @@ class StubCLI(HarborCLI):
             return {"items": self.row_items, "total_pages": 1}
         raise AssertionError(args)
 
-    @override
     def run(self, *args: str) -> str:
         self.calls.append(args)
         out = Path(args[args.index("-o") + 1])

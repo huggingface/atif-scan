@@ -27,7 +27,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from .checks import identifier
 from .harbor_files import (
@@ -102,6 +102,16 @@ def reference(value: str) -> tuple[str, str]:
     return ("row", row) if row is not None else ("job", job_id(value))
 
 
+class Harbor(Protocol):
+    """What the Hub source needs from the `harbor` CLI: raw output and `--json` output
+    of fixed subcommands. `HarborCLI` runs the real CLI; tests pass doubles that run
+    nothing."""
+
+    def run(self, *args: str) -> str: ...
+
+    def json(self, *args: str) -> object: ...
+
+
 @dataclass(frozen=True)
 class HarborCLI:
     exe: str
@@ -147,7 +157,7 @@ def _object(value: object) -> JsonObject:
     return value
 
 
-def _pages(cli: HarborCLI, *args: str) -> Iterator[tuple[int, int, JsonObject]]:
+def _pages(cli: Harbor, *args: str) -> Iterator[tuple[int, int, JsonObject]]:
     """(page, total_pages, data) for a paged `--json` listing, at most MAX_PAGES."""
     for page in range(1, MAX_PAGES + 1):
         data = _object(cli.json(*args, "--limit", str(PAGE_SIZE), "--page", str(page)))
@@ -221,7 +231,7 @@ def run_meta(job: str, show: Mapping[str, object], rows: Sequence[Mapping[str, o
 
 
 def listing(
-    cli: HarborCLI,
+    cli: Harbor,
     job: str,
     progress: Progress = _quiet,
     label: str = "job",
@@ -373,7 +383,7 @@ def _loader(path: Path) -> Callable[[], Trace]:
 
 
 def _fetch_archive(
-    cli: HarborCLI,
+    cli: Harbor,
     job: str,
     rows: Sequence[Mapping[str, object]],
     dest: Path,
@@ -393,7 +403,7 @@ def _fetch_archive(
     return {str(r["id"]): found.get(_label(r), target / "missing") for r in rows}
 
 
-def _fetch_trajectory(cli: HarborCLI, row: Mapping[str, object], path: Path, dest: Path) -> bool:
+def _fetch_trajectory(cli: Harbor, row: Mapping[str, object], path: Path, dest: Path) -> bool:
     """Download one trial's trajectory to `path`; False when it isn't there after."""
     path.unlink(missing_ok=True)
     try:
@@ -437,7 +447,7 @@ class _Downloads:
 
 
 def fetch(
-    cli: HarborCLI,
+    cli: Harbor,
     job: str,
     rows: Sequence[Mapping[str, object]],
     dest: Path,
@@ -469,7 +479,7 @@ def fetch(
     return paths
 
 
-def row_trials(cli: HarborCLI, row: str) -> list[str]:
+def row_trials(cli: Harbor, row: str) -> list[str]:
     return [
         str(t["trial_id"])
         for _, _, data in _pages(cli, "hub", "leaderboard", "row", "trial", "list", row)
@@ -483,7 +493,7 @@ RowJobs = list[tuple[str, list[JsonObject]]]
 
 
 def _row_jobs(
-    cli: HarborCLI, wanted: set[str], progress: Progress
+    cli: Harbor, wanted: set[str], progress: Progress
 ) -> tuple[RowJobs, list[Doc], set[str]]:
     """(the row's trials by job, those jobs' run facts, trials no job accounted for)."""
     remaining = set(wanted)
@@ -534,7 +544,7 @@ def _leaderboard(show: JsonObject, jobs: RowJobs) -> Doc:
     }
 
 
-def row_listing(cli: HarborCLI, row: str, progress: Progress = _quiet) -> tuple[Doc, RowJobs]:
+def row_listing(cli: Harbor, row: str, progress: Progress = _quiet) -> tuple[Doc, RowJobs]:
     """A leaderboard row's facts and its trials grouped by job.
 
     The row lists trial IDs only; one `trial show` per job finds each job, whose listing
@@ -570,7 +580,7 @@ def row_listing(cli: HarborCLI, row: str, progress: Progress = _quiet) -> tuple[
 
 
 def _trial_sources(
-    cli: HarborCLI,
+    cli: Harbor,
     job: str,
     rows: Sequence[JsonObject],
     dest: Path,
@@ -602,7 +612,7 @@ def harbor_sources(
     dest: Path,
     full: bool = False,
     workers: int = 8,
-    cli: HarborCLI | None = None,
+    cli: Harbor | None = None,
     refresh: bool = False,
     progress: Progress = _quiet,
 ) -> tuple[list[Source], Doc]:
@@ -624,7 +634,7 @@ def harbor_sources(
     return sources, run
 
 
-def inspect_job(value: str, cli: HarborCLI | None = None) -> Doc:
+def inspect_job(value: str, cli: Harbor | None = None) -> Doc:
     """Listing only (no downloads): run facts plus per-trial metadata records."""
     kind, ref = reference(value)
     cli = cli or HarborCLI.find()
