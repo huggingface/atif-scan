@@ -962,7 +962,8 @@ class Answers:
                 continue
             if not (
                 isinstance(meta, dict)
-                and meta.get("question") in BY_ID
+                and isinstance(meta.get("question"), str)
+                and meta["question"] in BY_ID
                 and isinstance(meta.get("input_id"), str)
                 and isinstance(meta.get("version"), str)
             ):

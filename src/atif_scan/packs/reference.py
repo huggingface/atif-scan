@@ -59,6 +59,7 @@ from ..rules import Allowance, Ref
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    from ..checks import Detector
     from ..model import Step, ToolCall
 
 ENV = "ATIF_SCAN_REFERENCE"
@@ -446,7 +447,7 @@ def _shell_description(surface: Surface) -> bool:
     return surface.at.channel == Channel.PAYLOAD and surface.tool == "shell"
 
 
-def checks():
+def checks() -> list[Detector | Allowance]:
     base = os.environ.get(ENV) or None
     base = str(Path(base).expanduser()) if base else None
     ref = digest(base)

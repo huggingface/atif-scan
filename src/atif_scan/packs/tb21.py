@@ -36,10 +36,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
     from ..checks import Detector
+    from ..detectors.text import Hit
     from ..model import Trace
-
-# What a predicate reports (detectors.text.matched): a match or span to cite, or a bool.
-Hit = re.Match[str] | tuple[int, int] | bool | None
 
 WRITTEN = frozenset({Channel.COMMAND, Channel.ARGUMENTS, Channel.PAYLOAD, Channel.PATH})
 

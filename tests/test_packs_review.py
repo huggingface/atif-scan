@@ -333,6 +333,8 @@ def test_answers_load_skips_malformed_metadata_and_caps_reads(tmp_path):
             {"question": "test_access_intent", "version": "1", "input_id": "t1"},
             " " * (MAX_READ + 1),
         ),
+        # Regression: an unhashable question (a list) raised TypeError on the lookup.
+        "unhashable": ({**META, "question": ["lookup_used"], "input_id": "t1"}, REPLY),
     }
     for name, (meta, reply) in cases.items():
         (folder / f"{name}.json").write_text(json.dumps(meta))
