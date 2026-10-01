@@ -239,6 +239,12 @@ class Trace:
     # Token kinds ("input", "output", "cached") only some metered steps record: their
     # step sums are lower bounds, never complete totals.
     step_kinds_partial: tuple[str, ...] = ()
+    # Explicit fast-agent provider retries (legacy "stream" names). These are
+    # harness events, not proof that usage or agent history is missing.
+    stream_retry_steps: int = 0
+    stream_retry_attempts: int = 0
+    # final_metrics.extra.llm_usage_calls_complete as the harness recorded it (None: absent).
+    usage_calls_complete: bool | None = None
 
     @cached_property
     def step_models(self) -> dict[str, int]:

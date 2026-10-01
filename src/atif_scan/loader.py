@@ -608,6 +608,7 @@ def parse_trace(value: object) -> Trace:
     metrics = value.get("final_metrics")
     tokens = as_object(as_object(metrics).get("extra")).get("total_tool_use_tokens")
     per_step, unmetered, partial_kinds = step_usage(raw_steps)
+    retry_steps, retry_attempts, calls_complete = stream_retries(raw_steps, metrics)
     return Trace(
         version,
         tuple(steps),
@@ -623,6 +624,9 @@ def parse_trace(value: object) -> Trace:
         step_usage=per_step,
         calls_without_usage=unmetered if per_step is not None else 0,
         step_kinds_partial=partial_kinds,
+        stream_retry_steps=retry_steps,
+        stream_retry_attempts=retry_attempts,
+        usage_calls_complete=calls_complete,
     )
 
 
@@ -797,6 +801,27 @@ def step_usage(raw_steps: list[object]) -> tuple[Usage | None, int, tuple[str, .
         name for name, r in zip(TOKEN_KIND_NAMES, recorded, strict=True) if 0 < r < seen
     )
     return Usage(None, *kinds), missing, partial
+
+
+FAST_AGENT_RETRY_SCHEMA = "fast-agent.retry/v1"
+
+
+def stream_retries(raw_steps: list[object], final_metrics: object) -> tuple[int, int, bool | None]:
+    """Count explicit fast-agent.retry/v1 provider retry markers and read the
+    harness's usage-completeness flag. A marker does not establish whether a failure
+    was mid-stream, whether usage was received, or whether output entered context.
+    Legacy field names retain "stream" for report compatibility."""
+    steps = attempts = 0
+    for raw in raw_steps:
+        if not is_object(raw) or raw.get("source") != "agent":
+            continue
+        retry = as_object(as_object(raw.get("extra")).get("retry"))
+        tries = count(retry.get("provider_attempts"))
+        if as_str(retry.get("schema")) == FAST_AGENT_RETRY_SCHEMA and tries and tries > 1:
+            steps += 1
+            attempts += tries - 1
+    complete = as_object(as_object(final_metrics).get("extra")).get("llm_usage_calls_complete")
+    return steps, attempts, complete if isinstance(complete, bool) else None
 
 
 # How the report names each step token kind (usage fields: input, output, cache).

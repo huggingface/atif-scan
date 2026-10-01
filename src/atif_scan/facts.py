@@ -37,8 +37,9 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from .accounting import apply_accounting
 from .detectors.integrity import output_ratio
-from .jsonval import Doc, as_str
+from .jsonval import Doc, as_object, as_str
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -68,6 +69,7 @@ TRACE_FACTS = (
     "usage",
     "usage_basis",
     "calls_without_usage",
+    "stream_retry_attempts",
     "step_kinds_partial",
     "cache_write_tokens",
     "steps_vs_totals",
@@ -175,6 +177,9 @@ def trace_facts(trace: Trace | None) -> Doc:
         # summed step metrics, `steps_partial` when some agent steps recorded none).
         "usage_basis": basis,
         "calls_without_usage": trace.calls_without_usage if basis == "steps_partial" else 0,
+        # Explicit fast-agent provider retries are harness events, not proof of
+        # missing usage or agent history, whatever the accounting basis.
+        "stream_retry_attempts": trace.stream_retry_attempts,
         # Token kinds only some metered steps record (their step sums are lower bounds).
         "step_kinds_partial": list(trace.step_kinds_partial) or None,
         "cache_write_tokens": trace.usage.cache_write_tokens if trace.usage else None,
@@ -283,6 +288,11 @@ def run_facts(recorded: Mapping[str, object], traced: Mapping[str, object]) -> D
     elif not has_tokens:
         facts["usage_basis"] = None
     facts.update(_cost(recorded, usage))
+    if accounting := as_object(recorded.get("accounting")):
+        # The adapter qualifies its own counts; do not replace missing observed kinds
+        # with canonical trajectory totals or normalise them as uncached input.
+        facts.update({k: recorded.get(k) for k in TOKENS})
+        apply_accounting(facts, accounting)
     return facts
 
 

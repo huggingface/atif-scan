@@ -22,6 +22,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime
 from itertools import pairwise
 
+from .accounting import TOKEN_KEYS, harbor_accounting
 from .checks import identifier
 from .jsonval import (
     Doc,
@@ -176,6 +177,7 @@ def trial_result(data: bytes | None) -> Doc:
         "error_type": (_label(exception.get("exception_type")) or "exception")
         if exception
         else None,
+        "accounting": harbor_accounting(agent),
         "cost_usd": number(agent.get("cost_usd"), 0),
         "input_tokens": count(agent.get("n_input_tokens")),
         "cache_tokens": count(agent.get("n_cache_tokens")),
@@ -186,7 +188,11 @@ def trial_result(data: bytes | None) -> Doc:
         # that lookup only, never reported.
         "attempt_id": attempt if attempt and ATTEMPT_ID.fullmatch(attempt) else None,
     }
-    return {k: v for k, v in meta.items() if v is not None}
+    facts: Doc = {k: v for k, v in meta.items() if v is not None}
+    if meta["accounting"] is not None:
+        # Explicit unknown observed counts must also override older listing totals.
+        facts.update({k: meta[k] for k in TOKEN_KEYS})
+    return facts
 
 
 TRIAL_LEDGER = "trials.jsonl"

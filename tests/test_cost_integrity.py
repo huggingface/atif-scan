@@ -258,7 +258,10 @@ def test_partial_step_usage_is_priced_as_a_lower_bound(tmp_path, capsys):
     assert b["unmetered_work"]["trials"] == 0  # not "no usage": its steps record it
     flat = " ".join(out.split())  # unwrapped: phrases may span lines
     assert "⚠ 1 trial (1 rewarded) recorded no totals" in flat
-    assert "their steps are summed as a lower bound: 1 LLM call record no usage" in flat
+    assert "recorded step usage is retained as a lower bound" in flat
+    assert (
+        "total provider usage and billing are not established: 1 LLM call record no usage" in flat
+    )
     assert "· est. +<$0.01 for the 1 LLM call without usage" in flat
     assert b["usage"]["basis"] == {"run": 3, "steps_partial": 1}
 
@@ -288,6 +291,7 @@ def test_unmetered_work_is_estimated_from_trials_priced_at_given_rates():
         "kinds_partial": {},
         "rewarded": 0,
         "estimate_usd": None,
+        "stream_retry_calls": 0,
     }
 
 
@@ -383,3 +387,68 @@ def test_partial_kinds_are_named_in_the_brief(tmp_path, capsys):
     flat = " ".join(out.split())
     assert "input tokens are missing on some steps in 1 trial" in flat
     assert "record no usage" not in flat  # no call went unmetered
+
+
+def retried(step_raw, attempts=2, schema="fast-agent.retry/v1"):
+    """A step fast-agent marks as retried after `attempts - 1` failed provider attempts."""
+    return {**step_raw, "extra": {"retry": {"schema": schema, "provider_attempts": attempts}}}
+
+
+def test_fast_agent_stream_retry_markers_are_read_strictly():
+    steps = [
+        step((100, 10, 50), calls=1),
+        retried(step((200, 20, 150), calls=2)),
+        retried(step((300, 30, 250), calls=3), attempts=3),
+        retried(step((1, 1, 0), calls=1), attempts=1),  # one attempt: nothing failed
+        retried(step((1, 1, 0), calls=2), schema="other/v1"),  # not fast-agent's marker
+        {**retried(step((1, 1, 0))), "source": "user"},  # not an agent step
+    ]
+    raw = trajectory(steps)
+    raw["final_metrics"] = {"extra": {"llm_usage_calls_complete": False}}
+    trace = parse_trace(raw)
+    assert (trace.stream_retry_steps, trace.stream_retry_attempts) == (2, 3)
+    assert trace.usage_calls_complete is False
+    assert trace_facts(trace)["stream_retry_attempts"] == 3
+    plain = parse_trace(trajectory([step((100, 10, 50), calls=2)]))
+    assert (plain.stream_retry_attempts, plain.usage_calls_complete) == (0, None)
+
+
+def test_stream_failures_are_reported_as_harness_events_and_lower_bounds(tmp_path, capsys):
+    steps = [step((1000, 100, 500), calls=1)] * 3
+    trials = [(result(i), trajectory(steps, (3000, 300, 1500))) for i in range(3)]
+    failed = trajectory([*steps, retried(step((1000, 100, 500), calls=2))])
+    failed["final_metrics"] = {
+        "total_steps": 4,
+        # fast-agent reports 0.0 when it has no price: unpriced, never a recorded cost.
+        "extra": {"llm_usage_calls_complete": False, "observed_cost_usd_lower_bound": 0.0},
+    }
+    trials.append((result(3, tokens=None), failed))
+    b, out = scan(harbor_hf_run(tmp_path, trials), capsys)
+    sr = b["usage"]["stream_retries"]
+    assert (sr["trials"], sr["failed_attempts"], sr["without_totals"]) == (1, 1, 1)
+    assert b["usage"]["partial"]["stream_retry_calls"] == 1
+    flat = " ".join(out.split())
+    assert "1 LLM call record no usage; fast-agent also records provider retries" in flat
+    assert "1 trial (1 rewarded) had fast-agent provider failures: 1 failed attempt" in flat
+    assert "not model behaviour" in flat
+
+
+def test_unexplained_calls_without_usage_are_not_called_stream_failures(tmp_path, capsys):
+    steps = [step((1000, 100, 500), calls=1)] * 3
+    trials = [(result(i), trajectory(steps, (3000, 300, 1500))) for i in range(3)]
+    trials.append((result(3, tokens=None), trajectory([*steps, step((1000, 100, 500), calls=2)])))
+    b, out = scan(harbor_hf_run(tmp_path, trials), capsys)
+    assert b["usage"]["stream_retries"]["trials"] == 0
+    assert b["usage"]["partial"]["stream_retry_calls"] == 0
+    assert "stream" not in " ".join(out.split()).lower()
+
+
+def test_retry_with_recorded_totals_does_not_claim_missing_usage(tmp_path, capsys):
+    steps = [retried(step((1000, 100, 500), calls=2))]
+    trials = [(result(i), trajectory(steps, (1000, 100, 500))) for i in range(3)]
+    _, out = scan(harbor_hf_run(tmp_path, trials), capsys)
+    flat = " ".join(out.split())
+    assert "provider failures" in flat
+    assert "Retry markers alone do not establish missing usage or missing agent history" in flat
+    assert "failed attempts report no usage" not in flat
+    assert "tokens and cost are lower bounds" not in flat

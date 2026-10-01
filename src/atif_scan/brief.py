@@ -15,6 +15,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .accounting import has_scoped_cost
 from .estimates import (
     Pricing,
     choose_pricing,
@@ -22,6 +23,7 @@ from .estimates import (
     missing_activity,
     partial_usage,
     price_check,
+    stream_retries,
     unmetered_work,
 )
 from .harbor_files import PRICE_KINDS
@@ -369,11 +371,25 @@ def _suggested_packs(items: Sequence[Doc], runs: Sequence[Doc]) -> list[str]:
     ]
 
 
+def _scoped_costs(items: Sequence[Doc]) -> Doc:
+    """Keep observed amounts separate: they may overlap and are never a final bill."""
+    contracts = [i["accounting"] for i in items if has_scoped_cost(i)]
+    result: Doc = {"trials": len(contracts)}
+    for key in ("estimated_observed_cost_usd", "reported_cost_usd"):
+        amounts = [a[key] for a in contracts if a.get(key) is not None]
+        result[key] = sum(amounts) if amounts else None
+    return result
+
+
 def _usage(items: Sequence[Doc], pricing: Pricing) -> Doc:
     """Token accounting first: every cost figure is priced from these tokens."""
     with_tokens = [i for i in items if _has_tokens(i)]
     return {
         "trials_with_tokens": len(with_tokens),
+        "observed_accounting": sum(i.get("usage_basis") == "run_observed" for i in items),
+        "observed_costs": sum(
+            bool(i.get("accounting")) and i.get("cost_usd") is None for i in items
+        ),
         # Where each trial's tokens come from: the run's records (result.json, Hub,
         # ledger), the trajectory's totals, or its steps' own usage.
         "basis": dict(Counter(i.get("usage_basis") or "none" for i in with_tokens)),
@@ -393,6 +409,7 @@ def _usage(items: Sequence[Doc], pricing: Pricing) -> Doc:
             if i.get("steps_vs_totals") == "steps_short"
         ),
         "partial": partial_usage(items, pricing),
+        "stream_retries": stream_retries(items),
     }
 
 
@@ -429,6 +446,7 @@ def brief(
         "overview": ov,
         "dq_threshold": dq,
         "cost_estimate": cost_estimate(items, pricing, other_model),
+        "scoped_costs": _scoped_costs(items),
         "unmetered_work": unmetered_work(items, pricing, other_model),
         "usage": _usage(items, pricing),
         "cost_integrity": {

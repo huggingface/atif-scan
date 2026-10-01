@@ -388,6 +388,35 @@ doesn't make a report incomplete, but rules and allowances can use them.
 | `integrity.tokens_exceed_recorded_calls` | low | More than 2M prompt tokens per recorded LLM call: the totals include activity the steps don't show |
 | `integrity.output_token_ratio` | low | Recorded agent text (messages, reasoning, tool arguments) doesn't fit the reported completion tokens: above 8 chars/token, or below 1 when it can be checked (see below) |
 
+**Provider retries and accounting.** ATIF's `extra` fields support custom metadata;
+`extra.retry` with schema `fast-agent.retry/v1` is a fast-agent extension, not a
+standard ATIF retry event. A retry marker records a harness/provider event, not
+misconduct or proof of missing agent history. It does not by itself establish a
+mid-stream failure, absent usage, or whether output was committed to context.
+When final totals are absent, the scanner retains observed step usage as a lower
+bound; total provider usage and billing remain unestablished. Missing attempt usage
+is unknown, never zero. Historical traces are read without rewriting them. Future
+exporters should distinguish committed-turn accounting from all-attempt accounting
+and explicitly record whether interrupted output entered context or executed tools.
+The legacy JSON field names containing `stream_retry` are retained for compatibility.
+
+**Harbor observed accounting.** Local trial `result.json` files can qualify
+`agent_result` counts through `metadata.fast_agent_accounting`
+(`harbor.fast-agent.accounting/v1`, scope `observed`). Reports retain only validated
+accounting codes, booleans and non-negative numbers in `accounting`, never raw metadata.
+Non-final or incompletely known counts use `usage_basis: run_observed`; unknown token
+kinds remain null, not zero or fallback trajectory totals. Such counts are not compared
+as complete totals or used as cost-fit/activity references. Aggregate token counts may
+therefore include observed lower bounds; the brief explicitly warns about their scope.
+Only `reported_final` cost with `final_total` scope enters recorded `cost_usd`.
+Reported step costs and price-derived observed estimates stay separately labelled in
+`accounting`, never promoted from a listing, attempt-cost file or trajectory to a bill.
+Token-priced estimates for these trials cover observed usage only.
+Harbor's saved `metadata.fast_agent_final_metrics.extra.accounting` (`fast-agent.accounting/v1`)
+is projected only for observed provider completeness and per-kind availability;
+canonical ATIF totals and source files are unchanged. Missing or unrecognised accounting
+contracts keep the legacy facts path; retry markers alone still do not prove unknown usage.
+
 **Reasoning exposure.** Many proprietary models withhold their reasoning or return a
 summary by design, while open-weight models usually expose it in full. That's how these
 models work, not a recording defect, so it isn't a finding and doesn't make checks

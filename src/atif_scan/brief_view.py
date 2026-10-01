@@ -789,6 +789,7 @@ def _steps_vs_totals(u: Doc) -> Lines:
 
 BASIS = {
     "run": "run records",
+    "run_observed": "observed run counts (not complete totals)",
     "final_metrics": "trajectory totals",
     "steps": "step sums",
     "steps_partial": "partial step sums",
@@ -804,22 +805,52 @@ def _basis(u: Doc) -> Lines:
     return [f"{INFO} counts from " + counts((BASIS.get(k, k), v) for k, v in basis.items())]
 
 
+def _stream_retry_reason(explained: int, calls: int) -> str:
+    """Retry context alongside missing usage; markers alone do not explain the gap."""
+    if not explained:
+        return ""
+    share = "" if explained >= calls else f" ({explained:,} of them)"
+    return f"; fast-agent also records provider retries{share}"
+
+
+def _stream_retries(b: Doc) -> Lines:
+    """Provider retry events, without assuming stream failure or absent usage."""
+    sr = (b.get("usage") or {}).get("stream_retries") or {}
+    if not sr.get("trials"):
+        return []
+    rewarded = f" ({sr['rewarded']:,} rewarded)" if sr["rewarded"] else ""
+    return [
+        f"{INFO} {plural(sr['trials'], 'trial')}{rewarded} had fast-agent provider"
+        f" failures: {plural(sr['failed_attempts'], 'failed attempt')} retried by the"
+        " harness (provider/transport events, not model behaviour). Retry markers alone"
+        " do not establish missing usage or missing agent history"
+    ]
+
+
 def _usage_gaps(b: Doc) -> Lines:
     pu = (b.get("usage") or {}).get("partial") or {}
     um = b.get("unmetered_work") or {"trials": 0}
     texts = []
+    observed = (b.get("usage") or {}).get("observed_accounting", 0)
+    if observed:
+        texts.append(
+            f"{WARN} {plural(observed, 'trial')} retain observed run counts, not complete"
+            " totals; total provider usage and billing are not established"
+        )
     if pu.get("trials"):
         rewarded = f" ({pu['rewarded']:,} rewarded)" if pu["rewarded"] else ""
         gaps = []
         if pu["calls_without_usage"]:
-            gaps.append(f"{plural(pu['calls_without_usage'], 'LLM call')} record no usage")
+            why = _stream_retry_reason(pu.get("stream_retry_calls") or 0, pu["calls_without_usage"])
+            gaps.append(f"{plural(pu['calls_without_usage'], 'LLM call')} record no usage{why}")
         gaps += [
             f"{kind} tokens are missing on some steps in {plural(n, 'trial')}"
             for kind, n in (pu.get("kinds_partial") or {}).items()
         ]
         texts.append(
             f"{WARN} {plural(pu['trials'], 'trial')}{rewarded} recorded no totals, so their"
-            " steps are summed as a lower bound: " + "; ".join(gaps)
+            " recorded step usage is retained as a lower bound; total provider usage and"
+            " billing are not established: " + "; ".join(gaps)
         )
     if um["trials"]:
         why = ", ".join(
@@ -862,7 +893,7 @@ def tokens_section(b: Doc) -> Lines:
             checks.append(
                 f"{WARN} {plural(count, 'trial')} ({pct(count, n)}): {_title_inline(b, check)}"
             )
-    return wrap("TOKENS", [head, *checks, *_usage_gaps(b), *_text_ratio(b)])
+    return wrap("TOKENS", [head, *checks, *_usage_gaps(b), *_stream_retries(b), *_text_ratio(b)])
 
 
 # --- COST: priced from the tokens ---------------------------------------------------------
@@ -881,8 +912,14 @@ def _cost_head(b: Doc) -> Lines:
     ce, n = b["cost_estimate"], _present(b)
     total = b["overview"]["cost"]["total_usd"]
     with_usage = n - ce["no_usage"]
+    scoped = (b.get("scoped_costs") or {}).get("trials")
     if not ce["unpriced"]:
-        return [f"{usd(total)} recorded · {OK} every trial with usage has a cost"]
+        qualifier = (
+            "final bills; actual bill unknown for observed-cost trials"
+            if scoped
+            else f"· {OK} every trial with usage has a cost"
+        )
+        return [f"{usd(total)} recorded {qualifier}"]
     source = ce.get("price_source")
     if ce["unpriced"] == with_usage and not total:
         return _no_cost_recorded(ce, source)
@@ -900,9 +937,10 @@ def _cost_head(b: Doc) -> Lines:
         if ce.get("median_abs_error_usd") is not None
         else ""
     )
+    scope = "excluding observed-cost trials" if scoped else "in all"
     return [
         head,
-        f"{missing}: est. +{usd(ce['estimate_usd'])} ({how}{error}) → est. {usd(whole)} in all",
+        f"{missing}: est. +{usd(ce['estimate_usd'])} ({how}{error}) → est. {usd(whole)} {scope}",
     ]
 
 
@@ -1017,8 +1055,29 @@ def walltime_section(b: Doc) -> Lines:
     )
 
 
+def _scoped_cost_notes(b: Doc) -> Lines:
+    scoped = b.get("scoped_costs") or {}
+    if not scoped.get("trials"):
+        return []
+    notes = [
+        f"{WARN} actual bill unknown for {plural(scoped['trials'], 'trial')};"
+        " observed amounts are not final bills"
+    ]
+    estimate = scoped.get("estimated_observed_cost_usd")
+    reported = scoped.get("reported_cost_usd")
+    if estimate is not None:
+        notes.append(
+            f"{usd(estimate)} observed price-derived estimate (excludes unmetered attempts)"
+        )
+    if reported is not None:
+        notes.append(f"{usd(reported)} partial reported observed cost (not a final bill)")
+    if estimate is not None and reported is not None:
+        notes.append(f"{INFO} scoped amounts may overlap; not added together")
+    return notes
+
+
 def cost_section(b: Doc) -> Lines:
-    return wrap("COST", [*_cost_head(b), *_gap_costs(b), *_price_checks(b)])
+    return wrap("COST", [*_cost_head(b), *_scoped_cost_notes(b), *_gap_costs(b), *_price_checks(b)])
 
 
 # --- SETTINGS ----------------------------------------------------------------------------

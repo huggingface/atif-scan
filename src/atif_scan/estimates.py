@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
     from .jsonval import Doc
 
+from .accounting import has_scoped_cost
+
 MIN_PRICED = 20
 MIN_REFERENCES = 10
 # Trials with fewer LLM calls say little about cost or context per call.
@@ -123,6 +125,8 @@ class Pricing:
     def trial_cost(self, item: Doc) -> float | None:
         """A trial's recorded cost, else its tokens at known rates. Fitted rates never
         price a trial here: other estimates use these costs as references."""
+        if item.get("usage_basis") == "run_observed" or has_scoped_cost(item):
+            return None
         if item.get("cost_usd"):
             return float(item["cost_usd"])
         if self.known and self.rates is not None and _has_tokens(item):
@@ -135,7 +139,10 @@ def _priced(items: Sequence[Doc], other_model: frozenset[str]) -> list[tuple[lis
     return [
         (_features(i), float(i["cost_usd"]))
         for i in items
-        if _has_tokens(i) and i.get("cost_usd") and i["input_id"] not in other_model
+        if _has_tokens(i)
+        and i.get("cost_usd")
+        and i.get("usage_basis") != "run_observed"
+        and i["input_id"] not in other_model
     ]
 
 
@@ -208,10 +215,11 @@ def cost_estimate(
     if pricing is None:
         pricing = choose_pricing(items, other_model=other_model)
     has_tokens = [(i, _features(i)) for i in items if _has_tokens(i)]
-    unpriced = [row for i, row in has_tokens if not i.get("cost_usd")]
+    candidates = [(i, row) for i, row in has_tokens if not has_scoped_cost(i)]
+    unpriced = [row for i, row in candidates if not i.get("cost_usd")]
     result: Doc = {
         "unpriced": len(unpriced),
-        "unpriced_ids": [i["input_id"] for i, _ in has_tokens if not i.get("cost_usd")],
+        "unpriced_ids": [i["input_id"] for i, _ in candidates if not i.get("cost_usd")],
         "no_usage": len(items) - len(has_tokens),
         "priced_other_model": _priced_other(items, other_model),  # left out of the fit
         "estimate_usd": None,
@@ -248,7 +256,7 @@ def price_check(items: Sequence[Doc], price: Rates | None) -> Doc | None:
     rows = [
         (float(i["cost_usd"]), _price(price, _features(i)))
         for i in items
-        if i.get("cost_usd") and _has_tokens(i)
+        if i.get("cost_usd") and _has_tokens(i) and i.get("usage_basis") != "run_observed"
     ]
     mismatched = [(c, p) for c, p in rows if abs(c - p) > max(0.01, 0.02 * max(c, p))]
     return {
@@ -287,13 +295,37 @@ def partial_usage(items: Sequence[Doc], pricing: Pricing | None = None) -> Doc:
         "rewarded": sum(1 for i in rows if (i.get("reward") or 0) > 0),
         # Only when every such trial could be priced: a partial sum would read as whole.
         "estimate_usd": round(estimate, 4) if rows and priced == len(rows) else None,
+        # Overlap in counts only: retry markers do not prove which calls lack usage.
+        "stream_retry_calls": sum(
+            min(i.get("stream_retry_attempts") or 0, i.get("calls_without_usage") or 0)
+            for i in rows
+        ),
+    }
+
+
+def stream_retries(items: Sequence[Doc]) -> Doc:
+    """Trials with explicit fast-agent provider retries, regardless of usage basis.
+    Markers alone do not establish absent usage or incomplete billing. Legacy report
+    keys retain "stream" for compatibility."""
+    rows = [i for i in items if (i.get("stream_retry_attempts") or 0) > 0]
+    return {
+        "trials": len(rows),
+        "ids": [i["input_id"] for i in rows],
+        "failed_attempts": sum(i["stream_retry_attempts"] for i in rows),
+        "rewarded": sum(1 for i in rows if (i.get("reward") or 0) > 0),
+        "without_totals": sum(1 for i in rows if i.get("usage_basis") == "steps_partial"),
     }
 
 
 def _unmetered(item: Doc) -> bool:
     """Recorded agent work (LLM or tool calls), but no tokens and no cost at all."""
     worked = item.get("llm_calls") or item.get("tool_calls")
-    return bool(worked) and not _has_tokens(item) and item.get("cost_usd") is None
+    return (
+        bool(worked)
+        and not _has_tokens(item)
+        and item.get("cost_usd") is None
+        and not has_scoped_cost(item)
+    )
 
 
 def _call_references(
@@ -367,7 +399,11 @@ def unmetered_work(
 
 
 def missing_activity(items: Sequence[Doc]) -> Doc:
-    rows = [i for i in items if i.get("input_tokens") and i.get("llm_calls")]
+    rows = [
+        i
+        for i in items
+        if i.get("input_tokens") and i.get("llm_calls") and i.get("usage_basis") != "run_observed"
+    ]
     compacted = [i for i in rows if i.get("compacted")]
     result: Doc = {
         "compacted": sum(1 for i in items if i.get("compacted")),
