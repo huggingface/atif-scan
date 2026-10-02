@@ -21,11 +21,11 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from .cite import mask, trace_secrets
 from .loader import TraceError, load_trace
-from .model import Channel, Step, Trace
+from .model import Channel, Content, Observation, Step, Trace
 
 if TYPE_CHECKING:
     from collections.abc import Set
@@ -33,6 +33,113 @@ if TYPE_CHECKING:
     from .jsonval import Doc
 
 PARTS = ("message", "reasoning", "calls", "results")
+SegmentPart = Literal["message", "reasoning", "call", "result"]
+MAX_SEGMENT_CHARS = 6000
+
+
+def _pairing_provenance(observation: Observation) -> Doc:
+    """Inspection-only allowlist; never serialize the observation itself."""
+    return {
+        "source_call_index": observation.source_call_index,
+        "pairing_method": observation.pairing_method,
+        **({"pairing_reconstructed": True} if observation.pairing_reconstructed else {}),
+    }
+
+
+def _pairing_warning(result: Doc) -> str:
+    if not result.get("pairing_reconstructed"):
+        return ""
+    method = result.get("pairing_method")
+    if method == "unique_remainder":
+        return " [WARNING: pairing reconstructed by unique remainder]"
+    return " [WARNING: positional pairing reconstructed]"
+
+
+def _segment_content(step: Step, part: SegmentPart, index: int, field: int) -> tuple[Content, Doc]:
+    if part in ("message", "reasoning"):
+        if index or field:
+            raise ValueError("message/reasoning require index=0 and field=0")
+        return (step.message if part == "message" else step.reasoning), {}
+    if part == "result":
+        if field:
+            raise ValueError("result requires field=0")
+        if index >= len(step.observations):
+            raise ValueError("no such observation index")
+        observation = step.observations[index]
+        return observation.content, _pairing_provenance(observation)
+    return _call_segment_content(step, index, field)
+
+
+def _call_segment_content(step: Step, index: int, field: int) -> tuple[Content, Doc]:
+    if index >= len(step.calls):
+        raise ValueError("no such call index")
+    call = step.calls[index]
+    if field >= len(call.fields):
+        raise ValueError("no such call field index")
+    channel, content = call.fields[field]
+    return content, {"channel": channel.value}
+
+
+def _segment_status(content: Content, part: SegmentPart) -> str:
+    if content.media:
+        return "media_partial" if content.text else "media"
+    if not content.understood:
+        return "unreadable_partial" if content.text else "unreadable"
+    if content.text:
+        return "text"
+    # The parsed model does not retain presence bits for message/reasoning.
+    return "empty_or_absent" if part in ("message", "reasoning") else "empty"
+
+
+def read_segment(
+    trace: Trace,
+    step_number: int,
+    part: SegmentPart,
+    index: int = 0,
+    field: int = 0,
+    offset: int = 0,
+    limit: int = 3000,
+    known: frozenset[str] | None = None,
+) -> Doc:
+    """Private inspection of ONE field, masked before slicing.
+
+    Indices are zero-based (call fields use ToolCall.fields order). Offsets and
+    total_length count masked characters, not raw characters. No raw metadata,
+    tool arguments, paths or sibling fields are returned. Empty message/reasoning
+    cannot be distinguished from absence in the parsed model.
+    """
+    if part not in ("message", "reasoning", "call", "result"):
+        raise ValueError("invalid part")
+    if any(type(n) is not int or n < 0 for n in (index, field, offset)):
+        raise ValueError("indices and offset must be non-negative integers")
+    if type(limit) is not int or not 1 <= limit <= MAX_SEGMENT_CHARS:
+        raise ValueError(f"limit must be 1-{MAX_SEGMENT_CHARS}")
+    if type(step_number) is not int or step_number not in trace.step_numbers:
+        raise ValueError("no such step number")
+    step = trace.steps[trace.step_numbers.index(step_number)]
+    content, provenance = _segment_content(step, part, index, field)
+    masked = mask(content.text, trace_secrets(trace) if known is None else known)
+    if offset > len(masked):
+        raise ValueError("offset exceeds masked field length")
+    end = min(offset + limit, len(masked))
+    return {
+        "step": step_number,
+        "part": part,
+        "index": index,
+        "field": field,
+        "status": _segment_status(content, part),
+        "media": content.media,
+        "understood": content.understood,
+        "offset": offset,
+        "end_offset": end,
+        "limit": limit,
+        "max_limit": MAX_SEGMENT_CHARS,
+        "total_length": len(masked),
+        "next_offset": end if end < len(masked) else None,
+        "truncated": end < len(masked),
+        "text": masked[offset:end],
+        **provenance,
+    }
 
 
 def resolve(path: Path) -> Path:
@@ -114,7 +221,7 @@ def step_record(
                 "call_id": o.source_call_id,
                 "text": _cut(mask(o.content.text, known), limit),
                 **({"media": True} if o.content.media else {}),
-                **({"pairing_reconstructed": True} if o.pairing_reconstructed else {}),
+                **_pairing_provenance(o),
             }
             for o in step.observations
         ]
@@ -133,9 +240,11 @@ def render(record: Doc) -> str:
         lines.append(
             f"--- result for {r['call_id']}"
             + (" [media]" if r.get("media") else "")
+            + _pairing_warning(r)
             + (
-                " [WARNING: positional pairing reconstructed]"
-                if r.get("pairing_reconstructed")
+                f" [source_call_index={r['source_call_index']}; "
+                f"pairing_method={r.get('pairing_method')}]"
+                if r.get("source_call_index") is not None
                 else ""
             )
         )

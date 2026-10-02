@@ -145,7 +145,7 @@ def test_brief_is_the_default_text_view_for_a_run(tmp_path, capsys):
     assert "run integrity" in out and "RUN        agent demo-agent 1.0 · model demo/model" in out
     assert "SCORE      100.0% · 3 of 3 scored trials rewarded" in out
     assert "66.7% if the flagged rewarded trial had failed (a scenario, not a verdict)" in out
-    assert "⚠ 1 trial (33.3%) has compacted history" in out
+    assert "⚠ 1 trial (33.3%) has compacted ATIF history" in out
     assert "COST       $2.20 recorded" in out
     assert "⚠ 1 trial (33.3%) with usage but no cost" in out
     # The reason it isn't estimated is stated once (estimates.py words it "not estimated: …").
@@ -431,7 +431,7 @@ def test_brief_says_why_trials_cannot_be_cleared_and_which_errors_occurred():
     )
     flat = " ".join(text.split())  # unwrapped: the reasons may span lines
     assert (
-        "⚠ 2 rewarded trials can't be cleared, as their evidence is incomplete: web results/URLs"
+        "⚠ 2 rewarded trials can't be cleared, as their evidence is incomplete: web outcomes"
         " not recorded (1), no trajectory (trace_too_large) (1)"
     ) in flat
     assert "⚠ 2 trials errored (50.0%): UnknownApiError 1 · OutputTokenExceededError 1" in text

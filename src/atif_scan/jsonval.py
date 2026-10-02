@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Mapping
 from typing import Any, TypeGuard, cast
 
 # A parsed JSON object whose values haven't been checked yet.
@@ -61,3 +62,30 @@ def load_object(data: bytes | None, limit: int) -> JsonObject:
     except (UnicodeError, ValueError, RecursionError):
         return {}
     return as_object(value)
+
+
+def _json_plain(value: object) -> object:
+    """Thaw immutable model JSON, rejecting unknown values rather than stringifying."""
+    if isinstance(value, Mapping):
+        if not all(isinstance(k, str) for k in value):
+            raise ValueError("invalid_json_key")
+        return {k: _json_plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_plain(v) for v in value]
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise ValueError("invalid_json_value")
+
+
+def compact_json(value: object) -> str | None:
+    """Deterministic Unicode-character approximation, never a tokenizer or repr."""
+    try:
+        return json.dumps(
+            _json_plain(value),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (ValueError, TypeError, RecursionError):
+        return None

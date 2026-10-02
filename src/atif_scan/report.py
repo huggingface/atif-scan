@@ -19,10 +19,14 @@ if TYPE_CHECKING:
     from .checks import CheckSpec
     from .engine import Assessment
     from .jsonval import Doc
+    from .web_activity import WebActivity
 
-# 3: evidence and citations carry `step_id` (the ATIF step number shown in text views).
-SCHEMA_VERSION = 3
+# 4: numeric web activity and overlap-safe recording-gap counts (no raw values).
+SCHEMA_VERSION = 4
 EVIDENCE_SHOWN = 3
+COMPACTED_USAGE_EXPLANATION = (
+    "Token totals include calls from before compaction; ATIF contains only the final context."
+)
 # Report severity names -> Severity values, for ordering and thresholds.
 RANK: dict[str, int] = {s.name.lower(): int(s) for s in Severity}
 STYLE = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan", "info": "dim"}
@@ -73,6 +77,54 @@ def coverage_counts(items: list[Doc]) -> dict[str, int]:
     }
 
 
+RECORDING_OVERLAP = {
+    "pairing_reconstructed": "integrity.observation_pairing_reconstructed",
+    "pairing_unresolved": "integrity.observation_pairing_unresolved",
+    "web_results_not_recorded": "integrity.web_results_not_recorded",
+}
+
+
+def _recording_gap_row(item: Doc) -> set[str]:
+    saved = item.get("recording_gaps")
+    if saved is not None:
+        return {check for key, check in RECORDING_OVERLAP.items() if saved.get(key)}
+    return {a["id"] for a in item.get("assessments", []) if a.get("status") == "match"} | set(
+        coverage_gaps(item)["behavioural"]
+    )
+
+
+def _web_gap_counts(items: Sequence[Doc]) -> Doc:
+    known = [item for item in items if item.get("web_result_gaps") is not None]
+    if not known:
+        return {}
+    return {
+        "web_call_counts_trials_known": len(known),
+        "web_call_counts_trials_unknown": len(items) - len(known),
+        "web_calls_without_usable_result": sum(
+            (item.get("web_result_gaps") or {}).get("calls", 0) for item in known
+        ),
+        "web_call_gap_trials": sum(
+            bool((item.get("web_result_gaps") or {}).get("calls")) for item in known
+        ),
+        "web_calls_missing_result_ids": sum(
+            (item.get("web_result_gaps") or {}).get("missing_result_ids", 0) for item in known
+        ),
+        "web_calls_no_emitted_contents": sum(
+            (item.get("web_result_gaps") or {}).get("no_emitted_contents", 0) for item in known
+        ),
+    }
+
+
+def recording_gaps(items: Sequence[Doc]) -> Doc:
+    """Union of affected trials; subgroups may overlap and must not be added."""
+    rows = [_recording_gap_row(item) for item in items]
+    return {
+        **_web_gap_counts(items),
+        "trials": sum(bool(row & set(RECORDING_OVERLAP.values())) for row in rows),
+        **{key: sum(check in row for row in rows) for key, check in RECORDING_OVERLAP.items()},
+    }
+
+
 def coverage_summary(counts: Doc, legacy_count: int) -> str:
     """Old aggregate-only exports cannot tell us which category was incomplete."""
     if "behavioural_incomplete" not in counts:
@@ -104,9 +156,17 @@ def ranked(counter: Counter[str]) -> dict[str, int]:
     return dict(counter.most_common())
 
 
-def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | None = None) -> Doc:
+def report(
+    assessments: tuple[Assessment, ...],
+    step_numbers: Sequence[int] | None = None,
+    *,
+    web_activity: WebActivity | None = None,
+    compacted: bool = False,
+) -> Doc:
     """Per-trace report. Never dataclasses.asdict(trace). `step_numbers` maps each 0-based
-    step position to its ATIF step number (`Trace.step_numbers`); integers only."""
+    step position to its ATIF step number (`Trace.step_numbers`); integers only.
+    `web_activity` is the typed, counts-only result from `web_activity(trace)`.
+    Absent activity is unknown, not a zero count."""
 
     def step_id(position: int) -> int | None:
         if step_numbers is None or position >= len(step_numbers):
@@ -128,6 +188,13 @@ def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | No
         "assessments": [
             {
                 "id": a.spec.id,
+                **(
+                    {"explanation": COMPACTED_USAGE_EXPLANATION}
+                    if compacted
+                    and a.spec.id == "integrity.tokens_exceed_recorded_calls"
+                    and a.result.status == Status.MATCH
+                    else {}
+                ),
                 "kind": a.kind,
                 "version": a.spec.version,
                 "status": a.result.status.value,
@@ -156,7 +223,9 @@ def report(assessments: tuple[Assessment, ...], step_numbers: Sequence[int] | No
         ],
     }
 
+    output["web_activity"] = web_activity.document() if web_activity is not None else None
     output["coverage_gaps"] = coverage_gaps(output)
+    output["recording_gaps"] = recording_gaps([output])
     return output
 
 
@@ -183,6 +252,7 @@ def document(
             "available": sum(x["input_status"] == "available" for x in items),
             "incomplete": sum(x["incomplete"] for x in items),
             **coverage_counts(items),
+            "recording_gaps": recording_gaps(items),
         },
     }
 
@@ -207,7 +277,12 @@ def filter_findings(
     items = []
     for item in doc["inputs"]:
         assessments = [a for a in item["assessments"] if _shown(a, minimum, checks)]
-        shown = dict(item, assessments=assessments, coverage_gaps=coverage_gaps(item))
+        shown = dict(
+            item,
+            assessments=assessments,
+            coverage_gaps=coverage_gaps(item),
+            recording_gaps=recording_gaps([item]),
+        )
         group = sections(shown)
         if (
             hide_empty
@@ -365,6 +440,8 @@ def to_text(doc: Doc) -> str:
             lines.append(f"   {shape}")
         for a in group["findings"]:
             lines.append(f"   {a['severity']:<8} {a['id']:<36} {where(a['evidence'])}")
+            if explanation := a.get("explanation"):
+                lines.append(f"      {explanation}")
             lines.extend(_citation_text(item, a["id"], "            "))
         for a in group["expected"]:
             lines.append(f"   {'expected':<8} {a['id']:<36} by {', '.join(a['expected_by'])}")
@@ -801,9 +878,10 @@ def _outcome(item: Doc) -> bool | None:
 
 # Recording defects that explain why a rewarded trial can't be cleared.
 NOT_CLEARED_BECAUSE = {
+    "integrity.web_input_unresolved": "web input or reference provenance unresolved",
     "integrity.agent_steps_missing": "no agent steps recorded",
-    "integrity.web_results_not_recorded": "web results/URLs not recorded",
-    "integrity.history_compacted": "history compacted",
+    "integrity.web_results_not_recorded": "web outcomes not recorded",
+    "integrity.history_compacted": "ATIF history compacted (companion archives may exist)",
     "integrity.tool_results_not_recorded": "tool results not recorded",
     "integrity.subagent_unrecorded": "subagent work not recorded",
     "integrity.actions_not_recorded": "tool calls not recorded",

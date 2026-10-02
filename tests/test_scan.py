@@ -520,10 +520,10 @@ def test_search_each_call_needs_its_own_result(linked, content, expected):
     assert not result.complete
 
 
-def test_search_explicit_empty_result_is_complete():
+def test_search_explicit_empty_result_is_missing_evidence():
     result = _surfaced(_search_trace("web_search", {"query": "docs"}, "")).result
-    assert result.status == Status.NO_MATCH
-    assert result.complete
+    assert result.status == Status.UNKNOWN
+    assert not result.complete
 
 
 def _steps_trace(*steps):

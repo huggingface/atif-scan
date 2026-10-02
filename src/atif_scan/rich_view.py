@@ -40,7 +40,10 @@ def _findings_table(group: dict[str, list[Doc]]) -> Table:
     table.add_column("evidence / reason")
     for a in group["findings"]:
         sev = a["severity"]
-        table.add_row(Text(sev, style=STYLE[sev]), a["id"], where(a["evidence"]))
+        reason = where(a["evidence"])
+        if explanation := a.get("explanation"):
+            reason += f"\n{explanation}"
+        table.add_row(Text(sev, style=STYLE[sev]), a["id"], reason)
     for a in group["expected"]:
         table.add_row(Text("expected", style="green"), a["id"], "by " + ", ".join(a["expected_by"]))
     return table

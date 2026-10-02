@@ -8,11 +8,12 @@ from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING, Literal, TypeGuard
 
 from . import jslit
-from .jsonval import JsonObject, as_list, as_object, as_str, count, is_object, number
+from .jsonval import JsonObject, as_list, as_object, as_str, compact_json, count, is_object, number
 from .model import Channel, Content, Observation, Step, ToolCall, Trace, Usage
+from .web_inputs import parse_web_input
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -365,7 +366,7 @@ def program_calls(name: str, args: object) -> list[tuple[str, object]] | None:
 
 def program_tool(name: str, args: object) -> str:
     # Codex's hosted web tool inside code mode: `{search_query: [{q}]}` or `{open: [...]}`.
-    if name == "web__run":
+    if name in ("web__run", "web.run"):
         keys = set(args) if isinstance(args, dict) else set()
         if "search_query" in keys:
             return "web_search"
@@ -374,10 +375,16 @@ def program_tool(name: str, args: object) -> str:
 
 
 def normalize_tool(name: str, args: object = None) -> str:
+    if name in ("web__run", "web.run"):
+        return program_tool(name, args)
     if name == "write_stdin" and isinstance(args, Mapping) and not args.get("chars"):
         return "inert"  # Codex polling a running session: nothing was typed
     if name == "background_exec" and isinstance(args, Mapping) and not args.get("command"):
         return "inert"  # dtcoder waiting on/stopping/listing a background task: nothing ran
+    return _normalize_action(name, args)
+
+
+def _normalize_action(name: str, args: object) -> str:
     actions = ACTION_TOOLS.get(name)
     if actions is not None:
         action = args.get("action_type") if isinstance(args, dict) else None
@@ -552,42 +559,72 @@ def _drop_rejected_unknowns(
 MIN_PAIRED_CALLS = 2
 
 
+def _positional_links_valid(calls: list[ToolCall], observations: list[Observation]) -> bool:
+    ids = [c.id for c in calls]
+    return (
+        len(calls) == len(observations)
+        and all(ids)
+        and len(set(ids)) == len(ids)
+        and all(o.source_call_id in (None, c.id) for c, o in zip(calls, observations, strict=True))
+    )
+
+
+def _unique_remainder(calls: list[ToolCall], observations: list[Observation]) -> ToolCall | None:
+    """Only valid, unambiguous explicit IDs can eliminate recorded calls.
+
+    Multipart results may eliminate the same call repeatedly. Foreign IDs or duplicate
+    nonempty recorded IDs block inference altogether; empty IDs eliminate nothing.
+    """
+    ids = [c.id for c in calls if c.id]
+    if len(set(ids)) != len(ids):
+        return None
+    explicit = {o.source_call_id for o in observations if o.source_call_id is not None}
+    if not explicit <= set(ids):
+        return None
+    if sum(o.source_call_id is None for o in observations) != 1:
+        return None
+    remaining = [c for c in calls if not c.id or c.id not in explicit]
+    return remaining[0] if len(remaining) == 1 else None
+
+
 def _reconstruct_observation_links(
     calls: list[ToolCall], observations: list[Observation]
 ) -> list[Observation]:
-    """Infer one result per recorded call in order, retaining explicit provenance.
+    """Infer links with warnings, without altering explicit links or source data.
 
-    Only multi-call steps with unlinked results need reconstruction. Count equality
-    is necessary, not proof of order: every inferred link carries a warning. Mixed
-    explicit links must agree with the positional mapping; never silently reorder
-    or discard observations. Missing output altogether remains missing evidence.
-    `calls` excludes synthetic calls extracted from code-mode programs.
-
-    When the order can't be trusted (counts differ, call IDs missing or repeated, explicit
-    links contradicting it), unlinked results stay unlinked and are marked unresolved
-    (`integrity.observation_pairing_unresolved`). The trace is still scanned: rejecting it
-    dropped 112 of 330 TB4 Codex traces, whose hosted web-search calls carry no ID.
+    Preserve valid positional reconstruction first. Otherwise a sole unlinked result
+    and sole unmatched recorded call can be associated by index, regardless of order.
+    This intentionally resolves formerly contradictory positional examples when their
+    explicit links prove a unique remainder. Derived code-mode calls are excluded.
     """
     if len(calls) < MIN_PAIRED_CALLS or not any(o.source_call_id is None for o in observations):
         return observations
-    ids = [c.id for c in calls]
-    if (
-        len(calls) != len(observations)
-        or any(not cid for cid in ids)
-        or len(set(ids)) != len(ids)
-        or any(
-            o.source_call_id not in (None, c.id) for c, o in zip(calls, observations, strict=True)
-        )
-    ):
+    if _positional_links_valid(calls, observations):
         return [
-            replace(o, pairing_unresolved=True) if o.source_call_id is None else o
-            for o in observations
+            replace(
+                o,
+                source_call_id=c.id,
+                source_call_index=c.index,
+                pairing_method="position",
+                pairing_reconstructed=True,
+            )
+            if o.source_call_id is None
+            else o
+            for c, o in zip(calls, observations, strict=True)
         ]
+    remainder = _unique_remainder(calls, observations)
     return [
-        replace(o, source_call_id=c.id, pairing_reconstructed=True)
+        replace(
+            o,
+            source_call_index=remainder.index,
+            pairing_method="unique_remainder",
+            pairing_reconstructed=True,
+        )
+        if remainder is not None and o.source_call_id is None
+        else replace(o, pairing_unresolved=True)
         if o.source_call_id is None
         else o
-        for c, o in zip(calls, observations, strict=True)
+        for o in observations
     ]
 
 
@@ -613,7 +650,7 @@ def parse_trace(value: object) -> Trace:
         version,
         tuple(steps),
         tokens if type(tokens) is int else None,
-        usage(metrics),
+        usage(metrics, agent_info(value.get("agent"))),
         compacted=tuple(
             s.index
             for s in steps
@@ -654,7 +691,9 @@ def parse_step(index: int, value: object) -> Step:
         raw_calls = []
     if not isinstance(raw_calls, list):
         raise TraceError("invalid_calls")
-    calls = parse_calls(as_list(raw_calls), copied)
+    calls = parse_calls(
+        as_list(raw_calls), copied, as_object(raw.get("extra")).get("tool_call_details")
+    )
     observations = parse_observations(raw.get("observation"))
     observations = _reconstruct_observation_links(calls[: len(raw_calls)], observations)
     calls = _drop_rejected_unknowns(calls, observations)
@@ -682,7 +721,7 @@ def parse_step(index: int, value: object) -> Step:
 ProgramCall = tuple[str, str, str, object]
 
 
-def parse_calls(raw_calls: list[object], copied: bool) -> list[ToolCall]:
+def parse_calls(raw_calls: list[object], copied: bool, details: object = None) -> list[ToolCall]:
     """A step's recorded calls, then the calls read from their tool programs (so recorded
     positions stay stable)."""
     # Observations link to calls within their step, so ids must be unique per step.
@@ -701,11 +740,70 @@ def parse_calls(raw_calls: list[object], copied: bool) -> list[ToolCall]:
         inner = program_calls(name, args)
         tool = "inert" if inner is not None else normalize_tool(name, args)
         frozen = freeze_object(args) if is_object(args) else None
-        calls.append(ToolCall(call_index, tool, call_fields(tool, args), call_id, name, frozen))
+        chars, basis = argument_accounting(
+            as_object(raw).get("arguments"), args, as_object(details).get(call_id)
+        )
+        calls.append(
+            ToolCall(
+                call_index,
+                tool,
+                call_fields(tool, args),
+                call_id,
+                name,
+                frozen,
+                status=call_status(as_object(details).get(call_id)),
+                raw_argument_chars=chars,
+                raw_argument_basis=basis,
+            )
+        )
         program.extend((call_id, name, inner_name, a) for inner_name, a in inner or ())
     recorded = len(calls)
     calls.extend(_program_call(recorded + k, k, found) for k, found in enumerate(program))
     return calls
+
+
+def call_status(
+    detail: object,
+) -> Literal["incomplete", "completed", "in_progress", "failed"] | None:
+    """Only documented status codes; never export arbitrary provider metadata."""
+    value = as_object(detail).get("status")
+    if value in ("incomplete", "completed", "in_progress", "failed"):
+        if value == "incomplete":
+            return "incomplete"
+        if value == "completed":
+            return "completed"
+        return "in_progress" if value == "in_progress" else "failed"
+    return None
+
+
+def argument_accounting(
+    recorded: object, args: object, detail: object
+) -> tuple[int | None, Literal["recorded_json", "raw_text", "compact_json"] | None]:
+    """Count the authored payload, not its envelope or duplicate exporter metadata."""
+    metadata = as_object(detail)
+    raw = as_str(metadata.get("raw_arguments"))
+    kind = metadata.get("item_type")
+    if raw is not None and kind == "function_call" and matching_json(raw, args):
+        return len(raw), "recorded_json"
+    if raw is not None and kind == "custom_tool_call" and raw_input(args) == raw:
+        return len(raw), "raw_text"
+    # A recorded JSON argument string retains whitespace and escaping exactly.
+    if isinstance(recorded, str) and matching_json(recorded, args):
+        return len(recorded), "recorded_json"
+    text = raw_input(args)
+    compact = compact_json(args) if is_object(args) else None
+    fallback = (len(compact), "compact_json") if compact is not None else (None, None)
+    return (len(text), "raw_text") if text is not None else fallback
+
+
+def matching_json(raw: str, args: object) -> bool:
+    """Require an object with identical JSON types/values (True is not 1)."""
+    try:
+        parsed: object = json.loads(raw)
+    except (ValueError, RecursionError):
+        return False
+    normalized = compact_json(args) if is_object(args) else None
+    return normalized is not None and is_object(parsed) and compact_json(parsed) == normalized
 
 
 def _call_parts(value: object) -> tuple[str, str, object]:
@@ -748,6 +846,7 @@ def _program_call(index: int, k: int, found: ProgramCall) -> ToolCall:
         f"{outer}>{name}",
         None,
         result_id=parent,
+        web_input=parse_web_input(name, args),
     )
 
 
@@ -862,7 +961,20 @@ COMPACTED = re.compile(
 )
 
 
-def usage(metrics: object) -> Usage | None:
+def _reasoning_tokens(extra: JsonObject) -> int | None:
+    """Prefer the canonical field, including zero; Codex uses a historical alias.
+
+    An absent/null canonical value permits fallback. A malformed non-null value
+    remains unknown rather than being silently repaired from another field.
+    """
+    value = extra.get("total_reasoning_tokens")
+    return count(extra.get("reasoning_output_tokens") if value is None else value)
+
+
+def usage(
+    metrics: object,
+    agent: tuple[str | None, str | None, str | None] = (None, None, None),
+) -> Usage | None:
     if not is_object(metrics):
         return None
     extra = as_object(metrics.get("extra"))
@@ -871,10 +983,16 @@ def usage(metrics: object) -> Usage | None:
         count(metrics.get("total_prompt_tokens")),
         count(metrics.get("total_completion_tokens")),
         count(metrics.get("total_cached_tokens")),
-        count(extra.get("total_reasoning_tokens")),
+        _reasoning_tokens(extra),
         count(extra.get("total_cache_creation_input_tokens")),
     )
-    return None if found == Usage() else found
+    if found == Usage():
+        return None
+    # Grok Build exports visible output and reasoning separately. This is a
+    # harness convention, not a model-name or harness-version heuristic.
+    if agent[0] == "grok-build":
+        return replace(found, completion_basis="separate_visible")
+    return found
 
 
 # A JSON string (skipped as a whole) or a bare `[REDACTED]` token outside any string.

@@ -6,11 +6,13 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from datetime import datetime
+
+    from .web_inputs import WebInput
 
 
 class Channel(StrEnum):
@@ -101,6 +103,13 @@ class ToolCall:
     # The call whose observation holds this call's result: itself, or for a call read
     # from inside a tool program (Codex code mode), the program call.
     result_id: str | None = field(default=None, repr=False)
+    web_input: WebInput | None = field(default=None, repr=False)
+
+    # Validated provider status; absent/unrecognized metadata remains unknown.
+    status: Literal["incomplete", "completed", "in_progress", "failed"] | None = None
+    # Authored payload only; None means unavailable (also used for derived calls).
+    raw_argument_chars: int | None = None
+    raw_argument_basis: Literal["recorded_json", "raw_text", "compact_json"] | None = None
 
     @property
     def result_key(self) -> str:
@@ -111,12 +120,14 @@ class ToolCall:
 class Observation:
     source_call_id: str | None = field(repr=False)
     content: Content = field(repr=False)
-    # The loader inferred this link from recorded order, not an exported call ID.
+    # The loader inferred this link, not an exported call ID.
     pairing_reconstructed: bool = False
-    # Unlinked in a multi-call step whose order couldn't be trusted (counts differ, call IDs
-    # missing or repeated, explicit links contradict the order): left unlinked, so checks
-    # that need to know which call produced it treat it as unresolved.
+    # Neither valid positional pairing nor a unique recorded remainder was available.
+    # Checks needing the producing call must treat this observation as unresolved.
     pairing_unresolved: bool = False
+    # Step-local recorded call index; never a synthesized provider identifier.
+    source_call_index: int | None = None
+    pairing_method: Literal["position", "unique_remainder"] | None = None
 
 
 @dataclass(frozen=True)
@@ -162,14 +173,30 @@ class Step:
             yield Surface(at, observation.content)
 
     def results_for(self, call: ToolCall) -> list[tuple[int, Observation]]:
-        """(index, observation) recorded for `call`: those linked by its result key, else,
-        when this is the step's only call, the unlinked ones (no source_call_id)."""
+        """Results linked by recorded ID or index, including a derived call's parent.
+
+        Empty IDs never link calls to each other. The legacy lone-call fallback only
+        includes observations with neither an ID nor an indexed association.
+        """
         key = call.result_key
-        found = list(enumerate(self.observations))
-        linked = [(j, o) for j, o in found if key and o.source_call_id == key]
+        parent_index = call.index if call.result_id is None else None
+        if call.result_id:
+            parents = [c for c in self.calls if c.result_id is None and c.id == key]
+            if len(parents) == 1:
+                parent_index = parents[0].index
+        linked = [
+            (j, o)
+            for j, o in enumerate(self.observations)
+            if (o.source_call_index is not None and o.source_call_index == parent_index)
+            or (o.source_call_index is None and key and o.source_call_id == key)
+        ]
         if linked or len(self.calls) != 1:
             return linked
-        return [(j, o) for j, o in found if o.source_call_id is None]
+        return [
+            (j, o)
+            for j, o in enumerate(self.observations)
+            if o.source_call_id is None and o.source_call_index is None
+        ]
 
 
 @dataclass(frozen=True)
@@ -180,10 +207,14 @@ class Usage:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     cached_tokens: int | None = None
-    reasoning_tokens: int | None = None  # final_metrics.extra.total_reasoning_tokens
+    reasoning_tokens: int | None = None  # total_reasoning_tokens or reasoning_output_tokens
     # Prompt tokens written to the provider's cache (Anthropic cache creation), part of
     # the prompt tokens: final_metrics.extra.total_cache_creation_input_tokens.
     cache_write_tokens: int | None = None
+    # Recorded counts are never normalized. Only verified exporter versions override this.
+    completion_basis: Literal["includes_reasoning", "separate_visible"] = field(
+        default="includes_reasoning", kw_only=True
+    )
 
 
 # A trace's results read as status-only when at least this many are recorded and this

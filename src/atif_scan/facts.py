@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING
 from .accounting import apply_accounting
 from .detectors.integrity import output_ratio
 from .jsonval import Doc, as_object, as_str
+from .report import recording_gaps
+from .web_gaps import web_gaps
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -58,6 +60,7 @@ RECORDED = (
 TOKENS = ("input_tokens", "cache_tokens", "output_tokens")
 # Facts derived from the trajectory alone (cacheable with its scan), in report order.
 TRACE_FACTS = (
+    "web_result_gaps",
     "agent_name",
     "agent_version",
     "model_name",
@@ -66,6 +69,7 @@ TRACE_FACTS = (
     "reasoning",
     "chars_per_output_token",
     "output_ratio_basis",
+    "trajectory_completion_token_basis",
     "usage",
     "usage_basis",
     "calls_without_usage",
@@ -157,6 +161,7 @@ def trace_facts(trace: Trace | None) -> Doc:
     usage, basis = _usage(trace)
     models = sorted(trace.step_models.items(), key=lambda kv: -kv[1])[:MAX_STEP_MODELS]
     return {
+        "web_result_gaps": web_gaps(trace).document(),
         "agent_name": trace.agent[0],
         "agent_version": trace.agent[1],
         "model_name": trace.agent[2],
@@ -169,9 +174,17 @@ def trace_facts(trace: Trace | None) -> Doc:
         "chars_per_output_token": round(ratio.value, 2) if ratio else None,
         "output_ratio_basis": None
         if ratio is None
+        else "separate_visible"
+        if ratio.separate_visible
         else "answer_only"
         if ratio.answer_only
         else "all_text",
+        # Final-metrics semantics only, not a claim about run/step totals or billing.
+        "trajectory_completion_token_basis": (
+            trace.usage.completion_basis
+            if trace.usage and trace.usage.completion_tokens is not None
+            else None
+        ),
         "usage": usage,
         # A fixed code: where the trajectory's tokens come from (final_metrics totals, or
         # summed step metrics, `steps_partial` when some agent steps recorded none).
@@ -327,4 +340,6 @@ def _cost(recorded: Mapping[str, object], usage: Mapping[str, object] | None) ->
 def assemble(scanned: Mapping[str, object], facts: Mapping[str, object]) -> Doc:
     """The report item: cacheable scan results with fresh run facts in their place."""
     head = {k: v for k, v in scanned.items() if k not in TAIL}
-    return {**head, **facts, **{k: scanned[k] for k in TAIL}}
+    item = {**head, **facts, **{k: scanned[k] for k in TAIL}}
+    item["recording_gaps"] = recording_gaps([item])
+    return item

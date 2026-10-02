@@ -211,7 +211,7 @@ def test_trajectory_totals_that_differ_from_step_usage_are_flagged(tmp_path, cap
     steps = [step((1000, 100, 500), calls=1)] * 2
     trials = [
         (result(0, tokens=(2000, 1000, 200)), trajectory(steps, (2000, 200, 1000))),
-        # Totals above the steps: 500 prompt tokens from calls not recorded as steps.
+        # Totals above the steps: 500 prompt tokens outside step sums; cause unknown.
         (result(1, tokens=(2500, 1000, 200)), trajectory(steps, (2500, 200, 1000))),
         # Totals below the steps: they disagree outright.
         (result(2, tokens=(1500, 1000, 200)), trajectory(steps, (1500, 200, 1000))),
@@ -221,7 +221,10 @@ def test_trajectory_totals_that_differ_from_step_usage_are_flagged(tmp_path, cap
     assert u["steps_vs_totals"] == {"same": 1, "steps_short": 1, "differs": 1}
     assert (u["tokens_outside_steps"], u["tokens_of_short_trials"]) == (500, 2700)
     flat = " ".join(out.split())  # unwrapped: phrases may span lines
-    assert "⚠ 1 of 3 trajectories count 500 tokens (18.5% of theirs) outside their steps" in flat
+    assert (
+        "⚠ 1 of 3 trajectories count 500 tokens (18.5% of theirs) outside their recorded step sums"
+        in flat
+    )
     assert "⚠ 1 of 3 trajectories have totals that disagree with their steps" in flat
     assert "trajectory totals equal the sum of their steps" not in out
     # Steps that never record cached tokens leave them unknown, not a mismatching 0.

@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
 from ..model import Channel, Locator, Surface, Trace
+from ..web_inputs import web_input
+from .web import web_results_complete
 
 if TYPE_CHECKING:
     import re
@@ -48,7 +50,7 @@ def unrecorded_web_result(trace: Trace) -> int | None:
     for step, call in trace.agent_calls():
         if call.tool not in ("web_search", "web_fetch"):
             continue
-        if not any(o.content.text for _, o in step.results_for(call)):
+        if not web_results_complete(step, call) or not web_input(call).source_known:
             return step.index
     return None
 

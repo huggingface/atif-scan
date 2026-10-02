@@ -229,3 +229,20 @@ def test_single_character_assignment_does_not_corrupt_prompt():
 def test_main_identifier_and_public_key_exclusions_survive_recovery(text):
     assert not list(c.find_exposures(text))
     assert CredentialExposure().evaluate(trace(text), Context()).status == Status.NO_MATCH
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "if token==prev_tok:\n    merged += 1",  # TB4 telecom-entity-resolution tokenizer
+        "keep = [t for t in toks if token==t]",
+        "assert api_key==expected_key",
+    ],
+)
+def test_comparisons_are_not_secret_assignments(code):
+    # Regression: `token==prev_tok` read "=prev_tok" as a secret-named value.
+    assert not list(c.find_exposures(code))
+
+
+def test_secret_assignments_still_count_next_to_comparisons():
+    assert list(c.find_exposures(f"if a==b:\n    API_TOKEN={OPAQUE}"))

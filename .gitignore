@@ -9,3 +9,12 @@ dist/
 traces/
 reports/
 .fast-agent/
+
+# Private review output belongs outside Git; these patterns are only a backstop.
+/review/
+/reviews/
+/judge/
+/judges/
+/j[0-9]*/
+*.answer.json
+*.review.atif.json

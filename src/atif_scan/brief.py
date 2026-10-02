@@ -27,7 +27,7 @@ from .estimates import (
     unmetered_work,
 )
 from .harbor_files import PRICE_KINDS
-from .jsonval import as_str
+from .jsonval import as_object, as_str, count
 from .packs import BUNDLED
 from .questions import tally
 from .report import (
@@ -36,6 +36,7 @@ from .report import (
     is_counted,
     model_key,
     overview,
+    recording_gaps,
     review_metadata,
     served_models,
 )
@@ -73,9 +74,12 @@ MIN_TRACES_FOR_PERCENTILES = 20
 
 
 RATIO_BASIS = {
+    "separate_visible": (
+        "visible output tokens as recorded; reasoning separate, not billed completion"
+    ),
     "answer_only": "excl. reasoning (reasoning tokens reported)",
     "all_text": "incl. recorded reasoning (summaries read lower)",
-    "visible_only": "no reasoning text recorded: reasoning models read low by design",
+    "visible_only": "no reasoning text or token split recorded; lower bound cannot be checked",
 }
 REASONING_LABELS = {
     "full": "full",
@@ -95,8 +99,8 @@ def reasoning_exposure(items: Sequence[Doc]) -> dict[str, int]:
 def _ratio_basis(item: Doc) -> str | None:
     basis = as_str(item.get("output_ratio_basis"))
     if basis == "all_text" and item.get("reasoning") in ("withheld", "none"):
-        # No reasoning text, and its tokens (if any) weren't subtracted: reasoning is
-        # in the output tokens but not the text, so it reads low. Expected by design.
+        # No reasoning text or separate token count: hidden reasoning could lower
+        # the ratio, but its presence and amount are not established.
         return "visible_only"
     return basis
 
@@ -382,9 +386,14 @@ def _scoped_costs(items: Sequence[Doc]) -> Doc:
 
 
 def _usage(items: Sequence[Doc], pricing: Pricing) -> Doc:
-    """Token accounting first: every cost figure is priced from these tokens."""
+    """Summarise recorded token evidence separately from cost availability."""
     with_tokens = [i for i in items if _has_tokens(i)]
     return {
+        "refusals_without_token_counts": sum(
+            i.get("error_type") == "AgentSafetyRefusalError"
+            and all(i.get(k) is None for k in ("input_tokens", "output_tokens"))
+            for i in items
+        ),
         "trials_with_tokens": len(with_tokens),
         "observed_accounting": sum(i.get("usage_basis") == "run_observed" for i in items),
         "observed_costs": sum(
@@ -461,6 +470,13 @@ def brief(
         "output_ratio": output_ratios(items),
         "reasoning": reasoning_exposure(items),
         "recording": recording,
+        "compacted_token_hits": sum(
+            bool(item.get("compacted"))
+            and any(a["id"] == "integrity.tokens_exceed_recorded_calls" for a in _counted(item))
+            for item in items
+        ),
+        "recording_gaps": recording_gaps(items),
+        "web_activity": _web_activity(items),
         "findings": findings,
         "jobs": _jobs(ov["runs"]),
         "awareness": _awareness(items),
@@ -471,6 +487,26 @@ def brief(
             for c in (*findings["checks"], *recording)
             if (t := (doc.get("checks") or {}).get(c, {}).get("title"))
         },
+    }
+
+
+WEB_ACTIVITY_FIELDS = (
+    "searches",
+    "opens",
+    "finds",
+    "known_queries",
+    "unknown_query_actions",
+    "unknown_actions",
+)
+
+
+def _web_activity(items: Sequence[Doc]) -> Doc:
+    rows = [as_object(i.get("web_activity")) for i in items]
+    valid = [r for r in rows if all(count(r.get(k)) is not None for k in WEB_ACTIVITY_FIELDS)]
+    return {
+        "traces_known": len(valid),
+        "traces_unknown": len(items) - len(valid),
+        **{k: sum(count(r.get(k)) or 0 for r in valid) for k in WEB_ACTIVITY_FIELDS},
     }
 
 

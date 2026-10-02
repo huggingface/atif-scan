@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from .jsonval import Doc
     from .sources import Source
 
-SCOPES = ("dq-candidates", "rewarded")
+SCOPES = ("dq-candidates", "rewarded", "all")
 README = (
     "Private review bundle: prompts contain masked trace text; keep outside Git.\n"
     "No provider calls have been made. Only send to an approved model provider.\n"
@@ -60,7 +60,9 @@ def write_review(
     selected = {
         i["input_id"]: i
         for i in doc["inputs"]
-        if i["input_id"] in candidates or (scope == "rewarded" and (i.get("reward") or 0) > 0)
+        if scope == "all"
+        or i["input_id"] in candidates
+        or (scope == "rewarded" and (i.get("reward") or 0) > 0)
     }
     question_ids = list(dict.fromkeys(questions or ["hack_hunt"]))
     writer = Writer(root, question_ids)

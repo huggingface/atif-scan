@@ -5,10 +5,12 @@ Both are fitted on the run's own data and stay estimates; the brief labels them 
 - cost: unpriced trials (cost missing, or exactly $0 despite tokens) are priced with a
   least-squares fit of cost ~ uncached + cached + output tokens over the run's priced
   trials (a single per-token rate if the fit is ill-posed).
-- missing activity: trials whose history was compacted record only their last context
-  window, while their token totals cover the whole session. Prompt tokens per recorded
-  LLM call in uncompacted trials give a typical per-call context; dividing a compacted
-  trial's prompt tokens by it estimates how many calls it really made. The median and
+- activity outside ATIF: compacted trajectories record only their last context
+  window, while their token totals cover the whole session. Earlier history may still
+  be available in companion archives; the estimate is not source unavailability.
+  Prompt tokens per recorded LLM call in uncompacted trials give a typical per-call
+  context; dividing a compacted trial's prompt tokens by it estimates how many calls
+  it really made. The median and
   p90 references give a range (validated against three Grok Build sessions whose full
   history was recoverable: recorded share 26.5%/1.6%/1.3% vs estimated 21-27%/0.7-0.9%/
   0.7-0.9%).
@@ -407,6 +409,11 @@ def missing_activity(items: Sequence[Doc]) -> Doc:
     compacted = [i for i in rows if i.get("compacted")]
     result: Doc = {
         "compacted": sum(1 for i in items if i.get("compacted")),
+        "archives_available": sum(
+            bool(i.get("compacted"))
+            and (i.get("history_archive") or {}).get("status") == "available"
+            for i in items
+        ),
         "missing_calls_pct": None,
         "compacted_recorded_pct": None,
         "reference_trials": 0,

@@ -1,4 +1,4 @@
-"""Positional reconstruction is an explicit warning, never silent provenance repair."""
+"""Inferred associations are explicit warnings, never silent provenance repair."""
 
 import copy
 import json
@@ -58,6 +58,8 @@ def test_matching_counts_reconstruct_and_warn_without_mutating_input():
     assert r == before
     assert [o.source_call_id for o in s.observations] == ["a", "b"]
     assert all(o.pairing_reconstructed for o in s.observations)
+    assert [o.source_call_index for o in s.observations] == [0, 1]
+    assert all(o.pairing_method == "position" for o in s.observations)
     assert [j for j, _ in s.results_for(s.calls[0])] == [0]
     assert [j for j, _ in s.results_for(s.calls[1])] == [1]
     found = assessments(t)
@@ -90,7 +92,7 @@ def test_mixed_compatible_links_only_mark_inferred_observations(ids):
     assert [o.pairing_reconstructed for o in t.steps[1].observations] == [not cid for cid in ids]
 
 
-@pytest.mark.parametrize("ids", [("b", None), (None, "a"), ("foreign", None)])
+@pytest.mark.parametrize("ids", [("foreign", None)])
 def test_contradictory_explicit_links_are_not_reordered(ids):
     t = parse_trace(raw([{"source_call_id": cid, "content": "synthetic"} for cid in ids]))
     obs = t.steps[1].observations
@@ -237,6 +239,117 @@ def test_default_brief_prints_reconstruction_as_warning(tmp_path, capsys):
     assert main([str(p), "--brief", "--format", "text"]) == 0
     text = capsys.readouterr().out
     evidence = text[text.index("EVIDENCE") :]
-    assert "⚠ 1 trial (100.0%): tool results paired to calls by order" in evidence
+    assert "⚠ 1 trial" in evidence
+    assert "pairing links inferred" in evidence or "tool result links inferred" in evidence
     # Real plurals: one trial "isn't" in the total.
     assert "the 1 trial without usage isn't in the total" in text
+
+
+@pytest.mark.parametrize("ids, target", [(("b", None), 0), ((None, "a"), 1)])
+def test_valid_explicit_remainder_intentionally_overrides_contradictory_position(ids, target):
+    # Formerly unresolved: one explicit one-to-one link proves the sole remainder,
+    # but does not prove result order. Retain both the original IDs and the warning.
+    s = parse_trace(raw([{"source_call_id": cid, "content": "synthetic"} for cid in ids])).steps[1]
+    missing = ids.index(None)
+    assert [o.source_call_id for o in s.observations] == list(ids)
+    assert s.observations[missing].source_call_index == target
+    assert s.observations[missing].pairing_method == "unique_remainder"
+    assert s.observations[missing].pairing_reconstructed
+    assert [j for j, _ in s.results_for(s.calls[target])] == [missing]
+
+
+@pytest.mark.parametrize(
+    "name, arguments",
+    [
+        ("web_search_call", {"action_type": "search", "query": "synthetic"}),
+        ("bash", {"command": "printf synthetic"}),
+    ],
+)
+def test_missing_provider_id_unique_remainder_preserves_identifiers_and_input(name, arguments):
+    r = raw(
+        [{"content": "synthetic remainder"}, {"source_call_id": "b", "content": "explicit"}],
+        [call("", name, arguments), call("b")],
+    )
+    before = copy.deepcopy(r)
+    t = parse_trace(r)
+    s = t.steps[1]
+    assert r == before
+    assert [c.id for c in s.calls] == ["", "b"]
+    assert [o.source_call_id for o in s.observations] == [None, "b"]
+    assert [o.source_call_index for o in s.observations] == [0, None]
+    assert [j for j, _ in s.results_for(s.calls[0])] == [0]
+    assert [j for j, _ in s.results_for(s.calls[1])] == [1]
+    assert s.observations[0].pairing_method == "unique_remainder"
+    assert assessments(t)[WARNING].result.status == Status.MATCH
+
+
+def test_multipart_explicit_links_leave_one_unique_recorded_remainder():
+    t = parse_trace(
+        raw(
+            [
+                {"source_call_id": "b", "content": "first chunk"},
+                {"content": "remainder"},
+                {"source_call_id": "b", "content": "second chunk"},
+            ],
+            [call(""), call("b")],
+        )
+    )
+    s = t.steps[1]
+    assert [j for j, _ in s.results_for(s.calls[0])] == [1]
+    assert [j for j, _ in s.results_for(s.calls[1])] == [0, 2]
+    assert [o.pairing_method for o in s.observations] == [None, "unique_remainder", None]
+
+
+@pytest.mark.parametrize(
+    "calls, results",
+    [
+        ([call(""), call("")], [{"content": "one"}]),
+        ([call(""), call("b")], [{"content": "one"}, {"content": "two"}]),
+        ([call(""), call("b")], [{"source_call_id": "foreign"}, {"content": "one"}]),
+        ([call("a"), call("a"), call("")], [{"source_call_id": "a"}, {"content": "one"}]),
+    ],
+)
+def test_ambiguous_or_invalid_explicit_links_never_create_index_links(calls, results):
+    r = raw(results, calls)
+    r["steps"][1]["is_copied_context"] = True  # duplicate IDs are allowed in copied steps
+    s = parse_trace(r).steps[1]
+    assert not any(o.source_call_index is not None for o in s.observations)
+    assert all(o.pairing_unresolved for o in s.observations if o.source_call_id is None)
+
+
+def test_derived_call_uses_indexed_recorded_parent_with_nonempty_id():
+    s = parse_trace(
+        raw(
+            [{"source_call_id": "b", "content": "explicit"}, {"content": "parent result"}],
+            [
+                call("a", "exec", {"input": 'await tools.shell({command: "printf synthetic"})'}),
+                call("b"),
+            ],
+        )
+    ).steps[1]
+    assert len(s.calls) == 3
+    assert s.observations[1].source_call_id is None
+    assert s.observations[1].source_call_index == 0
+    assert [j for j, _ in s.results_for(s.calls[2])] == [1]
+
+
+def test_empty_parent_id_does_not_collide_with_unrelated_empty_id_calls():
+    from atif_scan.model import Content, Observation, Step, ToolCall
+
+    calls = (
+        ToolCall(0, "inert", (), "", "exec", None),
+        ToolCall(1, "shell", (), "", "bash", None),
+        ToolCall(2, "shell", (), "derived", "bash", None, result_id=""),
+    )
+    s = Step(
+        0,
+        "agent",
+        False,
+        Content(),
+        Content(),
+        calls,
+        (Observation(None, Content("synthetic"), source_call_index=1),),
+    )
+    assert not s.results_for(calls[0])
+    assert [j for j, _ in s.results_for(calls[1])] == [0]
+    assert not s.results_for(calls[2])

@@ -9,12 +9,22 @@ Harbor's schema validator checks timestamp syntax only, not ordering or smearing
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from itertools import pairwise
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from ..checks import CheckSpec, Context, Detection, Detector, Severity, Status
 from ..model import Channel, Locator, Trace
+from ..web_inputs import web_input
+from .web import (
+    WebResultState,
+    recorded_script_failure,
+    web_outcomes_recorded,
+    web_result_state,
+)
 
 # A run is "smeared" when at least this fraction of consecutive timestamps are identical.
 SMEAR_FRACTION = 0.9
@@ -89,7 +99,7 @@ def orphan_observation(trace: Trace) -> Detection:
 
 
 def observation_pairing_reconstructed(trace: Trace) -> Detection:
-    """Warning: result links were inferred from matching counts and recorded order."""
+    """Warning: result links were inferred by position or a unique recorded remainder."""
     return _result(
         [
             Locator(step.index, Channel.METADATA, observation=j)
@@ -102,8 +112,7 @@ def observation_pairing_reconstructed(trace: Trace) -> Detection:
 
 
 def observation_pairing_unresolved(trace: Trace) -> Detection:
-    """Results of a multi-call step that couldn't be paired with their calls (counts
-    differ, call IDs missing or repeated, contradicting links): left unlinked, so checks
+    """Results without a safe positional or unique-remainder association: checks
     that depend on which call produced them are unresolved there, never cleared."""
     return _result(
         [
@@ -166,18 +175,22 @@ WEB_INPUT = {"web_search": Channel.QUERY, "web_fetch": Channel.URL}
 
 
 def web_results_not_recorded(trace: Trace) -> Detection:
-    """A web search/fetch was recorded without its result or without what it searched or
-    opened (Codex hosted web calls: `open_page` with no URL, no results at all). Checks on
-    what the agent found on the web can't be answered for those calls."""
-    hits = []
-    for step, call in trace.agent_calls():
-        wanted = WEB_INPUT.get(call.tool)
-        if wanted is None:
-            continue
-        has_result = bool(step.results_for(call))
-        has_input = any(ch == wanted and c.understood and c.text for ch, c in call.fields)
-        if not (has_result and has_input):
-            hits.append(_meta(step))
+    """Only missing/unusable outcomes, not explicit retrieval errors or input gaps."""
+    hits = [
+        _meta(step)
+        for step, call in trace.agent_calls()
+        if call.tool in WEB_INPUT and not web_outcomes_recorded(step, call)
+    ]
+    return _result(hits, complete=True)
+
+
+def web_input_unresolved(trace: Trace) -> Detection:
+    """A query/target is absent, dynamic, or has unresolved reference provenance."""
+    hits = [
+        _meta(step)
+        for step, call in trace.agent_calls()
+        if call.tool in WEB_INPUT and not web_input(call).source_known
+    ]
     return _result(hits, complete=True)
 
 
@@ -218,7 +231,7 @@ def subagent_unrecorded(trace: Trace) -> Detection:
 
 
 def cost_missing(trace: Trace) -> Detection:
-    """final_metrics reports token totals but no cost (leaderboards then count $0)."""
+    """Positive final token counts without ATIF cost; other records may carry cost."""
     usage = trace.usage
     if usage is None:
         return Detection(Status.UNKNOWN, complete=False)
@@ -256,27 +269,18 @@ class OutputRatio:
     Unrecorded output (hidden reasoning, compacted history, dropped steps) only *lowers*
     the ratio, so a high ratio is always meaningful: more text than the reported tokens
     could encode. A low ratio is only meaningful when reasoning is accounted for.
-    `answer_only`: reasoning tokens were reported, so they and the reasoning text are
-    both excluded (reasoning summaries then can't skew it)."""
+    `answer_only`: reasoning text is excluded; the denominator is visible output,
+    either recorded separately or obtained by subtracting reported reasoning tokens."""
 
     chars: int
     tokens: int
     answer_only: bool
     low_verifiable: bool
+    separate_visible: bool = False
 
     @property
     def value(self) -> float:
         return self.chars / self.tokens
-
-
-def _string_chars(value: object) -> int:
-    if isinstance(value, str):
-        return len(value)
-    if isinstance(value, Mapping):
-        return sum(_string_chars(v) for v in value.values())
-    if isinstance(value, (list, tuple)):
-        return sum(_string_chars(v) for v in value)
-    return 0
 
 
 def output_ratio(trace: Trace) -> OutputRatio | None:
@@ -290,17 +294,19 @@ def output_ratio(trace: Trace) -> OutputRatio | None:
         tokens, whole = sum(s.completion_tokens or 0 for s in steps), False
     reasoning = usage.reasoning_tokens if usage is not None and whole else None
     chars = sum(
-        len(s.message.text) + sum(_string_chars(c.arguments) for c in s.calls) for s in steps
+        len(s.message.text) + sum((c.raw_argument_chars or 0) for c in s.calls) for s in steps
     )
-    if reasoning is not None:
+    separate = bool(whole and usage and usage.completion_basis == "separate_visible")
+    answer_only = separate or reasoning is not None
+    if not separate and reasoning is not None:
         tokens -= reasoning
-    else:
+    if not answer_only:
         chars += sum(len(s.reasoning.text) for s in steps)
     if tokens <= 0:
         return None
     # Compacted final totals include calls the recorded steps don't show.
-    low = reasoning is not None and not (whole and trace.compacted)
-    return OutputRatio(chars, tokens, reasoning is not None, low)
+    low = answer_only and not (whole and trace.compacted)
+    return OutputRatio(chars, tokens, answer_only, low, separate)
 
 
 def output_token_ratio(trace: Trace) -> Detection:
@@ -316,6 +322,27 @@ def output_token_ratio(trace: Trace) -> Detection:
     return _result([], complete=True, matched=ratio.value < MIN_CHARS_PER_TOKEN)
 
 
+def incomplete_tool_generation(trace: Trace) -> Detection:
+    """A ratio anomaly plus an explicitly incomplete call with a linked error.
+
+    This supports failed generation, not runaway causation or an unrecorded bill.
+    A later repair in the same step cannot erase the original linked failure.
+    """
+    if output_token_ratio(trace).status is not Status.MATCH:
+        return _result([], complete=True)
+    hits = [
+        Locator(step.index, Channel.METADATA, call=call.index)
+        for step, call in trace.agent_calls()
+        if call.status == "incomplete"
+        and any(
+            web_result_state(o.content) is WebResultState.ERROR
+            or recorded_script_failure(o.content)
+            for _, o in step.results_for(call)
+        )
+    ]
+    return _result(hits, complete=True)
+
+
 @dataclass(frozen=True)
 class TraceCheck:
     spec: CheckSpec
@@ -327,6 +354,14 @@ class TraceCheck:
 
 def integrity_detectors() -> list[Detector]:
     return [
+        TraceCheck(
+            CheckSpec(
+                "integrity.incomplete_tool_generation",
+                Severity.INFO,
+                title="Incomplete tool generation failed",
+            ),
+            incomplete_tool_generation,
+        ),
         TraceCheck(
             CheckSpec(
                 "integrity.timestamp_invalid",
@@ -373,7 +408,7 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec(
                 "integrity.observation_pairing_reconstructed",
                 Severity.LOW,
-                title="Tool results paired to calls by order",
+                title="Tool result links inferred",
             ),
             observation_pairing_reconstructed,
         ),
@@ -455,9 +490,18 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec(
                 "integrity.web_results_not_recorded",
                 Severity.LOW,
+                version="2",
                 title="Web search or fetch result not recorded",
             ),
             web_results_not_recorded,
+        ),
+        TraceCheck(
+            CheckSpec(
+                "integrity.web_input_unresolved",
+                Severity.LOW,
+                title="Web input or reference provenance unresolved",
+            ),
+            web_input_unresolved,
         ),
         TraceCheck(
             CheckSpec(
@@ -474,7 +518,9 @@ def integrity_detectors() -> list[Detector]:
             agent_steps_missing,
         ),
         TraceCheck(
-            CheckSpec("integrity.cost_missing", Severity.LOW, title="Token totals without a cost"),
+            CheckSpec(
+                "integrity.cost_missing", Severity.LOW, title="Token totals without an ATIF cost"
+            ),
             cost_missing,
         ),
         TraceCheck(
@@ -489,6 +535,7 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec(
                 "integrity.output_token_ratio",
                 Severity.LOW,
+                version="3",
                 title="Agent text doesn't fit reported output tokens",
             ),
             output_token_ratio,

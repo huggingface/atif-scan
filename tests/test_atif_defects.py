@@ -188,7 +188,7 @@ def test_ratio_answer_only_ignores_reasoning_summaries():
     assert ratio_status(raw) == Status.NO_MATCH
     r = output_ratio(parse_trace(raw))
     assert r is not None
-    assert r.answer_only and r.chars == 3_000 and r.tokens == 1_000
+    assert r.answer_only and r.chars == 3_014 and r.tokens == 1_000
 
 
 def test_ratio_below_bound_flags_when_reasoning_is_accounted_for():
@@ -235,16 +235,16 @@ def test_ratio_in_report_and_brief(tmp_path, capsys):
     (tmp_path / "b" / "trajectory.json").write_text(json.dumps(bad))
     main([str(tmp_path), "--format", "json", "--no-cache"])
     items = {i["input_id"]: i for i in json.loads(capsys.readouterr().out)["inputs"]}
-    assert items["a"]["chars_per_output_token"] == 2.5
+    assert items["a"]["chars_per_output_token"] == 2.51
     assert items["a"]["output_ratio_basis"] == "answer_only"
-    assert items["b"]["chars_per_output_token"] == 20.0
+    assert items["b"]["chars_per_output_token"] == 20.01
     assert items["b"]["output_ratio_basis"] == "all_text"
     main([str(tmp_path), "--format", "text", "--no-cache"])
     out = " ".join(capsys.readouterr().out.split())  # unwrapped: phrases may span lines
     assert "⚠ 1 trial (50.0%): agent text doesn't fit reported output tokens" in out
-    assert "median 2.50 characters over 1 trace, reasoning excluded" in out
-    # No reasoning text or count: its low side is expected for reasoning models.
-    assert "median 20.00 characters" in out and "no reasoning text recorded" in out
+    assert "median 2.51 characters over 1 trace, reasoning excluded" in out
+    # No reasoning text or count: the lower bound cannot be checked.
+    assert "median 20.01 characters" in out and "no reasoning text or token split recorded" in out
     assert "reasoning: withheld (tokens only) 1 · not exposed 1 (" in out
     assert items["a"]["reasoning"] == "withheld" and items["b"]["reasoning"] == "none"
 

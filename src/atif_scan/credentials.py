@@ -50,7 +50,10 @@ TOKEN_SHAPES = re.compile(
 )
 
 # NAME=value (env output, .env files, `export`), with the value optionally quoted.
-_ENV = re.compile(r"(?<![\w$])(?P<name>[A-Za-z_][A-Za-z0-9_]*)=(?P<q>['\"]?)(?P<value>[^\s'\"]+)")
+# Not a comparison: `if token==prev:` would read "=prev" as the value (TB4 telecom).
+_ENV = re.compile(
+    r"(?<![\w$])(?P<name>[A-Za-z_][A-Za-z0-9_]*)=(?!=)(?P<q>['\"]?)(?P<value>[^\s'\"]+)"
+)
 # 'name': 'value' / "name" = "value" / os.environ["NAME"] = "value" / name="value":
 # the value must be quoted, so code like `token = tok.encode(x)` isn't a secret.
 _KEYED = re.compile(
