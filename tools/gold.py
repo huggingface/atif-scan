@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 GOLD = Path(os.environ.get("ATIF_SCAN_GOLD_DIR", "reports/gold"))
 SEVERE = ("medium", "high", "critical")

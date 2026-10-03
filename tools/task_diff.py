@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 RESOURCES = {"cpus", "memory_mb", "storage_mb", "gpus", "memory", "storage"}
 Change = tuple[str, str]  # (class, file or task.toml key)
