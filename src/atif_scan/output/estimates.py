@@ -34,9 +34,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from .jsonval import Doc
+    from ..jsonval import Doc
 
-from .accounting import has_scoped_cost
+from ..accounting import has_scoped_cost
 
 MIN_PRICED = 20
 MIN_REFERENCES = 10

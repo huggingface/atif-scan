@@ -9,8 +9,8 @@ import pytest
 from atif_scan import CheckSpec, Severity, builtin_detectors
 from atif_scan.access import access_rules
 from atif_scan.cli import main
+from atif_scan.output.document import document
 from atif_scan.policy import load_rules
-from atif_scan.report import document
 
 MAX_STYLE = 48
 

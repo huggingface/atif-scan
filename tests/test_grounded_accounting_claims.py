@@ -1,7 +1,6 @@
 """Synthetic accounting records establish observations, not billing provenance."""
 
 from atif_scan import Status
-from atif_scan.brief import brief, brief_text
 from atif_scan.detectors.integrity import (
     cost_missing,
     observation_pairing_unresolved,
@@ -9,6 +8,7 @@ from atif_scan.detectors.integrity import (
 )
 from atif_scan.facts import trace_facts
 from atif_scan.loader import parse_trace
+from atif_scan.output.brief import brief, brief_text
 
 
 def accounting_trace():

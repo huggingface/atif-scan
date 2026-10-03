@@ -9,8 +9,8 @@ import json
 import pytest
 from test_brief_cache import _item
 
-from atif_scan.brief import brief, brief_text
 from atif_scan.cli import main
+from atif_scan.output.brief import brief, brief_text
 from atif_scan.sources.harbor.files import late_trials, submission
 from atif_scan.sources.harbor.listing import run_meta
 

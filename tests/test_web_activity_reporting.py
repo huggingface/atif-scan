@@ -5,9 +5,9 @@ from types import MappingProxyType
 
 import pytest
 
-from atif_scan.brief import brief, brief_text
 from atif_scan.model import Content, Step, ToolCall, Trace
-from atif_scan.report import RECORDING_OVERLAP, document, recording_gaps, report
+from atif_scan.output.brief import brief, brief_text
+from atif_scan.output.document import RECORDING_OVERLAP, document, recording_gaps, report
 from atif_scan.web_activity import WebActivity, call_activity, web_activity
 
 
@@ -238,7 +238,7 @@ def test_invalid_aggregate_activity_is_unknown_and_not_summed():
 
 def test_full_scan_overlap_counts_survive_finding_filter():
     from atif_scan.checks import Severity
-    from atif_scan.report import filter_findings
+    from atif_scan.output.document import filter_findings
 
     row = item("a", tuple(RECORDING_OVERLAP.values()))
     doc = filter_findings(document([row], "test"), Severity.HIGH)

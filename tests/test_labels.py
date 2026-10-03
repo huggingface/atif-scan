@@ -6,7 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-from atif_scan import labels as L
+from atif_scan.review import labels as L
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "labels.py"
 spec = importlib.util.spec_from_file_location("labels_tool", TOOL)

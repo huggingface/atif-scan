@@ -9,11 +9,11 @@ import re
 import pytest
 from test_brief import section
 
-from atif_scan.brief import brief, brief_text
 from atif_scan.cli import main
-from atif_scan.estimates import choose_pricing, partial_usage, unmetered_work
 from atif_scan.facts import trace_facts
 from atif_scan.loader import parse_trace
+from atif_scan.output.brief import brief, brief_text
+from atif_scan.output.estimates import choose_pricing, partial_usage, unmetered_work
 from atif_scan.sources.harbor.files import attempt_cost, declared_prices, trial_result
 from atif_scan.sources.sync import sync_cap
 
@@ -339,7 +339,7 @@ def test_findings_headline_counts_findings_and_trials_not_overlap():
 
 
 def test_rates_are_chosen_once_given_then_declared_then_fitted():
-    from atif_scan.estimates import choose_pricing
+    from atif_scan.output.estimates import choose_pricing
 
     items = [
         {

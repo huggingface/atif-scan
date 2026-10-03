@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from atif_scan.cli import main
-from atif_scan.estimates import cost_estimate, missing_activity
+from atif_scan.output.estimates import cost_estimate, missing_activity
 
 if TYPE_CHECKING:
     from atif_scan.jsonval import Doc
@@ -213,7 +213,7 @@ def test_result_cache_skips_rescans_and_invalidates(
 
 
 def test_trajectory_cost_gap_is_not_a_defect_when_the_source_has_cost():
-    from atif_scan.brief import brief
+    from atif_scan.output.brief import brief
 
     def item(i, cost):
         return {
@@ -245,7 +245,7 @@ def test_brief_colour_only_on_terminals(tmp_path, capsys):
 
     from rich.console import Console
 
-    from atif_scan.brief import brief_text, colourise, print_brief
+    from atif_scan.output.brief import brief_text, colourise, print_brief
 
     root = write_run(tmp_path)
     main([str(root), "--brief", "--format", "json"])
@@ -268,7 +268,7 @@ def test_brief_colour_only_on_terminals(tmp_path, capsys):
 
 
 def test_brief_names_the_task_pack_for_a_known_dataset_without_loading_it():
-    from atif_scan.brief import brief, brief_text
+    from atif_scan.output.brief import brief, brief_text
 
     def doc(check_id):
         item = {
@@ -356,7 +356,7 @@ def _item(i, model, reward, status="available", matched=(), error=None, error_ty
 def test_trials_on_another_model_are_critical_dq_candidates():
     # Regression (TB4 Fable 5.1 row): 12 trials ran Opus 5 end to end (a safety-classifier
     # fallback); the brief only listed the second model in its agent line.
-    from atif_scan.brief import brief, brief_text
+    from atif_scan.output.brief import brief, brief_text
 
     items = [_item(i, "main-model", 1.0) for i in range(8)]
     items += [_item(8, "fallback-model", 1.0), _item(9, "fallback-model", 0.0)]
@@ -376,7 +376,7 @@ def test_trials_on_another_model_are_critical_dq_candidates():
 def test_comparison_job_models_are_planned_not_substitutions():
     # Regression (TB2.1 5-agent job c8fcaaeb): each configured agent/model is ~20% of the
     # trials; reading the most common as "the" model made 1,347 rewarded trials critical.
-    from atif_scan.brief import brief
+    from atif_scan.output.brief import brief
 
     items = [_item(i, "model-a", 1.0) for i in range(4)]
     items += [_item(i, "model-b", 1.0) for i in range(4, 8)]
@@ -396,7 +396,7 @@ def test_shards_of_one_submission_still_flag_a_fallback_model():
     # Regression (TB2.1 PR #220: one submission as six Hub jobs, one agent each): the
     # planned model count was summed over runs (6), so the top six models all counted as
     # planned and a fallback to a second model was never flagged.
-    from atif_scan.brief import brief
+    from atif_scan.output.brief import brief
 
     items = [_item(i, "grok-4.6", 1.0) for i in range(8)]
     items += [_item(8, "fallback-model", 1.0)]
@@ -416,7 +416,7 @@ def test_configured_agents_from_job_config():
 
 
 def test_brief_says_why_trials_cannot_be_cleared_and_which_errors_occurred():
-    from atif_scan.brief import brief, brief_text
+    from atif_scan.output.brief import brief, brief_text
 
     items = [
         _item(0, "m", 1.0, matched=("integrity.web_results_not_recorded",)),
@@ -454,7 +454,7 @@ def _worked(i, calls, cost=None, tokens=True, reward=0.0, error_type=None, tools
 def test_work_without_usage_is_flagged_and_estimated_not_silently_dropped():
     """Regression: an agent that died before writing usage did real (even rewarded) work,
     but the run total omitted it and the brief said "every trial priced"."""
-    from atif_scan.estimates import unmetered_work
+    from atif_scan.output.estimates import unmetered_work
 
     a, b = 0.01, 0.0002  # true cost = a*calls + b*calls^2
     priced_ = [_worked(i, c, cost=a * c + b * c * c) for i, c in enumerate(range(10, 70, 2))]
@@ -476,7 +476,7 @@ def test_work_without_usage_is_flagged_and_estimated_not_silently_dropped():
 
 
 def test_brief_warns_about_work_without_usage():
-    from atif_scan.brief import brief, brief_text
+    from atif_scan.output.brief import brief, brief_text
 
     def item(i, calls, cost, tokens=True, reward=1.0, error_type=None):
         it = _item(i, "m", reward, error_type=error_type)
@@ -520,7 +520,7 @@ def test_step_models_reveal_a_fallback_the_header_hides():
     """Regression (TB2.1 Terminus 2 / Fable 5 row): every header said claude-fable-5, but
     77 trials' steps ran claude-opus-4-8 end to end and 2 switched mid-trial. Only those
     were priced, so the cost fit priced Fable at Opus rates."""
-    from atif_scan.brief import brief, brief_text
+    from atif_scan.output.brief import brief, brief_text
 
     items = [_served(i, 1.0, {"main-model": 10}) for i in range(30)]
     items += [_served(30 + i, 1.0, {"fallback-model": 10}, cost=1.0) for i in range(25)]
@@ -544,8 +544,8 @@ def test_step_models_reveal_a_fallback_the_header_hides():
 
 
 def test_model_names_differing_only_in_prefix_date_or_case_are_the_same_model():
-    from atif_scan.brief import brief
-    from atif_scan.report import model_key
+    from atif_scan.output.brief import brief
+    from atif_scan.output.document import model_key
 
     assert model_key("anthropic/Claude-Fable-5") == model_key("claude-fable-5")
     assert model_key("gpt-5.5-2026-04-23") == model_key("openai/gpt-5.5") == "gpt-5.5"
@@ -636,7 +636,7 @@ def test_header_model_hides_a_fallback_end_to_end(tmp_path, capsys):
 def test_brief_findings_count_traceless_trials_as_unavailable_not_none():
     # Regression: a trial without a readable trajectory was never scanned, so it has no
     # findings; it must not be folded into "none" (unknown is not a negative result).
-    from atif_scan.brief import brief, brief_text
+    from atif_scan.output.brief import brief, brief_text
 
     items = [
         _item(0, "m", 1.0),

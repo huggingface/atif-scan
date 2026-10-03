@@ -24,7 +24,7 @@ new runs ─┬─ atif-scan (all traces, evidence) ──┐
 
 ## Labels
 
-`atif_scan.labels` defines the schema (one JSON object per line):
+`atif_scan.review.labels` defines the schema (one JSON object per line):
 
 | Field | Meaning |
 |---|---|

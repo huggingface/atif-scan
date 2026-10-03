@@ -7,8 +7,8 @@ import json
 import pytest
 
 from atif_scan import Channel, Engine, Severity, builtin_detectors, parse_trace
-from atif_scan.cite import citations, cite, mask
 from atif_scan.cli import main
+from atif_scan.evidence.cite import citations, cite, mask
 from atif_scan.model import Locator
 
 SECRET = "sk-live-abcdefghijklmnop1234"
@@ -184,7 +184,7 @@ def test_summary_counts_events_per_check_across_traces(tmp_path, capsys):
 
 
 def test_events_collapse_spans_and_count_whole_trace_findings_once():
-    from atif_scan.report import events
+    from atif_scan.output.document import events
 
     at = {"step": 0, "channel": "command", "call": 0, "observation": None, "field": 0}
     two_spans = {"evidence": [{**at, "span": [0, 3]}, {**at, "span": [5, 9]}]}
@@ -247,7 +247,7 @@ def test_step_numbers_are_atif_step_ids_not_positions(tmp_path, capsys):
 
 
 def test_items_without_step_id_render_one_based():
-    from atif_scan.report import where
+    from atif_scan.output.document import where
 
     old = [{"step": 0, "call": 1, "observation": None, "channel": "command"}]
     assert where(old) == "step 1 call 1 command"
@@ -312,7 +312,7 @@ def test_cite_medium_filters_finding_rows(tmp_path, capsys, view, fmt):
 
 
 def test_finding_filter_preserves_unknowns_and_full_scan_metadata():
-    from atif_scan.report import filter_findings
+    from atif_scan.output.document import filter_findings
 
     def assessment(status, severity="low", expected=()):
         return {
@@ -405,7 +405,7 @@ def test_cite_hides_low_only_trace_blocks(tmp_path, capsys, monkeypatch, fmt):
 
 
 def test_cite_empty_selection_keeps_coverage_and_uncertainty():
-    from atif_scan.report import filter_findings, to_text
+    from atif_scan.output.document import filter_findings, to_text
 
     def item(name, *, incomplete=False, status="available", assessments=()):
         return {
@@ -523,7 +523,7 @@ def test_cite_check_rejects_unusable_selections(tmp_path, capsys, argv, stderr):
 
 
 def test_cite_check_filter_keeps_unknowns_of_selected_checks_only():
-    from atif_scan.report import filter_findings
+    from atif_scan.output.document import filter_findings
 
     def assessment(check, status, kind="detector"):
         return {"id": check, "kind": kind, "status": status, "severity": "low", "expected_by": []}

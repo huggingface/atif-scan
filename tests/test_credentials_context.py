@@ -4,9 +4,9 @@ import pytest
 
 from atif_scan import Context, Status, parse_trace
 from atif_scan import credentials as c
-from atif_scan.cite import mask as cite_mask
-from atif_scan.cite import trace_secrets
 from atif_scan.detectors.side_channel import CredentialExposure
+from atif_scan.evidence.cite import mask as cite_mask
+from atif_scan.evidence.cite import trace_secrets
 
 LOOKUP_NAMES = [
     "SettingsKey",

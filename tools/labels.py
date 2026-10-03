@@ -30,8 +30,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple
 
-from atif_scan import labels as L
 from atif_scan.jsonval import as_list, as_object, as_str, count, number
+from atif_scan.review import labels as L
 
 HACK_QUESTIONS = ("uses_answers", "seek_answers", "hardcode", "tamper")
 # Who nominated a disagreement-bundle trial (labels.origin reads the prefix).

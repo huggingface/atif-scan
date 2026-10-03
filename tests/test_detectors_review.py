@@ -14,13 +14,13 @@ from atif_scan import (
     Status,
     builtin_detectors,
     credentials,
-    extract,
     loader,
     parse_trace,
 )
 from atif_scan.checks import Detection
 from atif_scan.detectors import builtin, installs, tamper
 from atif_scan.detectors.text import gated
+from atif_scan.evidence import extract
 from atif_scan.model import Channel, Content, Locator, Surface
 
 # --- helpers ---------------------------------------------------------------------

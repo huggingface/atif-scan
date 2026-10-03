@@ -22,14 +22,18 @@ detector or changing the engine.
 | `detectors` | Built-ins (`builtin`, `integrity`) and the `RegexDetector` / `SurfaceDetector` / `ObservationDetector` helpers |
 | `rules`, `policy` | Three-valued rule expressions, `Allowance`, and the JSON rule/allow format |
 | `engine` | Dependency ordering, task scope, error isolation, applying allowances |
-| `report`, `rich_view`, `views` | The JSON allowlist, summary rollup, and text/rich views rendered only from it (`views`: the optional rich entry points) |
-| `brief`, `estimates` | One-screen run integrity report (one renderer per section); token accounting, then cost priced once from given, declared or fitted rates; missing-activity estimates |
+| `output.document`, `output.rich`, `output.views` | The JSON allowlist, summary rollup, and text/rich views rendered only from it (`views`: the optional rich entry points) |
+| `output.brief`, `output.brief_view`, `output.estimates` | One-screen run integrity report (one renderer per section); token accounting, then cost priced once from given, declared or fitted rates; missing-activity estimates |
 | `cache` | Per-trace result cache keyed by file fingerprint + scanner version + check set + context |
-| `cite` | Opt-in (`--cite`) masked excerpts with before/after context: the only trace-text output |
+| `evidence.cite` | Opt-in (`--cite`) masked excerpts with before/after context: the only trace-text output |
+| `evidence.history`, `evidence.extract` | Companion history archives; `atif-inspect` (outline, masked step reads, search) |
+| `review.questions` | Follow-up and hunt questions: prompts, schemas, answer validation (blind questions show no findings) |
+| `review.labels` | The label store: schema, source precedence, run splits, scanner/Jev evaluation (see improvement-loop.md) |
+| `output.bundle` | `--judge-prompts`: the brief's review selection written as a question bundle |
 | `cli` | Picks inputs, loads trusted plugins, prints JSON or text |
 
 Keep these separate: parsing doesn't know about detectors, detectors don't know about
-rules, and only `report.report` decides what gets written out.
+rules, and only `output.document.report` decides what gets written out.
 
 `tests/test_architecture.py` enforces the layering on every runtime import: no cycles;
 the data layer (`model`, `loader`, `jsonval`, `shell`, `jslit`, `credentials`, `facts`,

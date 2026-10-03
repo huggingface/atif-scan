@@ -10,8 +10,15 @@ from atif_scan.checks import CheckSpec, Detection
 from atif_scan.cli import main
 from atif_scan.engine import Assessment
 from atif_scan.model import Channel, Locator
-from atif_scan.questions import BY_ID, NETWORK_ACTIONS, QUESTIONS, build, parse_answer, schema
-from atif_scan.report import overview
+from atif_scan.output.document import overview
+from atif_scan.review.questions import (
+    BY_ID,
+    NETWORK_ACTIONS,
+    QUESTIONS,
+    build,
+    parse_answer,
+    schema,
+)
 
 IDS = ("network_outcome", "model_call_legitimacy")
 MODEL = 'client.chat.completions.create(model="synthetic", messages=[])'

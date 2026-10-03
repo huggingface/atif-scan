@@ -11,7 +11,7 @@ from .detectors import (
 from .engine import Assessment, Engine
 from .loader import TraceError, load_bytes, load_trace, parse_trace
 from .model import Channel, Content, Locator, Observation, Step, Surface, ToolCall, Trace
-from .report import document, report, to_json, to_text
+from .output.document import document, report, to_json, to_text
 from .rules import All, Allowance, AnyOf, Not, Ref, Requires, Rule
 
 __all__ = [

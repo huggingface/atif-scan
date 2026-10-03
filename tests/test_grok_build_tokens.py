@@ -5,11 +5,11 @@ import json
 import pytest
 
 from atif_scan import Status, parse_trace
-from atif_scan.brief import RATIO_BASIS, output_ratios
 from atif_scan.cache import checks_signature
 from atif_scan.cli import main
 from atif_scan.detectors.integrity import output_ratio, output_token_ratio
 from atif_scan.facts import trace_facts
+from atif_scan.output.brief import RATIO_BASIS, output_ratios
 
 
 def payload(reasoning=2000, completion=1000, name="grok-build", version="1.0.34"):

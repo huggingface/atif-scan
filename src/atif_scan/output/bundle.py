@@ -9,17 +9,17 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from .checks import Context
-from .engine import Engine, effective_context
-from .loader import TraceError
-from .questions import Writer
-from .report import overview
+from ..checks import Context
+from ..engine import Engine, effective_context
+from ..loader import TraceError
+from ..review.questions import Writer
+from .document import overview
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .jsonval import Doc
-    from .sources.inputs import Source
+    from ..jsonval import Doc
+    from ..sources.inputs import Source
 
 SCOPES = ("dq-candidates", "rewarded", "all")
 README = (

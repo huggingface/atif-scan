@@ -15,7 +15,21 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .accounting import has_scoped_cost
+from ..accounting import has_scoped_cost
+from ..jsonval import as_object, as_str, count
+from ..packs import BUNDLED
+from ..review.questions import tally
+from ..sources.harbor.files import PRICE_KINDS
+from .document import (
+    RANK,
+    events,
+    is_counted,
+    model_key,
+    overview,
+    recording_gaps,
+    review_metadata,
+    served_models,
+)
 from .estimates import (
     Pricing,
     choose_pricing,
@@ -26,26 +40,12 @@ from .estimates import (
     stream_retries,
     unmetered_work,
 )
-from .jsonval import as_object, as_str, count
-from .packs import BUNDLED
-from .questions import tally
-from .report import (
-    RANK,
-    events,
-    is_counted,
-    model_key,
-    overview,
-    recording_gaps,
-    review_metadata,
-    served_models,
-)
-from .sources.harbor.files import PRICE_KINDS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ..jsonval import Doc
     from .estimates import Rates
-    from .jsonval import Doc
 
 OK, WARN, BAD, INFO = "✓", "⚠", "✗", "·"
 PAD = f"{'':<10}"  # the label column, blank on continuation lines

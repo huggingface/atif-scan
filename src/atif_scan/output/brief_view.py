@@ -34,15 +34,15 @@ import re
 import textwrap
 from typing import IO, TYPE_CHECKING
 
-from .report import COMPACTED_USAGE_EXPLANATION, MIN_ATTEMPTS_FOR_SE, STYLE, _m, walltime_lines
-from .sources.harbor.files import override_kind
+from ..sources.harbor.files import override_kind
+from .document import COMPACTED_USAGE_EXPLANATION, MIN_ATTEMPTS_FOR_SE, STYLE, _m, walltime_lines
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from rich.text import Text
 
-    from .jsonval import Doc
+    from ..jsonval import Doc
 
 OK, WARN, INFO = "✓", "⚠", "·"
 MARKS = (OK, WARN, INFO, "→")

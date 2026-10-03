@@ -204,7 +204,7 @@ def test_declared_split_must_match_canonical_and_embedded_totals(field):
 
 
 def test_unknown_step_split_is_not_reported_as_absent_evidence():
-    from atif_scan.brief import brief, brief_text
+    from atif_scan.output.brief import brief, brief_text
 
     trace = parse_trace({"steps": [metered_step(), metered_step(None)]})
     row = {

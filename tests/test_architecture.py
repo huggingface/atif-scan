@@ -3,14 +3,18 @@
 Layers, lowest first. A layer may import itself and the layers listed for it:
 
 - data      parsing and per-trial facts (stdlib only): model, loader, jsonval, shell, jslit,
-            credentials, facts, accounting, loader_accounting, web_inputs, web_results,
-            web_gaps, web_activity
+            credentials, facts, accounting, loader_accounting, web_inputs,
+            web_results, web_gaps, web_activity
 - sources   finding and fetching inputs: the sources package (inputs, sync, layout, harbor)
 - analysis  checks and their evaluation: checks, rules, policy, engine, access, detectors,
             packs
 
-Output (report, brief, cite, …), review (questions, labels, …) and the CLI sit above and are
-not constrained here yet. Imports under `if TYPE_CHECKING:` don't count: they never run.
+- evidence  masked excerpts and history for people and judges: the evidence package
+- review    questions and labels: the review package
+- output    the report document, views, the run brief and judge bundles: the output package
+
+The CLI and the result cache sit above everything and are not constrained. Imports under
+`if TYPE_CHECKING:` don't count: they never run.
 """
 
 from __future__ import annotations
@@ -38,21 +42,27 @@ SOURCES = {"sources"}
 ANALYSIS = {"checks", "rules", "policy", "engine", "access"}
 
 
+LAYER_OF = {
+    **dict.fromkeys(DATA, "data"),
+    **dict.fromkeys(SOURCES, "sources"),
+    **dict.fromkeys((*ANALYSIS, "detectors", "packs"), "analysis"),
+    "evidence": "evidence",
+    "review": "review",
+    "output": "output",
+}
+
+
 def layer(module: str) -> str | None:
-    head = module.split(".", maxsplit=1)[0]
-    if head in DATA:
-        return "data"
-    if head in SOURCES:
-        return "sources"
-    if head in ANALYSIS or head in ("detectors", "packs"):
-        return "analysis"
-    return None
+    return LAYER_OF.get(module.split(".", maxsplit=1)[0])
 
 
 ALLOWED = {
     "data": {"data"},
     "sources": {"data", "sources"},
     "analysis": {"data", "analysis"},
+    "evidence": {"data", "analysis", "evidence"},
+    "review": {"data", "analysis", "evidence", "review"},
+    "output": {"data", "sources", "analysis", "evidence", "review", "output"},
 }
 
 

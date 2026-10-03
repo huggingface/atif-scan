@@ -5,11 +5,11 @@ import json
 import pytest
 
 from atif_scan import Status
-from atif_scan.brief import brief, brief_text
 from atif_scan.detectors.integrity import incomplete_tool_generation
 from atif_scan.facts import trace_facts
 from atif_scan.loader import parse_trace
-from atif_scan.report import recording_gaps
+from atif_scan.output.brief import brief, brief_text
+from atif_scan.output.document import recording_gaps
 from atif_scan.web_gaps import web_gaps
 
 

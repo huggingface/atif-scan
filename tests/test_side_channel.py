@@ -5,9 +5,9 @@ import json
 import pytest
 
 from atif_scan import Context, Status, parse_trace
-from atif_scan.cite import cite, mask
 from atif_scan.credentials import find
 from atif_scan.detectors.side_channel import side_channel_detectors
+from atif_scan.evidence.cite import cite, mask
 from atif_scan.model import Channel, Locator
 
 KEY = "LLM|123456789012|syntheticCredential98765"

@@ -5,10 +5,10 @@ import json
 import pytest
 
 from atif_scan import Context, builtin_detectors, parse_trace
-from atif_scan.brief import brief, brief_text
 from atif_scan.detectors.integrity import output_ratio
 from atif_scan.engine import Engine
-from atif_scan.report import document, report
+from atif_scan.output.brief import brief, brief_text
+from atif_scan.output.document import document, report
 from atif_scan.web_inputs import web_input
 
 URL = "https://example.org/synthetic-private-page"

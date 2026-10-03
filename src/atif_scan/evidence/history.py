@@ -15,13 +15,13 @@ from dataclasses import dataclass
 from itertools import islice
 from typing import TYPE_CHECKING
 
-from . import credentials
+from .. import credentials
 from .cite import mask
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .jsonval import Doc
+    from ..jsonval import Doc
 
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_FILES = 32

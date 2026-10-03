@@ -8,8 +8,8 @@ import pytest
 
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.cli import main
-from atif_scan.extract import grep, outline, render, step_record
-from atif_scan.questions import BY_ID, Answers, Writer, build, trace_digest
+from atif_scan.evidence.extract import grep, outline, render, step_record
+from atif_scan.review.questions import BY_ID, Answers, Writer, build, trace_digest
 
 UNRESOLVED = "integrity.observation_pairing_unresolved"
 WARNING = "integrity.observation_pairing_reconstructed"
@@ -209,9 +209,9 @@ def test_cli_mismatch_is_scanned_and_no_raw_text_emitted(tmp_path, capsys):
 
 
 def test_citations_keep_reconstruction_provenance():
-    from atif_scan.cite import cite
+    from atif_scan.evidence.cite import cite
     from atif_scan.model import Channel, Locator
-    from atif_scan.report import citation_lines
+    from atif_scan.output.document import citation_lines
 
     t = parse_trace(raw())
     for at in (

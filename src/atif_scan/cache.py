@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .jsonval import Doc, is_object
-from .report import SCHEMA_VERSION
+from .output.document import SCHEMA_VERSION
 from .rules import Allowance, Rule
 
 if TYPE_CHECKING:

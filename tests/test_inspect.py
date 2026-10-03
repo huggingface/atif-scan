@@ -196,7 +196,7 @@ def segment_trace(text="synthetic result"):
 
 
 def test_segment_paginates_past_prefix_without_sibling_fields():
-    from atif_scan.extract import read_segment
+    from atif_scan.evidence.extract import read_segment
 
     text = "synthetic " * 1600 + "final evidence"
     trace = segment_trace(text)
@@ -217,8 +217,8 @@ def test_segment_paginates_past_prefix_without_sibling_fields():
 
 
 def test_segment_masks_whole_field_before_slicing_and_uses_masked_offsets():
-    from atif_scan.cite import mask
-    from atif_scan.extract import read_segment
+    from atif_scan.evidence.cite import mask
+    from atif_scan.evidence.extract import read_segment
 
     secret = "sk-" + "syntheticCredential123" * 3
     text = "x" * 35 + " " + secret + " tail"
@@ -253,7 +253,7 @@ def test_segment_masks_whole_field_before_slicing_and_uses_masked_offsets():
     ],
 )
 def test_segment_rejects_invalid_bounds(kwargs):
-    from atif_scan.extract import read_segment
+    from atif_scan.evidence.extract import read_segment
 
     arguments: Doc = {"step_number": 12, "part": "result", **kwargs}
     with pytest.raises(ValueError):
@@ -261,7 +261,7 @@ def test_segment_rejects_invalid_bounds(kwargs):
 
 
 def test_segment_empty_media_unreadable_and_end_bounds():
-    from atif_scan.extract import read_segment
+    from atif_scan.evidence.extract import read_segment
 
     empty = read_segment(segment_trace(""), 12, "result")
     assert empty["status"] == "empty"
@@ -280,7 +280,7 @@ def test_segment_empty_media_unreadable_and_end_bounds():
 
 
 def test_segment_call_and_message_selection():
-    from atif_scan.extract import read_segment
+    from atif_scan.evidence.extract import read_segment
 
     trace = segment_trace()
     call = read_segment(trace, 12, "call")
@@ -298,7 +298,7 @@ def test_segment_call_and_message_selection():
 @pytest.mark.parametrize("method,call_index", [("position", 0), ("unique_remainder", 1)])
 def test_inspection_pairing_provenance_consistent(method, call_index):
     from atif_scan import parse_trace
-    from atif_scan.extract import read_segment, render, step_record
+    from atif_scan.evidence.extract import read_segment, render, step_record
 
     results = [{"content": "first synthetic"}, {"content": "second synthetic"}]
     if method == "unique_remainder":
@@ -350,7 +350,7 @@ def offline(name, *args, **kwargs):
         raise AssertionError('optional dependency imported by core')
     return original(name, *args, **kwargs)
 builtins.__import__ = offline
-from atif_scan.extract import read_segment
+from atif_scan.evidence.extract import read_segment
 from atif_scan import parse_trace
 trace = parse_trace({'steps': [{'source': 'user', 'step_id': 1, 'message': 'synthetic'}]})
 assert read_segment(trace, 1, 'message')['text'] == 'synthetic'
@@ -363,7 +363,7 @@ assert read_segment(trace, 1, 'message')['text'] == 'synthetic'
 
 def test_segment_masks_known_secret_from_sibling_field():
     from atif_scan import parse_trace
-    from atif_scan.extract import read_segment
+    from atif_scan.evidence.extract import read_segment
 
     trace = parse_trace(
         {

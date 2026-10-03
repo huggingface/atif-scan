@@ -12,9 +12,9 @@ import pytest
 from test_inspect_mcp import RecordingServer
 
 from atif_scan.cli import main
-from atif_scan.history import MAX_FILE_BYTES, discover_history, history_counts
+from atif_scan.evidence.history import MAX_FILE_BYTES, discover_history, history_counts
 from atif_scan.loader import load_trace
-from atif_scan.questions import Answers
+from atif_scan.review.questions import Answers
 
 SECRET = "sk-syntheticArchiveCredential123456789"
 TEXT = "synthetic-only early acquisition, not a benchmark solution"
@@ -233,7 +233,7 @@ def test_literal_archive_search_masks_then_reports_offsets(local):
 
 
 def test_archive_count_limit_is_explicit(local):
-    from atif_scan.history import MAX_FILES
+    from atif_scan.evidence.history import MAX_FILES
 
     segment = companion(local)
     for i in range(MAX_FILES + 2):

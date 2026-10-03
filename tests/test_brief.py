@@ -1,6 +1,6 @@
 """Synthetic regressions for recorded results and review presentation."""
 
-from atif_scan.brief import brief, brief_text, colourise
+from atif_scan.output.brief import brief, brief_text, colourise
 
 
 def item(label, statuses, reward=1):

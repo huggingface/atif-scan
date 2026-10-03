@@ -232,14 +232,14 @@ JWT = "eyJ" + "a" * 12 + ".eyJ" + "b" * 12 + "." + "c" * 12
     ],
 )
 def test_cite_mask_cases(text, expected):
-    from atif_scan.cite import mask
+    from atif_scan.evidence.cite import mask
 
     assert mask(text) == expected
 
 
 def test_cite_mask_secret_named_key_is_linear(linear):
     # Regression: "token"×8000 took 3.5s (secret word searched inside every identifier).
-    from atif_scan.cite import mask
+    from atif_scan.evidence.cite import mask
 
     linear(lambda n: mask("token" * n), 2_000)
     linear(lambda n: mask("a-" * n + "token"), 5_000)
@@ -248,7 +248,7 @@ def test_cite_mask_secret_named_key_is_linear(linear):
 
 
 def test_citations_memoise_masking(monkeypatch):
-    from atif_scan import cite as module
+    from atif_scan.evidence import cite as module
     from atif_scan.model import Channel, Locator
 
     raw = {
@@ -288,7 +288,7 @@ META = {"question": "lookup_used", "version": "1", "answers": ["used"]}
 
 def answer_of(reply: str, meta: object) -> object:
     """The parsed answer of a reply that must parse."""
-    from atif_scan.questions import parse_answer
+    from atif_scan.review.questions import parse_answer
 
     parsed = parse_answer(reply, meta)
     assert parsed is not None
@@ -296,7 +296,7 @@ def answer_of(reply: str, meta: object) -> object:
 
 
 def test_parse_answer_prose_with_two_objects_and_fences():
-    from atif_scan.questions import parse_answer
+    from atif_scan.review.questions import parse_answer
 
     two = 'Context {"note": 1} then ' + REPLY + " and {}"
     assert answer_of(two, META) == "used"
@@ -307,7 +307,7 @@ def test_parse_answer_prose_with_two_objects_and_fences():
 
 
 def test_parse_answer_is_bounded_on_hostile_replies(linear):
-    from atif_scan.questions import parse_answer
+    from atif_scan.review.questions import parse_answer
 
     linear(lambda n: parse_answer("{" * n, META), 15_000)
     linear(lambda n: parse_answer('{"a":' * n, META), 5_000)
@@ -316,7 +316,7 @@ def test_parse_answer_is_bounded_on_hostile_replies(linear):
 
 def test_parse_answer_uses_the_questions_own_enum():
     # Regression: answers were checked against the list in the metadata file.
-    from atif_scan.questions import parse_answer
+    from atif_scan.review.questions import parse_answer
 
     edited = {**META, "answers": ["used", "hacked"]}
     assert parse_answer(REPLY.replace('"used"', '"hacked"'), edited) is None
@@ -329,7 +329,7 @@ def test_answers_load_skips_malformed_metadata_and_caps_reads(tmp_path):
     # Regression: missing input_id/answers raised KeyError; files had no size cap.
     import json
 
-    from atif_scan.questions import MAX_READ, Answers
+    from atif_scan.review.questions import MAX_READ, Answers
 
     folder = tmp_path / "t1"
     folder.mkdir()
@@ -362,7 +362,7 @@ def test_answers_load_skips_malformed_metadata_and_caps_reads(tmp_path):
 def test_timeline_shows_final_message_once():
     # Regression: with non-agent steps in the window, the final message's index passed
     # `start + AFTER` although the loop had already shown it.
-    from atif_scan.questions import AFTER, _timeline
+    from atif_scan.review.questions import AFTER, _timeline
 
     steps = [PROMPT, agent("first")]
     for i in range(AFTER + 2):

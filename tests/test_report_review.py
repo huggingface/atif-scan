@@ -13,7 +13,7 @@ from test_brief_cache import write_run
 from test_harbor_files import harbor_job, result_json
 
 from atif_scan.cli import main
-from atif_scan.report import (
+from atif_scan.output.document import (
     _m,
     citation_lines,
     overview,
@@ -21,7 +21,7 @@ from atif_scan.report import (
     summary,
     summary_text,
 )
-from atif_scan.views import render_rich, render_summary_rich
+from atif_scan.output.views import render_rich, render_summary_rich
 
 
 def _rule_status(out: str) -> list[str]:
@@ -251,7 +251,7 @@ def test_view_flags_are_mutually_exclusive(tmp_path, capsys):
 def test_brief_ties_are_ordered_by_check_id():
     # Regression: ties followed set iteration order (string hashing), so the same run
     # could print its recording lines in a different order on every invocation.
-    from atif_scan.brief import brief
+    from atif_scan.output.brief import brief
 
     def a(check):
         return {

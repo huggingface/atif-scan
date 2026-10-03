@@ -255,7 +255,7 @@ def test_output_ratio_spread_is_consistent_for_small_and_large_runs():
     """Regression: with 2 traces the median (upper value) sat outside p5–p95 (lower value)."""
     import pytest
 
-    from atif_scan.brief import output_ratios
+    from atif_scan.output.brief import output_ratios
 
     ratios = output_ratios(
         [{"chars_per_output_token": v, "output_ratio_basis": "all_text"} for v in (1.83, 0.6)]

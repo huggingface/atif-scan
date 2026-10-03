@@ -27,8 +27,8 @@ from typing import TYPE_CHECKING
 # Optional dependency, supplied by `uv run --with 'mcp>=1.2,<2'` (see the docstring).
 from mcp.server.fastmcp import FastMCP  # ty: ignore[unresolved-import] - optional dependency
 
-from atif_scan.cite import trace_secrets
-from atif_scan.extract import (
+from atif_scan.evidence.cite import trace_secrets
+from atif_scan.evidence.extract import (
     MAX_SEGMENT_CHARS,
     PARTS,
     SegmentPart,
@@ -39,10 +39,10 @@ from atif_scan.extract import (
     resolve,
     step_record,
 )
-from atif_scan.history import HistoryArchive, discover_history
+from atif_scan.evidence.history import HistoryArchive, discover_history
 from atif_scan.jsonval import Doc  # noqa: TC001 - FastMCP resolves annotations at runtime.
 from atif_scan.loader import load_trace
-from atif_scan.questions import frame
+from atif_scan.review.questions import frame
 
 if TYPE_CHECKING:
     from atif_scan.model import Trace

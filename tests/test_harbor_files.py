@@ -185,7 +185,7 @@ def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
     # Regression (a private DeepSeek run): setup-time overrides for a sandbox provider and a
     # fork of the task repo that only swaps images are infrastructure; the agent timeout
     # override changes the score.
-    from atif_scan.brief import brief_text
+    from atif_scan.output.brief import brief_text
     from atif_scan.sources.harbor.files import dataset_source, job_meta, override_kind
 
     assert override_kind("agents[].override_setup_timeout_sec") == "infrastructure"
@@ -216,7 +216,7 @@ def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
     assert meta is not None
     assert meta["canonical_dataset"] is False
     doc = {"scanner_version": "dev", "inputs": [], "coverage": {}, "runs": [meta]}
-    from atif_scan.brief import brief
+    from atif_scan.output.brief import brief
 
     text = brief_text(brief(doc))
     settings = " ".join(section(text, "SETTINGS").split())  # unwrapped

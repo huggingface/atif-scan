@@ -15,21 +15,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .access import access_rules
-from .brief import brief, brief_text, print_brief
 from .cache import ResultCache, checks_signature
 from .checks import Context, Severity, Status, check_pattern, check_selected, identifier
-from .cite import citations
 from .detectors import builtin_detectors
 from .engine import Engine, effective_context
+from .evidence.cite import citations
+from .evidence.history import history_counts
 from .facts import recorded_facts, run_facts, trace_facts, trial_reward, trial_task
-from .history import history_counts
 from .loader import TraceError
-from .packs import recognise, tasks_needed
-from .packs.reference import ENV as PACK_ENV
-from .policy import load_rules
-from .questions import BY_ID, Answers, Writer
-from .questions import tally as answer_tally
-from .report import (
+from .output.brief import brief, brief_text, print_brief
+from .output.bundle import SCOPES, write_review
+from .output.document import (
     assemble,
     document,
     filter_findings,
@@ -42,7 +38,12 @@ from .report import (
     to_json,
     to_text,
 )
-from .review import SCOPES, write_review
+from .output.views import render_rich, render_summary_rich
+from .packs import recognise, tasks_needed
+from .packs.reference import ENV as PACK_ENV
+from .policy import load_rules
+from .review.questions import BY_ID, Answers, Writer
+from .review.questions import tally as answer_tally
 from .sources.harbor.files import SUBMISSION_BYTES, submission, text_label
 from .sources.harbor.hub import harbor_sources, inspect_job, is_harbor
 from .sources.inputs import (
@@ -57,7 +58,6 @@ from .sources.inputs import (
 )
 from .sources.layout import document as inspection
 from .sources.sync import default_sync_root, sync_remote, sync_target
-from .views import render_rich, render_summary_rich
 from .web_activity import web_activity
 
 if TYPE_CHECKING:

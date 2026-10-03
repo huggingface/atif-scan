@@ -23,14 +23,14 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from ..loader import TraceError, load_trace
+from ..model import Channel, Content, Observation, Step, Trace
 from .cite import mask, trace_secrets
-from .loader import TraceError, load_trace
-from .model import Channel, Content, Observation, Step, Trace
 
 if TYPE_CHECKING:
     from collections.abc import Set
 
-    from .jsonval import Doc
+    from ..jsonval import Doc
 
 PARTS = ("message", "reasoning", "calls", "results")
 SegmentPart = Literal["message", "reasoning", "call", "result"]

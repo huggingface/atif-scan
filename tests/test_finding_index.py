@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from atif_scan.cli import main
-from atif_scan.report import finding_index, index_text
+from atif_scan.output.document import finding_index, index_text
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "finding_index.py"
 spec = importlib.util.spec_from_file_location("finding_index_tool", TOOL)
@@ -124,8 +124,8 @@ def test_unknown_tasks_are_counted_as_given_never_grouped_as_a_task():
     # unidentified trials read as 1 task with 50% ± 50% and "1 task below 5 trials".
     # Unknown tasks are allowed (runs mix sources): accuracy covers every scored trial,
     # task counts and the per-task SE cover the trials with a known task.
-    from atif_scan.brief import brief, brief_text
-    from atif_scan.report import overview
+    from atif_scan.output.brief import brief, brief_text
+    from atif_scan.output.document import overview
 
     def item(i, reward, task=None):
         return {

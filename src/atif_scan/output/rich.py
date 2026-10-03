@@ -10,7 +10,7 @@ from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
-from .report import (
+from .document import (
     STYLE,
     _cited,
     citation_lines,
@@ -25,12 +25,12 @@ from .report import (
     summary_tail_lines,
     where,
 )
-from .report import filter_notice as _filter_notice
-from .report import tally as _tally
-from .report import unresolved as _unresolved
+from .document import filter_notice as _filter_notice
+from .document import tally as _tally
+from .document import unresolved as _unresolved
 
 if TYPE_CHECKING:
-    from .jsonval import Doc
+    from ..jsonval import Doc
 
 
 def _findings_table(group: dict[str, list[Doc]]) -> Table:

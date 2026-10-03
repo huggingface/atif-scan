@@ -6,8 +6,8 @@ from io import StringIO
 import pytest
 
 from atif_scan.cli import main
-from atif_scan.report import COMPACTED_USAGE_EXPLANATION, to_text
-from atif_scan.views import render_rich
+from atif_scan.output.document import COMPACTED_USAGE_EXPLANATION, to_text
+from atif_scan.output.views import render_rich
 
 CHECK = "integrity.tokens_exceed_recorded_calls"
 
