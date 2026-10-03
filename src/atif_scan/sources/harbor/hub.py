@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from ...jsonval import (
+from ...data.jsonval import (
     Doc,
     JsonObject,
     as_list,
@@ -38,7 +38,7 @@ from ...jsonval import (
     is_object,
     number,
 )
-from ...loader import TraceError, load_trace
+from ...data.loader import TraceError, load_trace
 from ..inputs import Source, SourceError, local_fingerprint
 from ..sync import private_directory, private_tree
 from .files import (
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from ...model import Trace
+    from ...data.model import Trace
 
 JOB = re.compile(
     r"^(?:harbor://jobs/|https?://hub\.harborframework\.com/jobs/)(" + UUID + r")(?:[/?#].*)?$"

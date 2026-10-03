@@ -5,12 +5,12 @@ import json
 import pytest
 
 from atif_scan import Status
+from atif_scan.data.facts import trace_facts
+from atif_scan.data.loader import parse_trace
+from atif_scan.data.web_gaps import web_gaps
 from atif_scan.detectors.integrity import incomplete_tool_generation
-from atif_scan.facts import trace_facts
-from atif_scan.loader import parse_trace
 from atif_scan.output.brief import brief, brief_text
 from atif_scan.output.document import recording_gaps
-from atif_scan.web_gaps import web_gaps
 
 
 def trajectory(status="incomplete", error="Error: synthetic rejected arguments"):
@@ -184,7 +184,7 @@ def test_refusal_with_recorded_tokens_is_not_missing_usage():
 
 
 def test_unlinked_and_unreadable_results_are_not_no_emitted_contents():
-    from atif_scan.model import Content, Observation, Step, ToolCall, Trace
+    from atif_scan.data.model import Content, Observation, Step, ToolCall, Trace
 
     call = ToolCall(0, "web_search", (), "c", "web_search", {})
     for content in (Content("unlinked body"), Content(understood=False)):

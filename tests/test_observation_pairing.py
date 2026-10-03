@@ -209,8 +209,8 @@ def test_cli_mismatch_is_scanned_and_no_raw_text_emitted(tmp_path, capsys):
 
 
 def test_citations_keep_reconstruction_provenance():
+    from atif_scan.data.model import Channel, Locator
     from atif_scan.evidence.cite import cite
-    from atif_scan.model import Channel, Locator
     from atif_scan.output.document import citation_lines
 
     t = parse_trace(raw())
@@ -334,7 +334,7 @@ def test_derived_call_uses_indexed_recorded_parent_with_nonempty_id():
 
 
 def test_empty_parent_id_does_not_collide_with_unrelated_empty_id_calls():
-    from atif_scan.model import Content, Observation, Step, ToolCall
+    from atif_scan.data.model import Content, Observation, Step, ToolCall
 
     calls = (
         ToolCall(0, "inert", (), "", "exec", None),

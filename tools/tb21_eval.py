@@ -29,7 +29,7 @@ from atif_scan.sources.sync import default_sync_root
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 PLUGINS = [
     "--plugin",

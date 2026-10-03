@@ -12,15 +12,15 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
-from ..model import Channel, Locator, Surface
-from ..web_activity import call_activity
-from ..web_results import recorded_web_content
+from ..data.model import Channel, Locator, Surface
+from ..data.web_activity import call_activity
+from ..data.web_results import recorded_web_content
 
 if TYPE_CHECKING:
     import re
     from collections.abc import Callable, Iterable, Iterator
 
-    from ..model import Step, Trace
+    from ..data.model import Step, Trace
 
 DOWNSTREAM = frozenset({Channel.MESSAGE, Channel.REASONING, Channel.PAYLOAD})
 

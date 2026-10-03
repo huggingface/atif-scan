@@ -12,7 +12,7 @@ from .rules import Allowance, Rule
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from .model import Trace
+    from .data.model import Trace
 
 
 def validate_evidence(trace: Trace, result: object) -> None:

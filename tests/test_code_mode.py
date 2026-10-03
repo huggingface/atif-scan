@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
-from atif_scan.jslit import UNREAD, tool_calls
+from atif_scan.data.jslit import UNREAD, tool_calls
 from atif_scan.packs.tb21 import checks
 
 

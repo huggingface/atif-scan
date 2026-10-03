@@ -2,9 +2,8 @@
 
 Layers, lowest first. A layer may import itself and the layers listed for it:
 
-- data      parsing and per-trial facts (stdlib only): model, loader, jsonval, shell, jslit,
-            credentials, facts, accounting, loader_accounting, web_inputs,
-            web_results, web_gaps, web_activity
+- data      parsing and per-trial facts (stdlib only): the data package (model, loader,
+            jsonval, shell, jslit, credentials, facts, accounting, web_*)
 - sources   finding and fetching inputs: the sources package (inputs, sync, layout, harbor)
 - analysis  checks and their evaluation: checks, rules, policy, engine, access, detectors,
             packs
@@ -23,21 +22,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "src" / "atif_scan"
-DATA = {
-    "model",
-    "loader",
-    "jsonval",
-    "shell",
-    "jslit",
-    "credentials",
-    "facts",
-    "accounting",
-    "loader_accounting",
-    "web_inputs",
-    "web_results",
-    "web_gaps",
-    "web_activity",
-}
+DATA = {"data"}
 SOURCES = {"sources"}
 ANALYSIS = {"checks", "rules", "policy", "engine", "access"}
 

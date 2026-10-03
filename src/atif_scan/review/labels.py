@@ -29,7 +29,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..jsonval import Doc, as_list, as_object, as_str, count, is_object
+from ..data.jsonval import Doc, as_list, as_object, as_str, count, is_object
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping

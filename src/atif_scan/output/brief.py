@@ -15,8 +15,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..accounting import has_scoped_cost
-from ..jsonval import as_object, as_str, count
+from ..data.accounting import has_scoped_cost
+from ..data.jsonval import as_object, as_str, count
 from ..packs import BUNDLED
 from ..review.questions import tally
 from ..sources.harbor.files import PRICE_KINDS
@@ -44,7 +44,7 @@ from .estimates import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from ..jsonval import Doc
+    from ..data.jsonval import Doc
     from .estimates import Rates
 
 OK, WARN, BAD, INFO = "✓", "⚠", "✗", "·"

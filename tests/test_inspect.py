@@ -6,7 +6,7 @@ import json
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 import pytest
 

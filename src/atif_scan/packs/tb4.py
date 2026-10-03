@@ -16,12 +16,12 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .. import shell
 from ..checks import CheckSpec, Context, Detection, Severity
+from ..data import shell
+from ..data.model import Channel, Locator, Surface, Trace
 from ..detectors import SurfaceDetector
 from ..detectors.catalog import TaskCatalogRecall, catalog_version, task_name_pattern
 from ..detectors.tamper import write_target, writes_to
-from ..model import Channel, Locator, Surface, Trace
 from ..rules import All, Ref, Rule
 
 if TYPE_CHECKING:

@@ -17,7 +17,7 @@ import json
 from pathlib import Path, PurePath, PurePosixPath
 from typing import TYPE_CHECKING, TypeVar
 
-from ...jsonval import Doc, as_object, number
+from ...data.jsonval import Doc, as_object, number
 from .files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,

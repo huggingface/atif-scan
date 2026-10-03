@@ -13,11 +13,11 @@ import re
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
-from .. import shell
-from ..model import Channel
+from ..data import shell
+from ..data.model import Channel
 
 if TYPE_CHECKING:
-    from ..model import Surface
+    from ..data.model import Surface
 
 ROOT_NAMES = frozenset({"hidden", "eval", "evals", "grader", "graders"})
 FIND_OPTIONS = frozenset({"-H", "-L", "-P", "--"})

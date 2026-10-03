@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from atif_scan.jsonval import Doc, number
+from atif_scan.data.jsonval import Doc, number
 from atif_scan.sources import layout
 from atif_scan.sources.harbor import hub as harbor_hub
 from atif_scan.sources.harbor import runs as harbor_runs
@@ -28,7 +28,7 @@ from atif_scan.sources.sync import sync_remote
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from atif_scan.model import Trace
+    from atif_scan.data.model import Trace
 
 JOB = "1d6abb23-0000-4000-8000-000000000000"
 ROOT = "buckets/o/b/job"

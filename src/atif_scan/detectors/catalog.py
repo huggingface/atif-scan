@@ -25,7 +25,7 @@ from .recall import PROSE_AND_INPUT, UnprimedDetector
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from ..model import Surface, Trace
+    from ..data.model import Surface, Trace
 
 NEAR_BENCHMARK = 300  # characters between a task name and a Terminal-Bench mention
 OTHER_TASKS_RECALLED = 3  # other tasks' names recalled as Terminal-Bench tasks: a match

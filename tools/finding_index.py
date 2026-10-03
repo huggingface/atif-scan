@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from atif_scan.output.document import RANK, finding_index
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 
 def _rate(value: float | None) -> str:

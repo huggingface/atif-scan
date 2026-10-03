@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Protocol
 
-from .jsonval import identifier
-from .model import Locator, Trace
+from .data.jsonval import identifier
+from .data.model import Locator, Trace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

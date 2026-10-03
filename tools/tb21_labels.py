@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 from atif_scan.sources.harbor.hub import HarborCLI, listing, row_listing
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc, JsonObject
+    from atif_scan.data.jsonval import Doc, JsonObject
     from atif_scan.sources.harbor.hub import RowJobs
 
 

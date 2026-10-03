@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .jsonval import Doc, is_object
+from .data.jsonval import Doc, is_object
 from .output.document import SCHEMA_VERSION
 from .rules import Allowance, Rule
 

@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
 from ..checks import CheckSpec, Context, Detection, Detector, Severity, Status
-from ..model import Channel, Locator, Surface, Trace
-from ..web_inputs import web_input
-from ..web_results import recorded_web_content
+from ..data.model import Channel, Locator, Surface, Trace
+from ..data.web_inputs import web_input
+from ..data.web_results import recorded_web_content
 from .context import context_checks
 from .discovery import evaluation_directory_probe, probe_undecidable
 from .harness import harness_detectors

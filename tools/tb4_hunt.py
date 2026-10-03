@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from atif_scan.sources.sync import default_sync_root
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 MEDIUM = 50
 Pools = defaultdict[str, list["Doc"]]  # group -> candidate trials

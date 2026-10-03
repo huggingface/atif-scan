@@ -5,10 +5,10 @@ import json
 import pytest
 
 from atif_scan import Context, Status, parse_trace
-from atif_scan.credentials import find
+from atif_scan.data.credentials import find
+from atif_scan.data.model import Channel, Locator
 from atif_scan.detectors.side_channel import side_channel_detectors
 from atif_scan.evidence.cite import cite, mask
-from atif_scan.model import Channel, Locator
 
 KEY = "LLM|123456789012|syntheticCredential98765"
 
@@ -159,7 +159,7 @@ def test_citation_masks_bare_repeat_and_split_secret():
 
 
 def test_known_mask_empty_and_overlap():
-    from atif_scan.credentials import mask as credential_mask
+    from atif_scan.data.credentials import mask as credential_mask
 
     assert credential_mask("abababa", ["", "ababa"]) == "***"
 

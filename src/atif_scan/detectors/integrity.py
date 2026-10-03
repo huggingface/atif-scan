@@ -17,10 +17,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from ..checks import CheckSpec, Context, Detection, Detector, Severity, Status
-from ..facts import output_ratio
-from ..model import Channel, Locator, Trace
-from ..web_inputs import web_input
-from ..web_results import (
+from ..data.facts import output_ratio
+from ..data.model import Channel, Locator, Trace
+from ..data.web_inputs import web_input
+from ..data.web_results import (
     WebResultState,
     recorded_script_failure,
     web_outcomes_recorded,

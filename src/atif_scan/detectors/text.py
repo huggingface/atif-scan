@@ -8,12 +8,12 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
-from ..model import SPAN_LENGTH, TOOL_INPUT_CHANNELS, Channel, Locator, Surface
+from ..data.model import SPAN_LENGTH, TOOL_INPUT_CHANNELS, Channel, Locator, Surface
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..model import Trace
+    from ..data.model import Trace
 
 # What a predicate found in a surface: a `re.Match` or (start, end) span to cite, or just
 # truthy (the whole surface) / falsy (nothing).

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from atif_scan.facts import listed_facts, recorded_facts, run_facts, trial_reward, trial_task
+from atif_scan.data.facts import listed_facts, recorded_facts, run_facts, trial_reward, trial_task
 
 NO_TRACE = dict.fromkeys(
     ("usage", "usage_basis", "agent_name", "llm_calls"),

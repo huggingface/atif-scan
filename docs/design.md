@@ -11,13 +11,13 @@ detector or changing the engine.
 | `sources.sync` | Mirrors remote inputs into the private sync folder (inventory, content identities, confinement) |
 | `sources.harbor.runs` | Finds the Harbor files next to each trajectory: reward, trial `result.json` + attempt cost, `exception.txt`, job folders, saved Hub listings and ledgers |
 | `sources.harbor.files` | Parses Harbor's own run files (trial `result.json`, job `config.json`/`result.json`, `trials.jsonl`, harbor-hf `run.json` prices and attempt costs) into allowlisted facts |
-| `facts` | The one place that decides which record wins for each per-trial fact (reward, task, error, tokens, cost), and the trace-derived facts that are cached |
-| `jsonval` | Narrows untrusted JSON values (`as_object`, `count`, `number`, …); wrong shapes become unknown, never zero |
+| `data.facts` | The one place that decides which record wins for each per-trial fact (reward, task, error, tokens, cost), and the trace-derived facts that are cached |
+| `data.jsonval` | Narrows untrusted JSON values (`as_object`, `count`, `number`, …); wrong shapes become unknown, never zero |
 | `sources.harbor.hub` | `harbor://jobs/<id>`: Hub listing (task/reward/cost) and trajectory downloads via the `harbor` CLI |
 | `sources.harbor.listing` | Hub listing rows: validation and allowlisted run/trial facts, shared by live and saved listings (no I/O) |
 | `sources.layout` | `--inspect`: classifies a listing (Harbor markers, roles, anomalies) without reading traces |
-| `model`, `loader` | Immutable `Trace → Step → ToolCall / Observation` view of ATIF v1 |
-| `jslit`, `shell` | Static readers for Codex code-mode programs and shell commands (never executed); unreadable input is unknown or falls back to text patterns |
+| `data.model`, `data.loader` | Immutable `Trace → Step → ToolCall / Observation` view of ATIF v1 |
+| `data.jslit`, `data.shell` | Static readers for Codex code-mode programs and shell commands (never executed); unreadable input is unknown or falls back to text patterns |
 | `checks` | The plugin contract: `CheckSpec`, `Context`, `Detection`, `Status`, `Severity` |
 | `detectors` | Built-ins (`builtin`, `integrity`) and the `RegexDetector` / `SurfaceDetector` / `ObservationDetector` helpers |
 | `rules`, `policy` | Three-valued rule expressions, `Allowance`, and the JSON rule/allow format |
@@ -36,8 +36,8 @@ Keep these separate: parsing doesn't know about detectors, detectors don't know 
 rules, and only `output.document.report` decides what gets written out.
 
 `tests/test_architecture.py` enforces the layering on every runtime import: no cycles;
-the data layer (`model`, `loader`, `jsonval`, `shell`, `jslit`, `credentials`, `facts`,
-`accounting`, `web_*`) imports only itself; `sources` only data and itself; analysis
+the `data` package (`model`, `loader`, `jsonval`, `shell`, `jslit`, `credentials`,
+`facts`, `accounting`, `web_*`) imports only itself; `sources` only data and itself; analysis
 (`checks`, `rules`, `policy`, `engine`, `access`, `detectors`, `packs`) only data and
 itself.
 

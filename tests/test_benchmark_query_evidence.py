@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
+from atif_scan.data.model import Channel, Content, Locator, Surface
 from atif_scan.detectors import builtin
-from atif_scan.model import Channel, Content, Locator, Surface
 
 REPO = "github.com/laude-institute/terminal-bench"
 SOURCE = f"https://{REPO}/tasks/synthetic-demo/solution/solve.sh"

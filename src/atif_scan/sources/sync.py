@@ -19,7 +19,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal, TypedDict
 
-from ..loader import MAX_BYTES
+from ..data.loader import MAX_BYTES
 from .harbor.files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,

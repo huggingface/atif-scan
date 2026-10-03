@@ -5,10 +5,10 @@ from types import MappingProxyType
 
 import pytest
 
-from atif_scan.model import Content, Step, ToolCall, Trace
+from atif_scan.data.model import Content, Step, ToolCall, Trace
+from atif_scan.data.web_activity import WebActivity, call_activity, web_activity
 from atif_scan.output.brief import brief, brief_text
 from atif_scan.output.document import RECORDING_OVERLAP, document, recording_gaps, report
-from atif_scan.web_activity import WebActivity, call_activity, web_activity
 
 
 def call(args=None, name="web_search_call", tool="web_search", call_id="w", parent=None):

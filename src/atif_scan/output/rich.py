@@ -30,7 +30,7 @@ from .document import tally as _tally
 from .document import unresolved as _unresolved
 
 if TYPE_CHECKING:
-    from ..jsonval import Doc
+    from ..data.jsonval import Doc
 
 
 def _findings_table(group: dict[str, list[Doc]]) -> Table:

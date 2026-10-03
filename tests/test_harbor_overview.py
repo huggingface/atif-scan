@@ -18,7 +18,7 @@ from atif_scan.sources.harbor.files import overrides
 from atif_scan.sources.harbor.hub import job_id
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 JOB = "1fead079-8e3b-4fef-b893-1944558a3949"
 SECRET = "sk-live-abcdefghijklmnop1234"

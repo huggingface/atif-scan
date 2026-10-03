@@ -11,7 +11,7 @@ from test_sync import FS, ROOT, job_files, trajectory
 from typing_extensions import override
 
 from atif_scan.cli import main
-from atif_scan.loader import TraceError
+from atif_scan.data.loader import TraceError
 from atif_scan.sources import inputs as sources
 from atif_scan.sources import sync
 from atif_scan.sources.inputs import SourceError, resolve

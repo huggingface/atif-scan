@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from atif_scan.jslit import UNREAD, tool_calls
+from atif_scan.data.jslit import UNREAD, tool_calls
 
 UNKNOWN = [("?", UNREAD)]
 

@@ -10,7 +10,7 @@ import pytest
 from atif_scan.cli import main
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 URL = "https://github.com/harbor-framework/terminal-bench-2-1/tree/main/tasks/demo-task/solution"
 

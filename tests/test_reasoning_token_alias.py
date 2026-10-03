@@ -3,8 +3,8 @@
 import pytest
 
 from atif_scan import Status, parse_trace
+from atif_scan.data.facts import trace_facts
 from atif_scan.detectors.integrity import output_ratio, output_token_ratio
-from atif_scan.facts import trace_facts
 
 
 def trajectory(extra):

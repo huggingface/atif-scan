@@ -9,7 +9,7 @@ import pytest
 
 from atif_scan import Channel, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.cli import main
-from atif_scan.loader import TraceError
+from atif_scan.data.loader import TraceError
 
 BENCH_TASK = "https://github.com/harbor-framework/terminal-bench-2-1/blob/main/tasks/demo"
 
@@ -656,7 +656,7 @@ def test_codex_apply_patch_paths_come_from_the_envelope():
 def test_bare_redacted_values_load_as_unknown():
     # Regression: published TB4 trajectories replaced token counts with a bare, unquoted
     # [REDACTED]; 31 of one row's traces were rejected as unreadable.
-    from atif_scan.loader import load_bytes
+    from atif_scan.data.loader import load_bytes
 
     raw = (
         '{"steps": [{"source": "agent", "message": "key: [REDACTED] \\"[REDACTED]\\"",'
@@ -668,7 +668,7 @@ def test_bare_redacted_values_load_as_unknown():
 
 
 def test_other_invalid_json_is_still_unreadable():
-    from atif_scan.loader import load_bytes
+    from atif_scan.data.loader import load_bytes
 
     with pytest.raises(TraceError, match="unreadable_trace"):
         load_bytes(b'{"steps": [REDACTED')
@@ -688,7 +688,7 @@ def test_codex_hosted_web_calls_without_results_or_urls_are_a_recording_defect()
 
 
 def test_redacted_values_are_reported():
-    from atif_scan.loader import load_bytes
+    from atif_scan.data.loader import load_bytes
 
     raw = (
         b'{"steps": [{"source": "agent", "message": "hi",'

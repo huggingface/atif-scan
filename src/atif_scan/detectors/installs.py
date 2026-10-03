@@ -22,9 +22,9 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .. import shell
 from ..checks import CheckSpec, Context, Detection, Detector, Severity
-from ..model import Channel, Surface, Trace
+from ..data import shell
+from ..data.model import Channel, Surface, Trace
 from .text import ObservationDetector, SurfaceDetector, gated
 
 if TYPE_CHECKING:

@@ -12,7 +12,16 @@ import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from ...jsonval import Doc, JsonObject, as_list, as_object, count, identifier, is_object, number
+from ...data.jsonval import (
+    Doc,
+    JsonObject,
+    as_list,
+    as_object,
+    count,
+    identifier,
+    is_object,
+    number,
+)
 from .files import configured_agents, duration, late_trials, overrides, text_label
 
 if TYPE_CHECKING:

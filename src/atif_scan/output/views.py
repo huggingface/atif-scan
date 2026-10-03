@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..jsonval import Doc
+    from ..data.jsonval import Doc
 
 
 def render_rich(doc: Doc, file: IO[str] | None = None) -> None:

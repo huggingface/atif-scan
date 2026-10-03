@@ -10,7 +10,7 @@ from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.packs import tb4
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 
 def call(name, arguments, cid="c1"):

@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
     from rich.text import Text
 
-    from ..jsonval import Doc
+    from ..data.jsonval import Doc
 
 OK, WARN, INFO = "✓", "⚠", "·"
 MARKS = (OK, WARN, INFO, "→")

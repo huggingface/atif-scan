@@ -1,12 +1,12 @@
-"""atif_scan.shell: static command splitting and the checks built on it (synthetic only)."""
+"""atif_scan.data.shell: static command splitting and the checks built on it (synthetic only)."""
 
 from __future__ import annotations
 
 import pytest
 
-from atif_scan import shell
+from atif_scan.data import shell
+from atif_scan.data.model import Channel, Content, Locator, Surface
 from atif_scan.detectors import installs, tamper
-from atif_scan.model import Channel, Content, Locator, Surface
 
 
 def writes(text: str) -> list[str]:

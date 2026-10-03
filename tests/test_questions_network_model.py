@@ -8,8 +8,8 @@ import pytest
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.checks import CheckSpec, Detection
 from atif_scan.cli import main
+from atif_scan.data.model import Channel, Locator
 from atif_scan.engine import Assessment
-from atif_scan.model import Channel, Locator
 from atif_scan.output.document import overview
 from atif_scan.review.questions import (
     BY_ID,

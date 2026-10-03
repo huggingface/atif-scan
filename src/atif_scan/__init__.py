@@ -1,6 +1,8 @@
 """Public Python API for composing ATIF review checks."""
 
 from .checks import CheckSpec, Context, Detection, Detector, Severity, Status
+from .data.loader import TraceError, load_bytes, load_trace, parse_trace
+from .data.model import Channel, Content, Locator, Observation, Step, Surface, ToolCall, Trace
 from .detectors import (
     ObservationDetector,
     RegexDetector,
@@ -9,8 +11,6 @@ from .detectors import (
     builtin_detectors,
 )
 from .engine import Assessment, Engine
-from .loader import TraceError, load_bytes, load_trace, parse_trace
-from .model import Channel, Content, Locator, Observation, Step, Surface, ToolCall, Trace
 from .output.document import document, report, to_json, to_text
 from .rules import All, Allowance, AnyOf, Not, Ref, Requires, Rule
 

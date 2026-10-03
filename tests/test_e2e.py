@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 REPO = Path(__file__).resolve().parents[1]
 CONFIG = os.environ.get("ATIF_SCAN_E2E")

@@ -21,8 +21,9 @@ import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from .. import shell
 from ..checks import CheckSpec, Context, Detection, Severity
+from ..data import shell
+from ..data.model import Channel, Locator, Surface
 from ..detectors import RegexDetector, SurfaceDetector
 from ..detectors.builtin import PATHS_TEXT, TEST_PATH
 from ..detectors.catalog import (
@@ -32,15 +33,14 @@ from ..detectors.catalog import (
 )
 from ..detectors.catalog import catalog_names as _catalog_names
 from ..detectors.tamper import TESTS, writes_to
-from ..model import Channel, Locator, Surface
 from ..rules import All, Allowance, Not, Ref, Requires, Rule
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from ..checks import Detector
+    from ..data.model import Trace
     from ..detectors.text import Hit
-    from ..model import Trace
 
 WRITTEN = frozenset({Channel.COMMAND, Channel.ARGUMENTS, Channel.PAYLOAD, Channel.PATH})
 

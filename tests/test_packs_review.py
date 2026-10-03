@@ -139,7 +139,7 @@ def test_hidden_content_unlinked_multi_call_result_is_not_visible(reference):
 
 
 def _surface(text, channel=None, tool=None):
-    from atif_scan.model import Channel, Content, Locator, Surface
+    from atif_scan.data.model import Channel, Content, Locator, Surface
 
     return Surface(Locator(0, channel or Channel.MESSAGE), Content(text), tool)
 
@@ -192,7 +192,7 @@ def test_tb21_catalog_version_follows_task_names():
 
 
 def test_tb21_authored_skips_shell_descriptions_and_needs_all_patterns():
-    from atif_scan.model import Channel
+    from atif_scan.data.model import Channel
     from atif_scan.packs.tb21 import authored
 
     both = authored(r"alpha", r"beta")
@@ -248,8 +248,8 @@ def test_cite_mask_secret_named_key_is_linear(linear):
 
 
 def test_citations_memoise_masking(monkeypatch):
+    from atif_scan.data.model import Channel, Locator
     from atif_scan.evidence import cite as module
-    from atif_scan.model import Channel, Locator
 
     raw = {
         "schema_version": "ATIF-v1.7",

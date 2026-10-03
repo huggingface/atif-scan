@@ -15,9 +15,9 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
-from ..model import Channel, Locator, Surface, Trace
-from ..web_inputs import web_input
-from ..web_results import web_results_complete
+from ..data.model import Channel, Locator, Surface, Trace
+from ..data.web_inputs import web_input
+from ..data.web_results import web_results_complete
 
 if TYPE_CHECKING:
     import re

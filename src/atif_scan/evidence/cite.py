@@ -12,14 +12,14 @@ import functools
 import re
 from typing import TYPE_CHECKING
 
-from .. import credentials
 from ..checks import check_selected
-from ..model import Channel, Content, Locator, Step, ToolCall, Trace
+from ..data import credentials
+from ..data.model import Channel, Content, Locator, Step, ToolCall, Trace
 
 if TYPE_CHECKING:
     from ..checks import Severity
+    from ..data.jsonval import Doc
     from ..engine import Assessment
-    from ..jsonval import Doc
 
 WINDOW = 160  # characters of context on each side of a matched span
 CONTEXT = 240  # characters of before/after context

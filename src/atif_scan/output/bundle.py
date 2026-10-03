@@ -10,15 +10,15 @@ import json
 from typing import TYPE_CHECKING
 
 from ..checks import Context
+from ..data.loader import TraceError
 from ..engine import Engine, effective_context
-from ..loader import TraceError
 from ..review.questions import Writer
 from .document import overview
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..jsonval import Doc
+    from ..data.jsonval import Doc
     from ..sources.inputs import Source
 
 SCOPES = ("dq-candidates", "rewarded", "all")

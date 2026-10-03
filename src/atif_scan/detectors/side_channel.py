@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
-from .. import credentials
 from ..checks import CheckSpec, Context, Detection, Detector, Severity
-from ..model import Channel, Locator, Surface, Trace
+from ..data import credentials
+from ..data.model import Channel, Locator, Surface, Trace
 from .text import SurfaceDetector
 
 WRITTEN = frozenset({Channel.COMMAND, Channel.ARGUMENTS, Channel.PAYLOAD})

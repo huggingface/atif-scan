@@ -224,7 +224,7 @@ def test_unavailable_rewarded_trace_counted_not_cleared(population, tmp_path, ca
 def test_nonlocal_trace_cannot_get_broken_mcp_binding(tmp_path, monkeypatch, capsys):
     from atif_scan import cli
     from atif_scan.checks import Context
-    from atif_scan.loader import load_trace
+    from atif_scan.data.loader import load_trace
     from atif_scan.sources.inputs import Source
 
     make_manifest(tmp_path, [("demo", 1, "echo hello", "model-a")])

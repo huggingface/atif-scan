@@ -6,7 +6,7 @@ import pytest
 
 from atif_scan import Context, Status, builtin_detectors, parse_trace
 from atif_scan.checks import Severity
-from atif_scan.model import Channel, Content
+from atif_scan.data.model import Channel, Content
 
 CHECK = "observation.benchmark_source_after_web"
 SOURCE = "https://github.com/harbor-framework/terminal-bench-synthetic"

@@ -6,9 +6,9 @@ from types import MappingProxyType
 import pytest
 
 from atif_scan import Status
+from atif_scan.data.jsonval import compact_json
+from atif_scan.data.loader import parse_calls, parse_trace
 from atif_scan.detectors.integrity import output_ratio, output_token_ratio
-from atif_scan.jsonval import compact_json
-from atif_scan.loader import parse_calls, parse_trace
 
 
 def call(args):

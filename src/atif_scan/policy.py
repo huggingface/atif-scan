@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .checks import CheckSpec, Severity
-from .jsonval import as_list, as_str
+from .data.jsonval import as_list, as_str
 from .rules import All, Allowance, AnyOf, Expression, Not, Ref, Requires, Rule
 
 if TYPE_CHECKING:

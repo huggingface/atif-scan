@@ -12,15 +12,15 @@ from collections import Counter
 from typing import TYPE_CHECKING, cast
 
 from ..checks import Severity, Status, check_selected
-from ..facts import TAIL
+from ..data.facts import TAIL
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from ..checks import CheckSpec
+    from ..data.jsonval import Doc
+    from ..data.web_activity import WebActivity
     from ..engine import Assessment
-    from ..jsonval import Doc
-    from ..web_activity import WebActivity
 
 # 4: numeric web activity and overlap-safe recording-gap counts (no raw values).
 SCHEMA_VERSION = 4

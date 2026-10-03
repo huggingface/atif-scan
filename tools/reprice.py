@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from pathlib import Path
 
-from atif_scan.jsonval import (
+from atif_scan.data.jsonval import (
     Doc,
     JsonObject,
     as_list,
@@ -40,7 +40,7 @@ from atif_scan.jsonval import (
     load_object,
     number,
 )
-from atif_scan.loader import parse_trace
+from atif_scan.data.loader import parse_trace
 
 MAX_TRACE_BYTES = 256 * 1024 * 1024
 MAX_CATALOG_BYTES = 4 * 1024 * 1024

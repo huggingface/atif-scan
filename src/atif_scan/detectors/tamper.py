@@ -22,9 +22,9 @@ import posixpath
 import re
 from typing import TYPE_CHECKING
 
-from .. import shell
 from ..checks import CheckSpec, Detector, Severity
-from ..model import Channel, Surface
+from ..data import shell
+from ..data.model import Channel, Surface
 from .text import RegexDetector, SurfaceDetector
 
 if TYPE_CHECKING:

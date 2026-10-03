@@ -8,8 +8,8 @@ import pytest
 from test_cost_integrity import harbor_hf_run, result, step, trajectory
 
 from atif_scan.cli import main
-from atif_scan.facts import recorded_facts, run_facts, trace_facts
-from atif_scan.loader import parse_trace
+from atif_scan.data.facts import recorded_facts, run_facts, trace_facts
+from atif_scan.data.loader import parse_trace
 from atif_scan.output.brief import brief, brief_text
 from atif_scan.output.estimates import (
     Pricing,

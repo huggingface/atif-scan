@@ -17,12 +17,13 @@ from typing import TYPE_CHECKING
 from .access import access_rules
 from .cache import ResultCache, checks_signature
 from .checks import Context, Severity, Status, check_pattern, check_selected, identifier
+from .data.facts import recorded_facts, run_facts, trace_facts, trial_reward, trial_task
+from .data.loader import TraceError
+from .data.web_activity import web_activity
 from .detectors import builtin_detectors
 from .engine import Engine, effective_context
 from .evidence.cite import citations
 from .evidence.history import history_counts
-from .facts import recorded_facts, run_facts, trace_facts, trial_reward, trial_task
-from .loader import TraceError
 from .output.brief import brief, brief_text, print_brief
 from .output.bundle import SCOPES, write_review
 from .output.document import (
@@ -58,15 +59,14 @@ from .sources.inputs import (
 )
 from .sources.layout import document as inspection
 from .sources.sync import default_sync_root, sync_remote, sync_target
-from .web_activity import web_activity
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from .checks import Detector
+    from .data.jsonval import Doc
+    from .data.model import Trace
     from .engine import Assessment
-    from .jsonval import Doc
-    from .model import Trace
     from .rules import Allowance, Rule
 
     Check = Detector | Rule | Allowance

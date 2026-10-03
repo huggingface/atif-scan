@@ -5,9 +5,9 @@ from copy import deepcopy
 import pytest
 
 from atif_scan import Status
+from atif_scan.data.facts import trace_facts
+from atif_scan.data.loader import parse_trace
 from atif_scan.detectors.integrity import output_ratio, output_token_ratio
-from atif_scan.facts import trace_facts
-from atif_scan.loader import parse_trace
 
 
 def child_trace():

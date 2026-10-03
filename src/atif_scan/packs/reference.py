@@ -48,19 +48,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from .. import credentials
 from ..checks import CheckSpec, Context, Detection, Severity, Status
+from ..data import credentials
+from ..data.model import Channel, Locator, Surface, Trace
 from ..detectors.builtin import CANARY, NETWORK, TASK_FILES, URL, looks_up_benchmark
 from ..detectors.installs import _task_name
 from ..detectors.recall import PROSE_AND_INPUT, UnprimedDetector, unrecorded_web_result, walk
-from ..model import Channel, Locator, Surface, Trace
 from ..rules import Allowance, Ref
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from ..checks import Detector
-    from ..model import Step, ToolCall
+    from ..data.model import Step, ToolCall
 
 ENV = "ATIF_SCAN_REFERENCE"
 MAX_FILE = 1 << 20

@@ -12,7 +12,7 @@ from atif_scan.cli import main
 from atif_scan.output.estimates import cost_estimate, missing_activity
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 SECRET = "sk-live-abcdefghijklmnop1234"
 RATES = (2.5, 0.6, 10.0)  # $/M uncached, cached, output

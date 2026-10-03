@@ -26,18 +26,18 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ..checks import Context, Severity, Status
+from ..data.jsonval import as_list, as_object, as_str, count, is_object
+from ..data.model import Channel, Locator, Step, Trace
 from ..detectors.builtin import OTHER_BENCHMARKS
 from ..evidence.cite import _head, cite, mask, trace_secrets
 from ..evidence.history import discover_history
-from ..jsonval import as_list, as_object, as_str, count, is_object
-from ..model import Channel, Locator, Step, Trace
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
     from pathlib import Path
 
+    from ..data.jsonval import Doc, JsonObject
     from ..engine import Assessment
-    from ..jsonval import Doc, JsonObject
 
 PROMPT_BUDGET = 24_000  # characters of trace text per prompt
 FIELD = 600  # characters per timeline field

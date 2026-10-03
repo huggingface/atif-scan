@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from atif_scan.model import Content, Observation, Step, ToolCall
-from atif_scan.web_results import (
+from atif_scan.data.model import Content, Observation, Step, ToolCall
+from atif_scan.data.web_results import (
     WebResultState,
     recorded_web_content,
     web_outcomes_recorded,

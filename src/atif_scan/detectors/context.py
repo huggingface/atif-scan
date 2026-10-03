@@ -15,7 +15,7 @@ from ..checks import CheckSpec, Context, Detection, Status
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ..model import Trace
+    from ..data.model import Trace
 
 
 @dataclass(frozen=True)

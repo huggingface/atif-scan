@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from ..checks import Detector
-    from ..jsonval import Doc
+    from ..data.jsonval import Doc
     from ..rules import Allowance, Rule
 
 TASK_SHARE = 0.9  # of the traces' known tasks, to recognise a pack by task names alone

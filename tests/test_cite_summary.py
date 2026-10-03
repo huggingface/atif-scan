@@ -8,8 +8,8 @@ import pytest
 
 from atif_scan import Channel, Engine, Severity, builtin_detectors, parse_trace
 from atif_scan.cli import main
+from atif_scan.data.model import Locator
 from atif_scan.evidence.cite import citations, cite, mask
-from atif_scan.model import Locator
 
 SECRET = "sk-live-abcdefghijklmnop1234"
 
