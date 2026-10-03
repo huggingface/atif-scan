@@ -1330,6 +1330,9 @@ uv run atif-scan --manifest /external/inputs.json > /external/report.json
 
 ## Development
 
+The loop that turns judge findings into checks and measures both on held-out labels is in
+[docs/improvement-loop.md](docs/improvement-loop.md).
+
 ```bash
 uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run ty check
 ```
