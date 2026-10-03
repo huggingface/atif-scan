@@ -14,7 +14,7 @@ from test_inspect_mcp import RecordingServer
 from atif_scan.cli import main
 from atif_scan.data.loader import load_trace
 from atif_scan.evidence.history import MAX_FILE_BYTES, discover_history, history_counts
-from atif_scan.review.questions import Answers
+from atif_scan.review.answers import Answers
 
 SECRET = "sk-syntheticArchiveCredential123456789"
 TEXT = "synthetic-only early acquisition, not a benchmark solution"

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..checks import Severity, check_pattern
 from ..output.bundle import SCOPES
-from ..review.questions import BY_ID
+from ..review.catalogue import BY_ID
 from ..sources.inputs import (
     DEFAULT_PATTERN,
 )

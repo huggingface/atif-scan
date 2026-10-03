@@ -9,7 +9,9 @@ import pytest
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.cli import main
 from atif_scan.evidence.extract import grep, outline, render, step_record
-from atif_scan.review.questions import BY_ID, Answers, Writer, build, trace_digest
+from atif_scan.review.answers import Answers
+from atif_scan.review.catalogue import BY_ID
+from atif_scan.review.prompts import Writer, build, trace_digest
 
 UNRESOLVED = "integrity.observation_pairing_unresolved"
 WARNING = "integrity.observation_pairing_reconstructed"

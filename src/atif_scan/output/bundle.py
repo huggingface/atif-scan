@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from ..checks import Context
 from ..data.loader import TraceError
 from ..engine import Engine, effective_context
-from ..review.questions import Writer
+from ..review.prompts import Writer
 from .overview import overview
 
 if TYPE_CHECKING:

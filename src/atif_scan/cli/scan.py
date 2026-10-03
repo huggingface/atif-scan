@@ -19,7 +19,8 @@ from ..evidence.cite import citations
 from ..evidence.history import history_counts
 from ..output.bundle import write_review
 from ..output.document import assemble, document, report
-from ..review.questions import Answers, Writer
+from ..review.answers import Answers
+from ..review.prompts import Writer
 from ..sources.inputs import (
     Source,
     SourceError,

@@ -6,16 +6,9 @@ from dataclasses import replace
 import pytest
 
 from atif_scan import Context, Engine, builtin_detectors, parse_trace
-from atif_scan.review.questions import (
-    BY_ID,
-    QUESTIONS,
-    Answers,
-    Writer,
-    build,
-    parse_answer,
-    schema,
-    trace_digest,
-)
+from atif_scan.review.answers import Answers, parse_answer
+from atif_scan.review.catalogue import BY_ID, QUESTIONS
+from atif_scan.review.prompts import Writer, build, schema, trace_digest
 
 QID = "web_provenance"
 

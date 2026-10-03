@@ -22,12 +22,13 @@ detector or changing the engine.
 | `detectors` | Built-ins (`builtin`, `integrity`) and the `RegexDetector` / `SurfaceDetector` / `ObservationDetector` helpers |
 | `rules`, `policy` | Three-valued rule expressions, `Allowance`, and the JSON rule/allow format |
 | `engine` | Dependency ordering, task scope, error isolation, applying allowances |
-| `output.document`, `output.rich`, `output.views` | The JSON allowlist, summary rollup, and text/rich views rendered only from it (`views`: the optional rich entry points) |
-| `output.brief`, `output.brief_view`, `output.estimates` | One-screen run integrity report (one renderer per section); token accounting, then cost priced once from given, declared or fitted rates; missing-activity estimates |
+| `output.document`, `output.text`, `output.summary`, `output.overview` | The JSON allowlist and filtering; plain-text detail/inspect/citation views; `--summary`; the run overview (accuracy, reruns, finding index, DQ scenario, cost, tokens, walltime), all rendered only from the document |
+| `output.rich`, `output.views` | The rich renderer and its optional entry points |
+| `output.brief`, `output.brief_view` (`words`, `colour`, `run`, `evidence`, `usage`), `output.estimates` | One-screen run integrity report (one renderer per section); token accounting, then cost priced once from given, declared or fitted rates; missing-activity estimates |
 | `cache` | Per-trace result cache keyed by file fingerprint + scanner version + check set + context |
 | `evidence.cite` | Opt-in (`--cite`) masked excerpts with before/after context: the only trace-text output |
 | `evidence.history`, `evidence.extract` | Companion history archives; `atif-inspect` (outline, masked step reads, search) |
-| `review.questions` | Follow-up and hunt questions: prompts, schemas, answer validation (blind questions show no findings) |
+| `review.catalogue`, `review.prompts`, `review.answers` | Follow-up and hunt questions: the catalogue (asks, answer sets, triggers), prompt and schema writing (blind questions show no findings), answers read back and tallied |
 | `review.labels` | The label store: schema, source precedence, run splits, scanner/Jev evaluation (see improvement-loop.md) |
 | `output.bundle` | `--judge-prompts`: the brief's review selection written as a question bundle |
 | `cli` | The command line: `args` (parser and option checks), `inputs` (manifests, paths, sync, tasks, plugins), `scan` (cached evaluation, the report document, judge bundles), `emit` (brief/overview/summary/detail as text or JSON), `inspect` (`--inspect`); `main` and `--submission` in the package |

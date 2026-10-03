@@ -12,7 +12,7 @@ from ..output.overview import overview, overview_text
 from ..output.summary import summary, summary_text
 from ..output.text import to_text
 from ..output.views import render_rich, render_summary_rich
-from ..review.questions import tally as answer_tally
+from ..review.answers import tally as answer_tally
 from .args import output_format
 
 if TYPE_CHECKING:

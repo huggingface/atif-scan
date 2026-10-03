@@ -42,7 +42,7 @@ from atif_scan.evidence.extract import (
     step_record,
 )
 from atif_scan.evidence.history import HistoryArchive, discover_history
-from atif_scan.review.questions import frame
+from atif_scan.review.prompts import frame
 
 if TYPE_CHECKING:
     from atif_scan.data.model import Trace
