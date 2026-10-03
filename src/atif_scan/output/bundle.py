@@ -25,8 +25,8 @@ SCOPES = ("dq-candidates", "rewarded", "all")
 README = (
     "Private review bundle: prompts contain masked trace text; keep outside Git.\n"
     "No provider calls have been made. Only send to an approved model provider.\n"
-    "DIR below means this directory (quote paths with spaces). From the source checkout:\n\n"
-    "tools/ask-fast-agent.sh --model MODEL --questions DIR --inspect-tool --jobs 8\n\n"
+    "DIR below means this directory (quote paths with spaces):\n\n"
+    "atif-scan hunt --model MODEL --questions DIR --inspect-tool --jobs 8\n\n"
     "Then rerun the SAME original scan inputs and options, replacing --judge-prompts DIR\n"
     "with --answers DIR. Do not scan the whole cached job for a leaderboard-row review.\n"
     "manifest.json is the local review subset, not the original scoring population.\n"

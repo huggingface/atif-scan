@@ -12,7 +12,7 @@ from typing import get_type_hints
 import pytest
 from test_inspect import segment_trace
 
-SERVER_PATH = Path(__file__).resolve().parents[1] / "tools" / "atif_inspect_mcp.py"
+SERVER = "atif_scan.review.inspect_server"
 
 
 class RecordingServer:
@@ -37,7 +37,7 @@ def bound_server(monkeypatch):
     module = ModuleType("mcp.server.fastmcp")
     module.__dict__["FastMCP"] = RecordingServer
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", module)
-    namespace = runpy.run_path(str(SERVER_PATH))
+    namespace = runpy.run_module(SERVER)
     monkeypatch.setitem(
         namespace["serve"].__globals__,
         "load_trace",

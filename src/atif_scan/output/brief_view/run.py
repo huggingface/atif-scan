@@ -256,7 +256,7 @@ def _review_bundle(review: Doc) -> Lines:
         )
     return [
         *lines,
-        "→ nothing was sent anywhere. Next: tools/ask-fast-agent.sh --model MODEL --questions"
+        "→ nothing was sent anywhere. Next: atif-scan hunt --model MODEL --questions"
         " DIR --inspect-tool --jobs 8, then rerun with --answers DIR",
     ]
 

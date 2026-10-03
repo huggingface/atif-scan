@@ -25,6 +25,11 @@ PYTHONPATH=examples uv run atif-scan examples/synthetic.json \
   --task demo-pytest --plugin demo_pack:checks --rules examples/policy.json
 ```
 
+Two commands sit beside scanning: `atif-scan hunt` answers a question bundle with
+fast-agent ([follow-up questions](#follow-up-questions---questions---answers)) and
+`atif-scan labels` manages the label store ([improvement loop](docs/improvement-loop.md)).
+To scan an input actually named `labels` or `hunt`, write `./labels` or `./hunt`.
+
 ### Local copies (sync)
 
 Remote inputs (`hf://`, huggingface.co URLs, `harbor://jobs/…`) are **synced by default**.
@@ -911,8 +916,8 @@ Generate an MCP-ready review bundle without manually building a manifest:
 # Choose a new/empty private directory OUTSIDE the repository.
 atif-scan JOB --judge-prompts /private/review/run-1
 
-# Separate, opt-in provider call, run from this source checkout:
-tools/ask-fast-agent.sh --model MODEL --questions /private/review/run-1 --inspect-tool --jobs 8
+# Separate, opt-in provider call:
+atif-scan hunt --model MODEL --questions /private/review/run-1 --inspect-tool --jobs 8
 
 # Same original inputs/options: answers annotate, not rescore.
 atif-scan JOB --answers /private/review/run-1 --brief
@@ -962,7 +967,7 @@ umask 077
 REVIEW="$HOME/.cache/atif-scan/bundles/demo-run/rewarded-hack_hunt-MODEL-$(date -u +%Y%m%dT%H%M%SZ)"
 atif-scan JOB --judge-prompts "$REVIEW" --judge-scope rewarded --question hack_hunt
 # Explicit provider operation; replace MODEL with an approved judge model:
-tools/ask-fast-agent.sh --model MODEL --questions "$REVIEW" --inspect-tool --jobs 4
+atif-scan hunt --model MODEL --questions "$REVIEW" --inspect-tool --jobs 4
 atif-scan JOB --answers "$REVIEW" --brief
 ```
 
@@ -984,7 +989,7 @@ question**, for a human or any LLM to answer, and reads the answers back as anno
 REVIEW="$HOME/.cache/atif-scan/bundles/demo-run/questions-MODEL-$(date -u +%Y%m%dT%H%M%SZ)"
 umask 077
 atif-scan JOB --plugin atif_scan.packs.tb21:checks --questions "$REVIEW"      # write prompts
-tools/ask-fast-agent.sh --model MODEL --questions "$REVIEW" --jobs 4         # answer them
+atif-scan hunt --model MODEL --questions "$REVIEW" --jobs 4                  # answer them
 atif-scan JOB --plugin atif_scan.packs.tb21:checks --answers "$REVIEW" --brief # read back
 ```
 
@@ -1013,7 +1018,7 @@ opt-in review even when the scanner found no positive lookup:
 ```bash
 atif-scan JOB --questions /private/review/web-1 --question web_provenance
 # Optional provider operation, separate from offline prompt generation:
-tools/ask-fast-agent.sh --model MODEL --questions /private/review/web-1 --inspect-tool
+atif-scan hunt --model MODEL --questions /private/review/web-1 --inspect-tool
 atif-scan JOB --answers /private/review/web-1 --brief
 ```
 
@@ -1092,8 +1097,9 @@ steps enter the report. The free-text `reason` never does, since it may quote th
 The brief's REVIEW section adds the answer counts per question. **Answers never change
 findings, severities or DQ candidates.** Both flags bypass the result cache.
 
-`tools/ask-fast-agent.sh` sends each prompt once with `fast-agent go --model MODEL
---no-shell --no-subagents --json-schema …`, so the answering model has no tools and must
+`atif-scan hunt` sends each prompt once with `fast-agent go --model MODEL
+--no-shell --no-subagents --json-schema …` (`--fast-agent CMD` picks another
+command), so the answering model has no tools and must
 reply in the schema. It skips answered questions unless `--force`, runs `--jobs N` in
 parallel, and logs the first error line per failure to `ask-errors.log`. `--dry-run`
 lists what would be asked. `--model passthrough` checks the plumbing without a provider
@@ -1101,7 +1107,7 @@ lists what would be asked. `--model passthrough` checks the plumbing without a p
 
 By default the model sees only what's in the prompt, so if the deciding step is outside
 the excerpts it must answer `unclear`. With `--inspect-tool` it can look further.
-`tools/atif_inspect_mcp.py` is a **read-only MCP server bound to that one trajectory**,
+`atif_scan.review.inspect_server` is a **read-only MCP server bound to that one trajectory**,
 passed to fast-agent with `--stdio` in place of a shell. Its trace tools are:
 - `trace_outline`: one line per step.
 - `read_steps(first, last)`: masked steps, at most 8 per call.
@@ -1110,7 +1116,8 @@ passed to fast-agent with `--stdio` in place of a shell. Its trace tools are:
 Companion-history tools (`history_outline`, `read_history_file`, `search_history`) are
 also available for local Grok compaction archives (see *Recoverable Grok Build history*).
 The tools take no paths, run nothing, and wrap their output as untrusted data. The server
-needs `uv` and fetches `mcp<2` on first use, so the core stays stdlib-only. Each
+needs the optional `mcp` package (`pip install 'atif-scan[mcp]'`); without it, `hunt`
+starts it through `uv`, which fetches `mcp<2` on first use. The core stays stdlib-only. Each
 question's metadata records the local trajectory path for it; the index doesn't. Traces
 streamed with `--no-sync` have no local file, so they can't use the tool.
 

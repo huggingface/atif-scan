@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
-from pathlib import Path
 
+import pytest
+
+from atif_scan.cli import main
+from atif_scan.data import paths
 from atif_scan.review import labels as L
-
-TOOL = Path(__file__).resolve().parents[1] / "tools" / "labels.py"
-spec = importlib.util.spec_from_file_location("labels_tool", TOOL)
-assert spec and spec.loader
-tool = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(tool)
 
 
 def raw(trial="demo__a1", prop="reward_hack", value="hack", source="human", **extra):
@@ -156,7 +152,7 @@ def test_import_hunt_and_disagreement_bundle(tmp_path):
         )
     )
     out = tmp_path / "labels.jsonl"
-    assert tool.main(["import-hunt", str(bundle), str(key), str(out), "--ref", "hunt"]) == 0
+    assert main(["labels", "import-hunt", str(bundle), str(key), str(out), "--ref", "hunt"]) == 0
     found, invalid = L.load([out])
     assert invalid == 0
     assert {(x.trial, x.source, x.value, x.mechanism) for x in found} == {
@@ -190,7 +186,7 @@ def test_import_hunt_and_disagreement_bundle(tmp_path):
     )
     dest = tmp_path / "bundle"
     args = ["disagreements", str(scan), str(tmp_path / "root"), str(dest), "--jev", str(best)]
-    assert tool.main([*args, "--controls", "1"]) == 0
+    assert main(["labels", *args, "--controls", "1"]) == 0
     keyed = json.loads((dest / "key.json").read_text())
     groups = {v["trial"]: v["group"] for v in keyed.values()}
     assert {groups["x__1"], groups["x__2"], groups["x__3"]} == {"both", "jev_only", "scanner_only"}
@@ -209,7 +205,10 @@ def test_scanner_only_bundle_without_jev(tmp_path):
         json.dumps(report(("x__1", "high", []), ("x__2", "low", []), ("x__3", "low", [])))
     )
     dest = tmp_path / "bundle"
-    assert tool.main(["disagreements", str(scan), str(tmp_path), str(dest), "--controls", "1"]) == 0
+    assert (
+        main(["labels", "disagreements", str(scan), str(tmp_path), str(dest), "--controls", "1"])
+        == 0
+    )
     keyed = json.loads((dest / "key.json").read_text())
     groups = sorted(v["group"] for v in keyed.values())
     assert groups == ["control", "scanner_high"]
@@ -258,7 +257,9 @@ def test_import_hunt_reads_every_answered_question(tmp_path):
         )
     )
     out = tmp_path / "labels.jsonl"
-    assert tool.main(["import-hunt", str(tmp_path / "q"), str(key), str(out), "--ref", "x"]) == 0
+    assert (
+        main(["labels", "import-hunt", str(tmp_path / "q"), str(key), str(out), "--ref", "x"]) == 0
+    )
     found, _ = L.load([out])
     assert {(x.property, x.value, x.mechanism) for x in found} == {
         ("hack_attempt", "attempted", "verifier_access"),
@@ -277,6 +278,22 @@ def test_disagreements_skip_trials_already_labelled(tmp_path):
     done.write_text(json.dumps(raw(trial="x__1")) + "\n" + json.dumps(raw(trial="x__3")) + "\n")
     dest = tmp_path / "bundle"
     args = ["disagreements", str(scan), str(tmp_path), str(dest), "--controls", "5"]
-    assert tool.main([*args, "--exclude", str(done)]) == 0
+    assert main(["labels", *args, "--exclude", str(done)]) == 0
     keyed = json.loads((dest / "key.json").read_text())
     assert {v["trial"] for v in keyed.values()} == {"x__2"}
+
+
+def test_check_and_eval_default_to_the_label_store_and_its_splits(tmp_path, capsys):
+    with pytest.raises(SystemExit, match="no label files given"):
+        main(["labels", "check"])
+    store = paths.labels_dir()
+    store.mkdir(parents=True)
+    (store / "human.jsonl").write_text(json.dumps(raw(trial="a__1")) + "\n")
+    (store / "splits.json").write_text(json.dumps({"runs": {"r1": {"scanner": "eval"}}}))
+    assert main(["labels", "check"]) == 0
+    assert capsys.readouterr().out.startswith("1 labels (0 invalid lines)")
+    scan = tmp_path / "scan.json"
+    scan.write_text(json.dumps(report(("a__1", "high", ["x"]))))
+    assert main(["labels", "eval", "--scan", str(scan), "--format", "json"]) == 0
+    cells = json.loads(capsys.readouterr().out)["scanner"]["cells"]
+    assert list(cells) == ["reward_hack/eval/other"]

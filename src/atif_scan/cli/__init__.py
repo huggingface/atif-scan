@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..sources.harbor.files import SUBMISSION_BYTES, submission, text_label
 from ..sources.sync import default_sync_root
+from . import hunt, labels
 from .args import _check_combinations, build_parser, price
 from .inspect import inspect
 from .scan import scan
@@ -36,7 +38,14 @@ def _submission(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Do
     return {"name": name, **found}
 
 
+# Subcommands come first; scan an input with one of these names as ./labels or ./hunt.
+COMMANDS = {"labels": labels.main, "hunt": hunt.main}
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in COMMANDS:
+        return COMMANDS[argv[0]](argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     _check_combinations(parser, args)

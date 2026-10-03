@@ -87,7 +87,7 @@ def test_review_metadata_shows_counts_and_only_generic_next_steps():
     assert "4 review prompts written for 3 selected trials (scope rewarded); 1 skipped" in text
     assert "scope rewarded" in text
     assert "nothing was sent anywhere" in text
-    assert "tools/ask-fast-agent.sh --model MODEL --questions DIR" in text
+    assert "atif-scan hunt --model MODEL --questions DIR" in text
     assert "--inspect-tool --jobs 8, then rerun with --answers DIR" in text
     assert "/private" not in text
     assert colourise(text).plain == text

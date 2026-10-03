@@ -201,8 +201,7 @@ def test_companion_tools_are_bound_masked_framed_and_have_no_path_argument(local
     module = ModuleType("mcp.server.fastmcp")
     module.__dict__["FastMCP"] = RecordingServer
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", module)
-    script = Path(__file__).resolve().parents[1] / "tools" / "atif_inspect_mcp.py"
-    server = runpy.run_path(str(script))["serve"](local)
+    server = runpy.run_module("atif_scan.review.inspect_server")["serve"](local)
     outline = server.request("history_outline")
     file = next(f["file"] for f in outline["files"] if f["kind"] == "segment")
     page = server.request("read_history_file", file=file, limit=6000)

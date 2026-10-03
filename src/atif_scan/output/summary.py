@@ -64,8 +64,7 @@ def review_text(ov: Doc, review: Doc | None = None, dq: str = "high") -> list[st
                 )
             lines.append(f"{'':<10} no provider calls made; optional next steps:")
             lines.append(
-                f"{'':<10} tools/ask-fast-agent.sh --model MODEL --questions DIR"
-                " --inspect-tool --jobs 8"
+                f"{'':<10} atif-scan hunt --model MODEL --questions DIR --inspect-tool --jobs 8"
             )
             lines.append(f"{'':<10} rerun same inputs with --answers DIR")
 

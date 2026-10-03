@@ -248,7 +248,12 @@ def _check_glob(value: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="commands: `atif-scan labels …` (the label store) and `atif-scan hunt …` "
+        "(answer a question bundle with fast-agent); see their --help. To scan an input "
+        "named labels or hunt, write ./labels or ./hunt.",
+    )
     _input_arguments(parser)
     _check_arguments(parser)
     _output_arguments(parser)

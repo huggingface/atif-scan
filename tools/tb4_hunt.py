@@ -3,7 +3,7 @@
     uv run python tools/tb4_hunt.py pilot SCANS OUT [--cheat-manifest M --cheat-key K]
         [--open-tasks t1,t2,…] [--per-group N] [--seed S]
     atif-scan --manifest OUT/manifest.json --questions OUT/q --question hack_hunt …
-    tools/ask-fast-agent.sh --model MODEL --questions OUT/q --question hack_hunt --inspect-tool
+    atif-scan hunt --model MODEL --questions OUT/q --question hack_hunt --inspect-tool
     uv run python tools/tb4_hunt.py score OUT
 
 SCANS is a folder of atif-scan JSON reports of TB4 leaderboard rows (one per row, from

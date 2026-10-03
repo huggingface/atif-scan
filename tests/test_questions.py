@@ -4,11 +4,9 @@ Synthetic traces only; no model is called (a stub stands in for fast-agent)."""
 from __future__ import annotations
 
 import json
-import os
+import shlex
 import shutil
 import stat
-import subprocess
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,9 +17,11 @@ from atif_scan.review.answers import parse_answer
 from atif_scan.review.catalogue import BY_ID
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from atif_scan.data.jsonval import Doc
 
-SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "ask-fast-agent.sh"
+needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 LEAK = "https://github.com/harbor-framework/terminal-bench-2-1/tree/main/tasks/demo-task"
 
 
@@ -216,90 +216,100 @@ def test_answer_for_a_changed_trace_is_stale(job, tmp_path, capsys):
     assert row["status"] == "stale" and "answer" not in row
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
-def test_fast_agent_script_with_a_stub(job, tmp_path, capsys):
+def stub_fast_agent(tmp_path: Path, body: str) -> Path:
+    """A fake fast-agent: records its arguments one per line (a file per call: answers
+    run in parallel), then runs BODY."""
+    stub = tmp_path / "fake-fast-agent"
+    stub.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > {tmp_path}/args.$$.log\n{body}\n')
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    return stub
+
+
+def hunt(qdir: Path, stub: Path, *extra: str) -> int:
+    command = ["--model", "stub-model", "--questions", str(qdir), "--fast-agent", str(stub)]
+    return main(["hunt", *command, *extra])
+
+
+# Answers with the first enum value of the schema it's given, after a status line.
+ENUM_ANSWER = (
+    'while [[ $# -gt 0 ]]; do [[ "$1" == --json-schema ]] && s="$2"; shift; done\n'
+    "echo 'tool status line'\n"
+    "python3 -c \"import json,sys; e=json.load(open(sys.argv[1]))['properties']['answer']"
+    "['enum']; print(json.dumps({'answer': e[0], 'confidence': 'low', 'steps': [2], "
+    "'reason': 'stub'}))\" \"$s\""
+)
+
+
+@needs_bash
+def test_hunt_answers_each_question_once_with_a_stub(job, tmp_path, capsys):
     qdir = tmp_path / "q"
     ask(job, qdir, capsys)
-    stub = tmp_path / "fake-fast-agent"
-    # Answers with the first enum value of the schema it's given; records its arguments.
-    stub.write_text(
-        "#!/usr/bin/env bash\n"
-        f'echo "$@" >> {tmp_path}/calls.log\n'
-        'while [[ $# -gt 0 ]]; do [[ "$1" == --json-schema ]] && s="$2"; shift; done\n'
-        "python3 -c \"import json,sys; e=json.load(open(sys.argv[1]))['properties']['answer']"
-        "['enum']; print(json.dumps({'answer': e[0], 'confidence': 'low', 'steps': [2], "
-        "'reason': 'stub'}))\" \"$s\"\n"
-    )
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    env = {**os.environ, "PATH": os.environ["PATH"]}
-    run = subprocess.run(
-        [str(SCRIPT), "--model", "stub-model", "--questions", str(qdir), "--fast-agent", str(stub)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=True,
-    )
-    assert "answered 2 · failed 0" in run.stderr
-    calls = (tmp_path / "calls.log").read_text()
-    assert "--model stub-model" in calls and "--no-shell" in calls and "--json-schema" in calls
+    stub = stub_fast_agent(tmp_path, ENUM_ANSWER)
+    assert hunt(qdir, stub) == 0
+    assert "answered 2 · failed 0" in capsys.readouterr().err
+    calls = [log.read_text().splitlines() for log in tmp_path.glob("args.*.log")]
+    assert len(calls) == 2
+    args = calls[0]
+    assert args[:3] == ["go", "--model", "stub-model"]
+    assert "--no-shell" in args and "--no-subagents" in args and "--json-schema" in args
+    assert "--stdio" not in args
+    # Only the last JSON line is kept, not the status line before it.
+    answer = (qdir / "demo-task__aB1" / "lookup_used.answer.json").read_text()
+    assert answer.startswith("{") and answer.count("\n") == 1
     row = answers_of(job, qdir, capsys)["inputs"][0]["answers"][0]
     assert row["status"] == "answered" and row["answer"] == "used"
     # Answered questions aren't re-asked.
-    again = subprocess.run(
-        [str(SCRIPT), "--model", "stub-model", "--questions", str(qdir), "--fast-agent", str(stub)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=True,
-    )
-    assert "0 question(s) to ask" in again.stderr
+    assert hunt(qdir, stub) == 0
+    assert "0 question(s) to ask" in capsys.readouterr().err
     # The answering runs' own trajectories and temp files aren't questions (regression:
     # a failed run's `<question>.review.atif.json` was re-asked as a question).
     (qdir / "demo-task__aB1" / "lookup_used.review.atif.json").write_text("{}")
     (qdir / "demo-task__aB1" / "lookup_used.answer.json.tmp.1").write_text("{}")
-    again = subprocess.run(
-        [str(SCRIPT), "--model", "stub-model", "--questions", str(qdir), "--fast-agent", str(stub)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=True,
-    )
-    assert "0 question(s) to ask" in again.stderr
+    assert hunt(qdir, stub) == 0
+    assert "0 question(s) to ask" in capsys.readouterr().err
+    assert hunt(qdir, stub, "--force", "--dry-run") == 0
+    assert len(capsys.readouterr().out.split()) == 2
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
-def test_fast_agent_script_inspect_tool_binds_the_one_trace(job, tmp_path, capsys):
+@needs_bash
+def test_hunt_logs_only_the_first_error_line_of_a_failure(job, tmp_path, capsys):
+    qdir = tmp_path / "q"
+    ask(job, qdir, capsys)
+    stub = stub_fast_agent(tmp_path, "echo 'prompt text echoed'; echo 'Error: quota' >&2; exit 1")
+    assert hunt(qdir, stub, "--question", "lookup_used") == 0
+    assert "answered 0 · failed 1" in capsys.readouterr().err
+    log = (qdir / "ask-errors.log").read_text()
+    assert log.endswith("\tError: quota\n") and "prompt text" not in log
+    assert not list(qdir.glob("*/*.answer.json"))
+    # An `Error:` reply on stdout is a failure even with exit status 0.
+    stub = stub_fast_agent(tmp_path, "echo 'Error: model not found'")
+    assert hunt(qdir, stub, "--question", "lookup_used") == 0
+    assert "failed 1" in capsys.readouterr().err
+    assert not list(qdir.glob("*/*.answer.json"))
+
+
+def test_hunt_needs_a_question_bundle(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        main(["hunt", "--model", "m", "--questions", str(tmp_path)])
+    assert "no questions in" in capsys.readouterr().err
+
+
+@needs_bash
+def test_hunt_inspect_tool_binds_the_one_trace(job, tmp_path, capsys):
     qdir = tmp_path / "q"
     ask(job, qdir, capsys)
     meta = json.loads((qdir / "demo-task__aB1" / "lookup_used.json").read_text())
     trace_path = meta["trace_path"]
     assert trace_path.endswith("demo-task__aB1/trajectory.json")
     assert "trace_path" not in (qdir / "index.jsonl").read_text()
-    stub = tmp_path / "fake-fast-agent"
-    stub.write_text(
-        "#!/usr/bin/env bash\n"
-        f'printf "%s\\n" "$@" > {tmp_path}/args.log\n'
-        """echo '{"answer": "used", "confidence": "low", "steps": [], "reason": "x"}'\n"""
+    stub = stub_fast_agent(
+        tmp_path, """echo '{"answer": "used", "confidence": "low", "steps": [], "reason": "x"}'"""
     )
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    subprocess.run(
-        [
-            str(SCRIPT),
-            "--model",
-            "m",
-            "--questions",
-            str(qdir),
-            "--fast-agent",
-            str(stub),
-            "--inspect-tool",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    args = (tmp_path / "args.log").read_text().splitlines()
-    stdio = args[args.index("--stdio") + 1]
-    assert "atif_inspect_mcp.py" in stdio and trace_path in stdio
+    assert hunt(qdir, stub, "--inspect-tool", "--question", "lookup_used") == 0
+    [log] = tmp_path.glob("args.*.log")
+    args = log.read_text().splitlines()
+    stdio = shlex.split(args[args.index("--stdio") + 1])
+    assert stdio[-3:] == ["-m", "atif_scan.review.inspect_server", trace_path]
     assert "--no-shell" in args and "--shell" not in args
     assert args[args.index("--structured-tool-policy") + 1] == "always"
 

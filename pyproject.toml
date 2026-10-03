@@ -11,6 +11,10 @@ requires-python = ">=3.11"
 # loader, detectors, rules and engine import nothing outside the standard library.
 dependencies = ["huggingface_hub>=2.0.0", "rich>=15.0.0"]
 
+[project.optional-dependencies]
+# The read-only trace server behind `atif-scan hunt --inspect-tool` (else fetched with uv).
+mcp = ["mcp>=1.2,<2"]
+
 [project.scripts]
 atif-scan = "atif_scan.cli:main"
 atif-inspect = "atif_scan.evidence.extract:main"
