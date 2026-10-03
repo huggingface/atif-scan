@@ -30,7 +30,7 @@ detector or changing the engine.
 | `review.questions` | Follow-up and hunt questions: prompts, schemas, answer validation (blind questions show no findings) |
 | `review.labels` | The label store: schema, source precedence, run splits, scanner/Jev evaluation (see improvement-loop.md) |
 | `output.bundle` | `--judge-prompts`: the brief's review selection written as a question bundle |
-| `cli` | Picks inputs, loads trusted plugins, prints JSON or text |
+| `cli` | The command line: `args` (parser and option checks), `inputs` (manifests, paths, sync, tasks, plugins), `scan` (cached evaluation, the report document, judge bundles), `emit` (brief/overview/summary/detail as text or JSON), `inspect` (`--inspect`); `main` and `--submission` in the package |
 
 Keep these separate: parsing doesn't know about detectors, detectors don't know about
 rules, and only `output.document.report` decides what gets written out.
