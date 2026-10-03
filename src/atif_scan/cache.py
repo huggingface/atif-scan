@@ -76,13 +76,17 @@ def checks_signature(engine: Engine) -> list[list[object]]:
 
 class ResultCache:
     def __init__(
-        self, directory: Path, scanner_version: str, signature: list[list[object]]
+        self,
+        directory: Path,
+        scanner_version: str,
+        signature: list[list[object]],
+        code: str | None = None,
     ) -> None:
         self.directory = directory
-        # The report schema too: an item cached under an older layout must not be reused.
-        self.base = json.dumps(
-            [scanner_version, code_fingerprint(), SCHEMA_VERSION, signature], sort_keys=True
-        )
+        # The scanner's own code and the report schema too: an item cached by other code
+        # or under an older layout must not be reused.
+        code = code_fingerprint() if code is None else code
+        self.base = json.dumps([scanner_version, code, SCHEMA_VERSION, signature], sort_keys=True)
 
     def key(self, fingerprint: str, context: Context) -> str:
         material = json.dumps(

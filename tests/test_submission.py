@@ -9,7 +9,6 @@ import json
 import pytest
 from test_brief_cache import _item
 
-from atif_scan.cli import main
 from atif_scan.output.brief import brief, brief_text
 from atif_scan.sources.harbor.files import late_trials, submission
 from atif_scan.sources.harbor.listing import run_meta
@@ -144,21 +143,17 @@ def test_submission_filter_is_checked_against_every_trial():
     assert "reasoning effort medium isn't recorded per trial, so it isn't checked" in flat
 
 
-def test_submission_option_adds_its_jobs_to_the_inputs(tmp_path, monkeypatch, capsys):
+def test_submission_option_adds_its_jobs_to_the_inputs(tmp_path, capsys):
+    from atif_scan.cli import _submission, build_parser
+
     path = tmp_path / "sub.json"
     path.write_text(json.dumps({"source_jobs": [f"https://hub.harborframework.com/jobs/{V4}"]}))
-    seen = {}
-
-    def inspect(args):  # stop before any Hub call: only the expansion is under test
-        seen["paths"], seen["sub"] = args.paths, args.submission_doc
-        return 0
-
-    monkeypatch.setattr("atif_scan.cli.inspect", inspect)
-    assert main(["--submission", str(path), "--inspect"]) == 0
-    assert seen["paths"] == [f"harbor://jobs/{V4}"]
-    assert seen["sub"] == {"name": "sub", "jobs": [V4], "filter": {}}
+    parser = build_parser()
+    args = parser.parse_args(["--submission", str(path), "--inspect"])
+    assert _submission(parser, args) == {"name": "sub", "jobs": [V4], "filter": {}}
+    assert args.paths == [f"harbor://jobs/{V4}"]
     bad = tmp_path / "bad.json"
     bad.write_text("{}")
     with pytest.raises(SystemExit):
-        main(["--submission", str(bad), "--inspect"])
+        _submission(parser, parser.parse_args(["--submission", str(bad), "--inspect"]))
     assert "not a readable leaderboard submission" in capsys.readouterr().err

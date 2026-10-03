@@ -247,7 +247,7 @@ def test_cite_mask_secret_named_key_is_linear(linear):
     assert mask("token" * 100 + "=abcdef") == "token" * 100 + "=***"
 
 
-def test_citations_memoise_masking(monkeypatch):
+def test_citations_memoise_masking():
     from atif_scan.data.model import Channel, Locator
     from atif_scan.evidence import cite as module
 
@@ -266,16 +266,11 @@ def test_citations_memoise_masking(monkeypatch):
     }
     trace = parse_trace(raw)
     at = Locator(1, Channel.COMMAND, 0, field=0)
-    calls = []
-    real = module.mask
-    monkeypatch.setattr(
-        module, "mask", lambda text, known=frozenset(): calls.append(text) or real(text, known)
-    )
     module._masked.cache_clear()
     first = [module.cite(trace, at, frozenset()) for _ in range(3)]
     assert first[0] == first[1] == first[2]
     # match head, reasoning and result: each masked once, not once per citation
-    assert len(calls) == 3
+    assert module._masked.cache_info().misses == 3
     module._masked.cache_clear()
     assert module.cite(trace, at, frozenset()) == first[0]  # uncached: same output
 

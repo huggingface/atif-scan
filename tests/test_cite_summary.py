@@ -353,15 +353,10 @@ def test_cite_filter_does_not_change_fail_on(tmp_path, capsys):
 
 
 @pytest.mark.parametrize("fmt", ["text", "json", "plain"])
-def test_cite_hides_low_only_trace_blocks(tmp_path, capsys, monkeypatch, fmt):
-    from atif_scan import cli
+def test_cite_hides_low_only_trace_blocks(tmp_path, capsys, fmt):
+    # "plain": the text view without rich, rendered from the JSON document.
+    from atif_scan import to_text
 
-    if fmt == "plain":
-
-        def no_rich(*args, **kwargs):
-            raise ImportError
-
-        monkeypatch.setattr(cli, "render_rich", no_rich)
     for name, original in (
         ("low-only", trace(step("This is a benchmark."))),
         ("high-finding", HACKY),
@@ -386,12 +381,16 @@ def test_cite_hides_low_only_trace_blocks(tmp_path, capsys, monkeypatch, fmt):
         folder = tmp_path / name
         folder.mkdir()
         write(folder, "trajectory.json", raw)
-    args = [str(tmp_path), "--format", "json" if fmt == "json" else "text", "--no-cache"]
-    main([*args, "--detail"])
-    baseline = capsys.readouterr().out
+    args = [str(tmp_path), "--format", "text" if fmt == "text" else "json", "--no-cache"]
+
+    def run(*extra):
+        main([*args, *extra])
+        out = capsys.readouterr().out
+        return to_text(json.loads(out)) if fmt == "plain" else out
+
+    baseline = run("--detail")
     assert "low-only" in baseline and "clean" in baseline
-    main([*args, "--cite", "high"])
-    out = capsys.readouterr().out
+    out = run("--cite", "high")
     assert "low-only" not in out and "clean" not in out
     assert "high-finding" in out and "tamper.reward_write" in out
     if fmt == "json":

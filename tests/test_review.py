@@ -221,34 +221,25 @@ def test_unavailable_rewarded_trace_counted_not_cleared(population, tmp_path, ca
     }
 
 
-def test_nonlocal_trace_cannot_get_broken_mcp_binding(tmp_path, monkeypatch, capsys):
-    from atif_scan import cli
+def test_nonlocal_trace_cannot_get_broken_mcp_binding(tmp_path, capsys):
+    from atif_scan import Engine, builtin_detectors
     from atif_scan.checks import Context
     from atif_scan.data.loader import load_trace
+    from atif_scan.output.bundle import write_review
     from atif_scan.sources.inputs import Source
 
-    make_manifest(tmp_path, [("demo", 1, "echo hello", "model-a")])
-    source = Source("demo", lambda: load_trace(tmp_path / "demo.json"))
-    monkeypatch.setattr(cli, "inputs", lambda args: [(source, Context("demo", reward=1))])
-    # This source has no reward callback, so use recorded metadata as a remote listing would.
-    source = Source("demo", source.load, meta={"reward": 1, "task": "demo"})
-    assert (
-        main(
-            [
-                "unused",
-                "--judge",
-                str(tmp_path / "q"),
-                "--judge-scope",
-                "rewarded",
-                "--format",
-                "json",
-            ]
-        )
-        == 0
-    )
+    manifest = make_manifest(tmp_path, [("demo", 1, "echo hello", "model-a")])
+    assert main(["--manifest", str(manifest), "--format", "json"]) in (0, 1)
     doc = json.loads(capsys.readouterr().out)
-    assert doc["review"]["selected"] == doc["review"]["unavailable"] == 1
-    assert doc["review"]["written"] == 0
+    # No local path, recorded metadata only, as a remote listing would give.
+    source = Source("demo", lambda: load_trace(tmp_path / "demo.json"))
+    source = Source("demo", source.load, meta={"reward": 1, "task": "demo"})
+    records = [(source, Context("demo", reward=1))]
+    review = write_review(
+        tmp_path / "q", doc, records, Engine(builtin_detectors()), scope="rewarded"
+    )
+    assert review["selected"] == review["unavailable"] == 1
+    assert review["written"] == 0
 
 
 def test_slug_collisions_do_not_overwrite_questions(population, tmp_path, capsys):

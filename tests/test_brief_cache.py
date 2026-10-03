@@ -305,15 +305,17 @@ def test_brief_names_the_task_pack_for_a_known_dataset_without_loading_it():
     assert brief(doc("tb21.recall.task_catalog"))["suggested_packs"] == []
 
 
-def test_cache_key_changes_with_scanner_code(tmp_path, monkeypatch):
+def test_cache_key_changes_with_scanner_code(tmp_path):
     # Regression: parsing fixes (tool aliases, [REDACTED] values) reused results cached
     # before them, because no version string was bumped.
     from atif_scan import cache
     from atif_scan.checks import Context as Ctx
 
-    before = cache.ResultCache(tmp_path, "0", []).key("f", Ctx())
-    monkeypatch.setattr(cache, "code_fingerprint", lambda: "changed")
-    assert cache.ResultCache(tmp_path, "0", []).key("f", Ctx()) != before
+    def key(code):
+        return cache.ResultCache(tmp_path, "0", [], code=code).key("f", Ctx())
+
+    assert key("a") != key("b")
+    assert cache.ResultCache(tmp_path, "0", []).key("f", Ctx()) == key(cache.code_fingerprint())
 
 
 def _item(i, model, reward, status="available", matched=(), error=None, error_type=None):
