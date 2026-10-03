@@ -79,7 +79,7 @@ RATIO_BASIS = {
     ),
     "answer_only": "excl. reasoning (reasoning tokens reported)",
     "all_text": "incl. recorded reasoning (summaries read lower)",
-    "visible_only": "no reasoning text or token split recorded; lower bound cannot be checked",
+    "visible_only": "no usable reasoning split for this comparison; lower bound cannot be checked",
 }
 REASONING_LABELS = {
     "full": "full",

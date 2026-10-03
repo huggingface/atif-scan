@@ -165,7 +165,7 @@ def test_run_priced_at_declared_prices_when_no_cost_is_recorded(tmp_path, capsys
     assert "no cost recorded for any trial" not in out
     assert "TOKENS     3k input (2k cached) · 300 output, from 3 of 3 trials" in out
     assert "✓ recorded totals match the trajectories' in 3 of 3 compared trials" in out
-    assert "✓ trajectory totals equal the sum of their steps in 3 of 3 compared trials" in out
+    assert "✓ trajectory totals reconcile with recorded usage in 3 of 3 compared trials" in out
     # Token accounting comes first: cost is priced from it.
     assert out.index("TOKENS") < out.index("COST")
     # No recorded cost to check the prices against: said once, in the headline.
@@ -226,7 +226,7 @@ def test_trajectory_totals_that_differ_from_step_usage_are_flagged(tmp_path, cap
         in flat
     )
     assert "⚠ 1 of 3 trajectories have totals that disagree with their steps" in flat
-    assert "trajectory totals equal the sum of their steps" not in out
+    assert "trajectory totals reconcile with recorded usage" not in out
     # Steps that never record cached tokens leave them unknown, not a mismatching 0.
     raw = trajectory([step()], (100, 10, 50))
     raw["steps"][0]["metrics"] = {"prompt_tokens": 100, "completion_tokens": 10}

@@ -152,6 +152,8 @@ class Step:
     # block's: a harness falling back to another model mid-run keeps the configured
     # model in the header (Terminus 2 on TB2.1: 79 of 445 Fable 5 trials ran Opus 4.8).
     model_name: str | None = None
+    # Validated metrics.extra.reasoning_tokens for this step, including zero.
+    reasoning_tokens: int | None = None
 
     @property
     def authored(self) -> bool:
@@ -276,6 +278,13 @@ class Trace:
     stream_retry_attempts: int = 0
     # final_metrics.extra.llm_usage_calls_complete as the harness recorded it (None: absent).
     usage_calls_complete: bool | None = None
+    # Root-only totals after reconciling declared child usage with embedded records.
+    root_usage: Usage | None = None
+
+    @property
+    def authored_usage(self) -> Usage | None:
+        """Prefer reconciled root totals; canonical metrics remain unchanged."""
+        return self.root_usage or self.usage
 
     @cached_property
     def step_models(self) -> dict[str, int]:
@@ -336,8 +345,15 @@ class Trace:
         text but nothing to judge it by (no reasoning token count, or compacted totals);
         `withheld`: reasoning tokens reported, no text; `none`: neither (not exposed, or
         not a reasoning model: the trace can't tell)."""
-        chars = sum(len(s.reasoning.text) for s in self.steps if s.authored)
-        tokens = self.usage.reasoning_tokens if self.usage else None
+        steps = [s for s in self.steps if s.authored]
+        usage = self.authored_usage
+        tokens = usage.reasoning_tokens if usage else None
+        if tokens is None and (usage is None or usage.completion_tokens is None):
+            metered = [s for s in steps if s.completion_tokens is not None]
+            tokens = step_reasoning_tokens(metered)
+            if tokens is not None:
+                steps = metered
+        chars = sum(len(s.reasoning.text) for s in steps)
         if not chars:
             return "withheld" if tokens else "none"
         if not tokens or self.compacted:
@@ -387,3 +403,10 @@ class Trace:
     @property
     def unrecognized_tool_calls(self) -> int:
         return sum(call.tool == "other" for _, call in self.agent_calls())
+
+
+def step_reasoning_tokens(steps: list[Step]) -> int | None:
+    """A split only for a fully metered, reasoning-accounted comparison subset."""
+    if not steps or any(s.reasoning_tokens is None for s in steps):
+        return None
+    return sum(s.reasoning_tokens or 0 for s in steps)

@@ -244,7 +244,9 @@ def test_ratio_in_report_and_brief(tmp_path, capsys):
     assert "⚠ 1 trial (50.0%): agent text doesn't fit reported output tokens" in out
     assert "median 2.51 characters over 1 trace, reasoning excluded" in out
     # No reasoning text or count: the lower bound cannot be checked.
-    assert "median 20.01 characters" in out and "no reasoning text or token split recorded" in out
+    assert (
+        "median 20.01 characters" in out and "no usable reasoning split for this comparison" in out
+    )
     assert "reasoning: withheld (tokens only) 1 · not exposed 1 (" in out
     assert items["a"]["reasoning"] == "withheld" and items["b"]["reasoning"] == "none"
 

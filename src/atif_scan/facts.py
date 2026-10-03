@@ -205,8 +205,9 @@ def _step_pairs(trace: Trace) -> dict[str, tuple[int, int]]:
     output, cached. A kind only some steps record is left out (its step sum is a lower
     bound, not a total). Empty when they can't be compared like for like: no totals or
     no step usage, steps without usage, or compacted history (the steps cover only the
-    last context)."""
-    totals, steps = trace.usage, trace.step_usage
+    last context). Explicitly reconciled embedded child usage is excluded from the
+    totals here because the steps cover the root only."""
+    totals, steps = trace.authored_usage, trace.step_usage
     if not _has_totals(trace) or totals is None or steps is None:
         return {}
     if trace.calls_without_usage or trace.compacted:
@@ -226,8 +227,8 @@ def _step_pairs(trace: Trace) -> dict[str, tuple[int, int]]:
 def steps_vs_totals(trace: Trace) -> Doc:
     """How the trajectory's final_metrics totals compare with the sum of its steps' own
     usage: `same`; `steps_short` when the totals are larger in some kind and smaller in
-    none (the harness made LLM calls it didn't record as steps, e.g. retries), with the
-    input + output tokens outside the steps; `differs` otherwise; None when not
+    none, with the input + output tokens outside the comparison scope (not a causal
+    explanation); `differs` otherwise; None when not
     comparable (see _step_pairs)."""
     pairs = _step_pairs(trace)
     code, outside = None, None

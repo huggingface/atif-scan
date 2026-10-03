@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal, TypeGuard
 
 from . import jslit
 from .jsonval import JsonObject, as_list, as_object, as_str, compact_json, count, is_object, number
+from .loader_accounting import root_usage
 from .model import Channel, Content, Observation, Step, ToolCall, Trace, Usage
 from .web_inputs import parse_web_input
 
@@ -664,6 +665,7 @@ def parse_trace(value: object) -> Trace:
         stream_retry_steps=retry_steps,
         stream_retry_attempts=retry_attempts,
         usage_calls_complete=calls_complete,
+        root_usage=root_usage(value),
     )
 
 
@@ -713,6 +715,7 @@ def parse_step(index: int, value: object) -> Step:
         agent_only_fields=source != "agent"
         and any(raw.get(k) for k in ("tool_calls", "reasoning_content", "metrics")),
         completion_tokens=step_completion_tokens(raw.get("metrics")),
+        reasoning_tokens=step_reasoning(raw.get("metrics")),
         model_name=model_label(raw.get("model_name")),
     )
 
@@ -930,6 +933,16 @@ STEP_TOKEN_KINDS = ("prompt_tokens", "completion_tokens", "cached_tokens")
 
 def step_completion_tokens(metrics: object) -> int | None:
     return count(as_object(metrics).get("completion_tokens"))
+
+
+def step_reasoning(metrics: object) -> int | None:
+    """Do not invent zero or subtract an invalid split from completion tokens."""
+    raw = as_object(metrics)
+    completion = count(raw.get("completion_tokens"))
+    reasoning = count(as_object(raw.get("extra")).get("reasoning_tokens"))
+    if completion is None or reasoning is None or reasoning > completion:
+        return None
+    return reasoning
 
 
 def model_label(v: object) -> str | None:

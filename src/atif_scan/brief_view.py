@@ -74,7 +74,7 @@ REASONING = {
 RATIO_BASIS = {
     "answer_only": "reasoning excluded (its tokens are reported separately)",
     "all_text": "reasoning included (summaries read lower)",
-    "visible_only": "no reasoning text or token split recorded; lower bound cannot be checked",
+    "visible_only": "no usable reasoning split for this comparison; lower bound cannot be checked",
 }
 # Why a rewarded trial can't be cleared (report.uncleared_reasons), in plain words.
 NOT_CLEARED = {
@@ -879,7 +879,7 @@ def _steps_vs_totals(u: Doc) -> Lines:
     texts = []
     if not short and not differs:
         texts.append(
-            f"{OK} trajectory totals equal the sum of their steps in {compared:,} of"
+            f"{OK} trajectory totals reconcile with recorded usage in {compared:,} of"
             f" {plural(compared, 'compared trial')}"
         )
     if short:
