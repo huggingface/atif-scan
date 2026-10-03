@@ -12,7 +12,6 @@ import pytest
 from test_brief_cache import write_run
 from test_harbor_files import harbor_job, result_json
 
-from atif_scan import sources
 from atif_scan.cli import main
 from atif_scan.report import (
     _m,
@@ -23,13 +22,6 @@ from atif_scan.report import (
     summary_text,
 )
 from atif_scan.views import render_rich, render_summary_rich
-
-
-def _no_reload(monkeypatch):
-    def boom(path):
-        raise AssertionError("trace was reloaded")
-
-    monkeypatch.setattr(sources, "load_trace", boom)
 
 
 def _rule_status(out: str) -> list[str]:
@@ -93,7 +85,9 @@ def test_cache_misses_when_an_allowance_expression_or_plugin_source_changes(tmp_
     sys.modules.pop("review_plugin_mod", None)
 
 
-def test_cached_items_take_fresh_run_facts_from_result_json(tmp_path, capsys, monkeypatch):
+def test_cached_items_take_fresh_run_facts_from_result_json(
+    tmp_path, capsys, monkeypatch, forbid_trace_loads
+):
     # Regression: cost/error/duration from result.json were stored in the cached item and
     # went stale when result.json changed (the trajectory, and so the key, didn't).
     job = harbor_job(tmp_path, costs=(1.0, None, None))
@@ -104,7 +98,7 @@ def test_cached_items_take_fresh_run_facts_from_result_json(tmp_path, capsys, mo
     (job / "weird-folder-0" / "result.json").write_text(
         json.dumps(result_json("alpha", 1.0, "AgentTimeoutError", cost=7.5))
     )
-    _no_reload(monkeypatch)  # still a cache hit: only run facts changed
+    forbid_trace_loads()  # still a cache hit: only run facts changed
     main(args)
     second = {i["input_id"]: i for i in json.loads(capsys.readouterr().out)["inputs"]}
     assert second["weird-folder-0/agent"]["cost_usd"] == 7.5
@@ -114,11 +108,13 @@ def test_cached_items_take_fresh_run_facts_from_result_json(tmp_path, capsys, mo
     assert second["weird-folder-1/agent"] == first["weird-folder-1/agent"]
 
 
-def test_cached_and_fresh_scans_agree_on_exit_codes(tmp_path, capsys, monkeypatch):
+def test_cached_and_fresh_scans_agree_on_exit_codes(
+    tmp_path, capsys, monkeypatch, forbid_trace_loads
+):
     root = write_run(tmp_path)
     args = [str(root), "--format", "json", "--cache", str(tmp_path / "c"), "--fail-on", "high"]
     assert main(args) == 1
-    _no_reload(monkeypatch)
+    forbid_trace_loads()
     assert main(args) == 1
     capsys.readouterr()
 

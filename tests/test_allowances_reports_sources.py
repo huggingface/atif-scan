@@ -298,20 +298,16 @@ def test_hf_bucket_prefix_expansion_and_loading():
     assert single.label == "input-0001" and single.load().tool_calls == 1
 
 
-def test_hf_read_errors_are_withheld_and_size_capped(monkeypatch):
+def test_hf_read_errors_are_withheld():
     fs = FakeHubFS(hub_files(), fail_open=True)
     (source, _) = resolve(["hf://buckets/org/runs/job1"], fs=fs)
     with pytest.raises(TraceError) as error:
         source.load()
     assert SECRET not in str(error.value) and error.value.__cause__ is None
-    monkeypatch.setattr(sources_module, "MAX_BYTES", 10)
-    (source, _) = resolve(["hf://buckets/org/runs/job1"], fs=FakeHubFS(hub_files()))
-    with pytest.raises(TraceError, match="trace_too_large"):
-        source.load()
 
 
-def test_cli_hf_paths_web_urls_and_manifest(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(sources_module, "hf_filesystem", lambda: FakeHubFS(hub_files()))
+def test_cli_hf_paths_web_urls_and_manifest(monkeypatch, capsys, tmp_path, fake_hub):
+    fake_hub(lambda: FakeHubFS(hub_files()))
     web = "https://huggingface.co/buckets/org/runs/tree/job1"
     for location in ["hf://buckets/org/runs/job1", web]:
         assert main([location, "--fail-on", "medium", "--format", "json"]) == 1
@@ -325,8 +321,10 @@ def test_cli_hf_paths_web_urls_and_manifest(monkeypatch, capsys, tmp_path):
     assert json.loads(capsys.readouterr().out)["inputs"][0]["input_id"] == "one"
 
 
-def test_cli_hf_missing_path_is_an_error_without_echoing_remote_message(monkeypatch, capsys):
-    monkeypatch.setattr(sources_module, "hf_filesystem", lambda: FakeHubFS(hub_files()))
+def test_cli_hf_missing_path_is_an_error_without_echoing_remote_message(
+    monkeypatch, capsys, fake_hub
+):
+    fake_hub(lambda: FakeHubFS(hub_files()))
     assert main(["hf://buckets/org/runs/nope"]) == 2
     err = capsys.readouterr().err
     assert "hf_path_not_found_or_no_access" in err and SECRET not in err

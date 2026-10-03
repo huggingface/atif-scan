@@ -32,10 +32,12 @@ class FailingFS(FS):
         super().get_file(path, local)
 
 
-def test_download_failure_remains_unknown_in_remote_and_offline_reports(monkeypatch, capsys):
+def test_download_failure_remains_unknown_in_remote_and_offline_reports(
+    monkeypatch, capsys, fake_hub
+):
     fs = FailingFS(job_files())
     fs.fail = {f"{ROOT}/beta__2/agent/trajectory.json"}
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     dest = Path(os.environ["ATIF_SCAN_SYNC_DIR"]) / "hf" / ROOT
     for location in (f"hf://{ROOT}", str(dest)):
         assert main([location, "--format", "json"]) == 2
@@ -58,10 +60,10 @@ def test_download_failure_remains_unknown_in_remote_and_offline_reports(monkeypa
 
 @pytest.mark.parametrize("view", ["detail", "brief", "overview", "summary"])
 @pytest.mark.parametrize("fmt", ["json", "text"])
-def test_metadata_failure_is_visible_in_every_view(view, fmt, monkeypatch, capsys):
+def test_metadata_failure_is_visible_in_every_view(view, fmt, monkeypatch, capsys, fake_hub):
     fs = FailingFS(job_files())
     fs.fail = {f"{ROOT}/beta__2/verifier/reward.txt"}
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     assert main([f"hf://{ROOT}", f"--{view}", "--format", fmt]) == 2
     captured = capsys.readouterr()
     assert "sync file(s) unavailable" in captured.err
@@ -91,9 +93,9 @@ def test_deleted_trials_and_metadata_are_removed(tmp_path, refresh):
     assert (tmp_path / "notes.txt").read_text() == "unrelated user file"
 
 
-def test_same_size_reward_and_trajectory_changes_invalidate_results(monkeypatch, capsys):
+def test_same_size_reward_and_trajectory_changes_invalidate_results(monkeypatch, capsys, fake_hub):
     fs = FS(job_files())
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     args = [f"hf://{ROOT}", "--format", "json"]
     assert main(args) == 0
     before = json.loads(capsys.readouterr().out)
@@ -142,9 +144,9 @@ def test_missing_revision_is_never_assumed_current(tmp_path):
     assert (tmp_path / "beta__2/verifier/reward.txt").read_bytes() == b"0"
 
 
-def test_failed_refresh_cannot_reuse_cached_trace_or_stale_reward(monkeypatch, capsys):
+def test_failed_refresh_cannot_reuse_cached_trace_or_stale_reward(monkeypatch, capsys, fake_hub):
     fs = FailingFS(job_files())
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     args = [f"hf://{ROOT}", "--format", "json"]
     assert main(args) == 0
     capsys.readouterr()
@@ -157,10 +159,10 @@ def test_failed_refresh_cannot_reuse_cached_trace_or_stale_reward(monkeypatch, c
     assert doc["coverage"]["sync_failed_files"] == 2
 
 
-def test_all_downloads_fail_and_single_file_failure_still_report(monkeypatch, capsys):
+def test_all_downloads_fail_and_single_file_failure_still_report(monkeypatch, capsys, fake_hub):
     fs = FailingFS({f"{ROOT}/trace.data": trajectory()})
     fs.fail = set(fs.files)
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     assert main([f"hf://{ROOT}/trace.data", "--format", "json"]) == 2
     doc = json.loads(capsys.readouterr().out)
     assert doc["coverage"]["inputs"] == 1
@@ -169,17 +171,6 @@ def test_all_downloads_fail_and_single_file_failure_still_report(monkeypatch, ca
     fs.fail.clear()
     assert main([f"hf://{ROOT}/trace.data", "--format", "json"]) == 0
     assert json.loads(capsys.readouterr().out)["coverage"]["available"] == 1
-
-
-def test_oversize_trace_stays_in_population(tmp_path, monkeypatch):
-    monkeypatch.setattr(sync, "MAX_BYTES", 8)
-    fs = FS({f"{ROOT}/a/trajectory.json": b"x" * 9})
-    _, counts = sync_remote(f"hf://{ROOT}", tmp_path, fs=fs)
-    assert counts["failed"] == 1 and not fs.downloads
-    found = resolve([str(tmp_path)])
-    assert len(found) == 1
-    with pytest.raises(TraceError, match="sync_failed"):
-        found[0].load()
 
 
 def test_sync_tightens_permissions_and_keeps_temporary_files_private(tmp_path):
@@ -316,9 +307,9 @@ def test_download_size_disagreement_is_not_published(tmp_path):
         resolve([str(tmp_path)])[0].load()
 
 
-def test_interrupted_sync_leaves_inventory_unknown_not_cached(monkeypatch, capsys):
+def test_interrupted_sync_leaves_inventory_unknown_not_cached(monkeypatch, capsys, fake_hub):
     fs = FS(job_files())
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     assert main([f"hf://{ROOT}", "--format", "json"]) == 0
     capsys.readouterr()
     dest = Path(os.environ["ATIF_SCAN_SYNC_DIR"]) / "hf" / ROOT

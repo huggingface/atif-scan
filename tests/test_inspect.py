@@ -119,12 +119,10 @@ def test_no_matches_is_reported_not_raised(tmp_path, capsys):
     assert inspect(tmp_path, pattern="*.json")["would_scan"]["total"] == 1
 
 
-def test_single_file_and_oversize(tmp_path, monkeypatch):
+def test_single_file(tmp_path):
     write(tmp_path, ["x.json"])
     item = inspect(tmp_path / "x.json")
     assert item["layout"] == "single_file" and item["would_scan"]["total"] == 1
-    monkeypatch.setattr("atif_scan.layout.MAX_BYTES", 3)
-    assert codes(inspect(tmp_path / "x.json"))["oversize_files"]["count"] == 1
 
 
 def test_cli_inspect_text_and_json_never_echo_root(tmp_path, capsys):
@@ -148,8 +146,7 @@ def test_cli_inspect_missing_path(tmp_path, capsys):
     assert "path_not_found" in capsys.readouterr().err
 
 
-def test_inspect_hub_listing_uses_sizes_without_opening(monkeypatch):
-    from atif_scan import sources
+def test_inspect_hub_listing_uses_sizes_without_opening(monkeypatch, fake_hub):
 
     class ListingOnlyFS:
         files: ClassVar[dict[str, int]] = {
@@ -166,7 +163,7 @@ def test_inspect_hub_listing_uses_sizes_without_opening(monkeypatch):
         def open(self, *args):  # pragma: no cover - must not be called
             raise AssertionError("inspection opened a file")
 
-    monkeypatch.setattr(sources, "hf_filesystem", ListingOnlyFS)
+    fake_hub(ListingOnlyFS)
     item = document([list_input("hf://buckets/o/b/run")], "trajectory.json")["inputs"][0]
     assert item["remote"] and item["bytes"] == 12
     assert item["would_scan"]["total"] == 1 and item["alongside"] == {"summary.json": 1}

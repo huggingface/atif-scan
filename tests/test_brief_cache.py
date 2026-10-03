@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from atif_scan import sources
 from atif_scan.cli import main
 from atif_scan.estimates import cost_estimate, missing_activity
 
@@ -186,7 +185,9 @@ def test_brief_json(tmp_path, capsys):
     assert "integrity.history_compacted" in b["recording"]
 
 
-def test_result_cache_skips_rescans_and_invalidates(tmp_path, capsys, monkeypatch):
+def test_result_cache_skips_rescans_and_invalidates(
+    tmp_path, capsys, monkeypatch, forbid_trace_loads
+):
     root = write_run(tmp_path)
     cache = tmp_path / "cache"
     args = [str(root), "--format", "json", "--cache", str(cache)]
@@ -194,10 +195,7 @@ def test_result_cache_skips_rescans_and_invalidates(tmp_path, capsys, monkeypatc
     first = json.loads(capsys.readouterr().out)["inputs"]
     assert len(list(cache.rglob("*.json"))) == 3
 
-    def boom(path):  # any trace load now means a cache miss
-        raise AssertionError("trace was reloaded")
-
-    monkeypatch.setattr(sources, "load_trace", boom)
+    forbid_trace_loads()  # any trace load now means a cache miss
     main(args)
     assert json.loads(capsys.readouterr().out)["inputs"] == first
     # A different check set, or --cite, must not reuse cached results.

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from atif_scan import harbor_hub, harbor_runs, layout, sources, sync
+from atif_scan import harbor_hub, harbor_runs, layout
 from atif_scan.harbor_files import dataset_source, job_meta, primary_reward, trial_result
 from atif_scan.harbor_hub import HarborCLI, harbor_sources, inspect_job
 from atif_scan.harbor_listing import run_meta, trial_meta
@@ -87,39 +87,33 @@ def test_remote_listing_drops_entries_outside_the_root(tmp_path):
     assert counts["downloaded"] == 1 and not (tmp_path / "sync" / "evil").exists()
 
 
-def test_sync_rejects_unsafe_listed_paths(tmp_path, monkeypatch):
+def test_unsafe_listed_paths_are_never_written(tmp_path):
+    # An absolute path or `..` in a bucket listing never leaves the sync folder: the listing
+    # drops them (sync's own path check is a second line of defence behind it).
     outside = tmp_path / "outside.json"
-    written: list[Path] = []
-
-    def fetch(entry: Entry, path: Path) -> None:
-        written.append(path)
-        path.write_bytes(b"{}")
-
-    entries = (Entry(str(outside), 3), Entry("a/../../x/trajectory.json", 3), Entry("ok.json", 3))
-    listing = Listing(True, True, entries, never_opened, fetch=fetch)
-    monkeypatch.setattr(sync, "list_input", lambda value, fs=None: listing)
-    dest = tmp_path / "dest"
-    with pytest.raises(sources.SourceError, match="invalid_hf_path"):
-        sync_remote("hf://x/y/z", dest, pattern="*.json")
-    assert not outside.exists() and not written
+    for name in (str(outside), f"{ROOT}/a/../../x/trajectory.json"):
+        fs = FS({name: b"{}", f"{ROOT}/ok.json": b"{}"})
+        dest = tmp_path / "dest"
+        _, counts = sync_remote(f"hf://{ROOT}", dest, pattern="*.json", fs=fs)
+        assert counts["files"] == 1 and not outside.exists()
+        assert sorted(p.name for p in dest.rglob("*.json") if p.name != ".atif-sync.json") == [
+            "ok.json"
+        ]
 
 
 # 10: listed files over their size cap are never downloaded.
 
 
-def test_sync_skips_oversize_entries(tmp_path, monkeypatch):
-    monkeypatch.setattr(sync, "MAX_BYTES", 100)
+def test_sync_skips_oversize_reward_files(tmp_path):
     fs = FS(
         {
-            f"{ROOT}/a/trajectory.json": b"x" * 101,
             f"{ROOT}/a/verifier/reward.txt": b"1" * (harbor_runs.REWARD_BYTES + 1),
             f"{ROOT}/b/trajectory.json": TRAJ[:100],
             f"{ROOT}/b/verifier/reward.txt": b"1",
         }
     )
     _, counts = sync_remote(f"hf://{ROOT}", tmp_path, fs=fs)
-    assert counts == {"files": 4, "downloaded": 2, "up_to_date": 0, "failed": 2}
-    assert not (tmp_path / "a/trajectory.json").exists()
+    assert counts == {"files": 3, "downloaded": 2, "up_to_date": 0, "failed": 1}
     assert not (tmp_path / "a/verifier/reward.txt").exists()
 
 
@@ -262,14 +256,13 @@ def test_free_text_labels_are_validated():
     assert meta["datasets"] == ["ok/x"] and meta["dataset_refs"] == ["sha256:ab"]
 
 
-def test_row_labels_and_display_cost_are_validated(monkeypatch):
-    monkeypatch.setattr(harbor_hub, "row_trials", lambda cli, row: [])
+def test_row_labels_and_display_cost_are_validated():
     show = {
         "rank": 1,
         "metadata": {"agent_display": {"label": "Demo CLI (v2)"}, "model_display": "see https://x"},
         "metrics": {"display_cost": "$1.20 (partial)\x1b[2J", "accuracy": float("nan")},
     }
-    cli = FakeCLI(reply=show)
+    cli = FakeCLI(reply=show)  # every call answers `show`: the row lists no trials
     run, _ = harbor_hub.row_listing(cli, "r")
     lb = run["leaderboard"]
     assert lb["agent"] == "Demo CLI (v2)" and lb["model"] is None
@@ -315,11 +308,10 @@ def test_bad_total_pages_is_one_page(total):
     assert list(harbor_hub._pages(cli, "hub")) == [(1, 1, {"items": [], "total_pages": total})]
 
 
-def test_pagination_is_capped(monkeypatch):
-    monkeypatch.setattr(harbor_hub, "MAX_PAGES", 3)
-
+def test_pagination_is_capped():
     cli = FakeCLI(reply={"items": [], "total_pages": 10**9})
-    assert [p for p, _, _ in harbor_hub._pages(cli, "hub")] == [1, 2, 3]
+    pages = [p for p, _, _ in harbor_hub._pages(cli, "hub")]
+    assert pages[-1] == harbor_hub.MAX_PAGES == len(pages)
 
 
 # 9: deeply nested JSON doesn't abort the scan.

@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from atif_scan import sources
 from atif_scan.cli import main
 from atif_scan.sources import SourceError
 from atif_scan.sync import sync_remote, sync_target
@@ -130,9 +129,9 @@ def test_sync_target_is_confined_to_the_sync_root(tmp_path):
         sync_target("hf://buckets/o/../../etc", tmp_path)
 
 
-def test_cli_syncs_by_default_and_rescans_from_the_copy(tmp_path, monkeypatch, capsys):
+def test_cli_syncs_by_default_and_rescans_from_the_copy(tmp_path, monkeypatch, capsys, fake_hub):
     fs = FS(job_files())
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     root = Path(os.environ["ATIF_SCAN_SYNC_DIR"])
     assert main([f"hf://{ROOT}", "--format", "json"]) == 0
     first = json.loads(capsys.readouterr().out)
@@ -149,9 +148,9 @@ def test_cli_syncs_by_default_and_rescans_from_the_copy(tmp_path, monkeypatch, c
     assert list((root / "results").rglob("*.json"))  # results cached under the sync root
 
 
-def test_no_sync_streams_without_keeping_files(tmp_path, monkeypatch, capsys):
+def test_no_sync_streams_without_keeping_files(tmp_path, monkeypatch, capsys, fake_hub):
     fs = FS(job_files())
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     root = Path(os.environ["ATIF_SCAN_SYNC_DIR"])
     assert main([f"hf://{ROOT}", "--no-sync", "--format", "json"]) == 0
     items = json.loads(capsys.readouterr().out)["inputs"]
@@ -159,9 +158,9 @@ def test_no_sync_streams_without_keeping_files(tmp_path, monkeypatch, capsys):
     assert not (root / "hf").exists()
 
 
-def test_sync_dir_flag(tmp_path, monkeypatch, capsys):
+def test_sync_dir_flag(tmp_path, monkeypatch, capsys, fake_hub):
     fs = FS(job_files())
-    monkeypatch.setattr(sources, "hf_filesystem", lambda: fs)
+    fake_hub(lambda: fs)
     assert main([f"hf://{ROOT}", "--sync-dir", str(tmp_path / "mine"), "--format", "json"]) == 0
     capsys.readouterr()
     assert (tmp_path / "mine" / "hf" / ROOT / "beta__2" / "verifier" / "reward.txt").is_file()

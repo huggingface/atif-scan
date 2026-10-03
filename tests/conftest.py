@@ -38,3 +38,33 @@ def linear():
         assert large < 0.05 or large < ratio * small, f"{small:.4f}s -> {large:.4f}s at 4x"
 
     return check
+
+
+# The two seams tests replace, named once: moving a module means editing these paths only.
+# Library calls take `fs=` directly; these are for tests that drive the whole CLI.
+HF_FILESYSTEM = "atif_scan.sources.hf_filesystem"
+LOAD_TRACE = "atif_scan.sources.load_trace"
+
+
+@pytest.fixture
+def fake_hub(monkeypatch):
+    """`fake_hub(factory)`: the CLI's Hugging Face filesystem becomes `factory()` (a fake
+    with the HfFileSystem calls the code uses)."""
+
+    def install(factory):
+        monkeypatch.setattr(HF_FILESYSTEM, factory)
+
+    return install
+
+
+@pytest.fixture
+def forbid_trace_loads(monkeypatch):
+    """Call it to make any further trace load fail: what follows must be a cache hit."""
+
+    def install():
+        def boom(path):
+            raise AssertionError("trace was reloaded")
+
+        monkeypatch.setattr(LOAD_TRACE, boom)
+
+    return install
