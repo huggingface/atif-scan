@@ -31,6 +31,7 @@ from .harbor_files import (
     trial_ledger,
     trial_result,
 )
+from .harbor_listing import SAVED_LISTING, saved_listing
 from .jsonval import Doc, as_object, number
 
 if TYPE_CHECKING:
@@ -279,7 +280,6 @@ def saved_hub_listings(listing: Listing) -> dict[str, SavedRun]:
     trials of the folder it sits in or of its `trials/` subfolder (see hub_trial).
     Unreadable files are skipped: those trials simply lack the facts."""
     # harbor_hub imports sources, which imports this module.
-    from .harbor_hub import SAVED_LISTING, saved_listing  # noqa: PLC0415 - import cycle
 
     if not listing.directory or listing.reader is None:
         return {}

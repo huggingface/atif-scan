@@ -19,11 +19,10 @@ from atif_scan.report import (
     citation_lines,
     overview,
     overview_text,
-    render_rich,
-    render_summary_rich,
     summary,
     summary_text,
 )
+from atif_scan.views import render_rich, render_summary_rich
 
 
 def _no_reload(monkeypatch):

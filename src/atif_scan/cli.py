@@ -21,7 +21,7 @@ from .checks import Context, Severity, Status, check_pattern, check_selected, id
 from .cite import citations
 from .detectors import builtin_detectors
 from .engine import Engine, effective_context
-from .facts import assemble, recorded_facts, run_facts, trace_facts, trial_reward, trial_task
+from .facts import recorded_facts, run_facts, trace_facts, trial_reward, trial_task
 from .harbor_files import SUBMISSION_BYTES, submission, text_label
 from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .history import history_counts
@@ -33,13 +33,12 @@ from .policy import load_rules
 from .questions import BY_ID, Answers, Writer
 from .questions import tally as answer_tally
 from .report import (
+    assemble,
     document,
     filter_findings,
     inspection_text,
     overview,
     overview_text,
-    render_rich,
-    render_summary_rich,
     report,
     summary,
     summary_text,
@@ -58,6 +57,7 @@ from .sources import (
     resolve,
 )
 from .sync import default_sync_root, sync_remote, sync_target
+from .views import render_rich, render_summary_rich
 from .web_activity import web_activity
 
 if TYPE_CHECKING:

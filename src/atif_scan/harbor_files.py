@@ -23,7 +23,6 @@ from datetime import datetime
 from itertools import pairwise
 
 from .accounting import TOKEN_KEYS, harbor_accounting
-from .checks import identifier
 from .jsonval import (
     Doc,
     JsonObject,
@@ -31,6 +30,7 @@ from .jsonval import (
     as_object,
     as_str,
     count,
+    identifier,
     is_object,
     load_object,
     number,

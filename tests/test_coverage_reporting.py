@@ -23,9 +23,9 @@ from atif_scan.report import (
     filter_findings,
     footer,
     headline,
-    render_rich,
     unresolved,
 )
+from atif_scan.views import render_rich
 
 PRIVATE_TEXT = "private-trajectory-marker"
 

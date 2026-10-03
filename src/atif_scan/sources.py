@@ -31,7 +31,6 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 from urllib.parse import unquote, urlsplit
 
-from .checks import identifier
 from .facts import listed_facts
 from .harbor_runs import (
     REWARD_BYTES,
@@ -44,7 +43,7 @@ from .harbor_runs import (
     trial_details,
     trial_folder,
 )
-from .jsonval import Doc, count
+from .jsonval import Doc, count, identifier
 from .loader import MAX_BYTES, TraceError, load_bytes, load_trace
 
 if TYPE_CHECKING:

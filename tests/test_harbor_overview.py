@@ -13,7 +13,8 @@ import pytest
 from test_brief import section
 
 from atif_scan.cli import main
-from atif_scan.harbor_hub import job_id, overrides
+from atif_scan.harbor_files import overrides
+from atif_scan.harbor_hub import job_id
 from atif_scan.report import accuracy
 
 if TYPE_CHECKING:
@@ -497,7 +498,7 @@ def test_local_copy_of_a_hub_job_keeps_hub_facts(harbor, tmp_path, capsys):
     """A synced job scanned from its folder reports the same task/reward/error facts as a
     harbor:// scan (the listing is saved next to the trajectories): reward-gated rules and
     DQ candidates don't turn unknown on a rescan."""
-    from atif_scan.harbor_hub import SAVED_LISTING
+    from atif_scan.harbor_listing import SAVED_LISTING
 
     data = json.loads((tmp_path / "data.json").read_text())
     data["show"]["config"]["agents"][0]["env"] = {"OPENAI_API_KEY": "sk-proj-secret1234567890"}
@@ -540,7 +541,8 @@ def test_row_syncs_sharing_a_job_keep_each_others_listing_rows(tmp_path):
     trials. The sidecar used to be replaced by the last row's rows, so a later scan of
     the job folder lost the other rows' tasks and every task-scoped check went unknown
     (TB2.1: 1,779 of 2,219 trials of one combined job)."""
-    from atif_scan.harbor_hub import SAVED_LISTING, save_listing, saved_listing
+    from atif_scan.harbor_hub import save_listing
+    from atif_scan.harbor_listing import SAVED_LISTING, saved_listing
 
     def row(n: int, task: str) -> Doc:
         tid = f"00000000-0000-4000-8000-{n:012d}"

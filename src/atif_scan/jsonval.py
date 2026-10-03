@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from typing import Any, TypeGuard, cast
 
@@ -89,3 +90,14 @@ def compact_json(value: object) -> str | None:
         )
     except (ValueError, TypeError, RecursionError):
         return None
+
+
+def identifier(value: str) -> str:
+    """A safe identifier (check IDs, task names, hub IDs): reports echo it, so its shape is
+    validated, not trusted."""
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}", value) is None
+    ):
+        raise ValueError("invalid_identifier")
+    return value

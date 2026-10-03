@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from .checks import identifier
+from .jsonval import identifier
 from .loader import MAX_BYTES
 from .sources import Entry, Listing, label_for, selected
 

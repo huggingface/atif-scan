@@ -9,19 +9,11 @@ from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Protocol
 
+from .jsonval import identifier
 from .model import Locator, Trace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-
-def identifier(value: str) -> str:
-    if (
-        not isinstance(value, str)
-        or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}", value) is None
-    ):
-        raise ValueError("invalid_identifier")
-    return value
 
 
 def check_pattern(value: str) -> str:

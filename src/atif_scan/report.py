@@ -9,12 +9,13 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from typing import IO, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast
 
 from .checks import Severity, Status, check_selected
+from .facts import TAIL
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from .checks import CheckSpec
     from .engine import Assessment
@@ -123,6 +124,14 @@ def recording_gaps(items: Sequence[Doc]) -> Doc:
         "trials": sum(bool(row & set(RECORDING_OVERLAP.values())) for row in rows),
         **{key: sum(check in row for row in rows) for key, check in RECORDING_OVERLAP.items()},
     }
+
+
+def assemble(scanned: Mapping[str, object], facts: Mapping[str, object]) -> Doc:
+    """The report item: cacheable scan results with fresh run facts in their place."""
+    head = {k: v for k, v in scanned.items() if k not in TAIL}
+    item = {**head, **facts, **{k: scanned[k] for k in TAIL}}
+    item["recording_gaps"] = recording_gaps([item])
+    return item
 
 
 def coverage_summary(counts: Doc, legacy_count: int) -> str:
@@ -449,13 +458,6 @@ def to_text(doc: Doc) -> str:
         lines += [f"   {tally(group)}", ""]
     lines.append(footer(doc))
     return "\n".join(lines) + "\n"
-
-
-def render_rich(doc: Doc, file: IO[str] | None = None) -> None:
-    """Rich view; requires the optional `pretty` extra (ImportError without it)."""
-    from .rich_view import render  # noqa: PLC0415 - rich is optional: import it only here
-
-    render(doc, file)
 
 
 # --- Inspection view --------------------------------------------------------------------
@@ -789,16 +791,6 @@ def summary_tail_lines(s: Doc) -> list[str]:
 def summary_text(s: Doc) -> str:
     lines = [*summary_head_lines(s), *_detail_lines(s), *summary_tail_lines(s)]
     return "\n".join(lines) + "\n"
-
-
-def render_summary_rich(s: Doc, file: IO[str] | None = None) -> bool:
-    """Rich summary on a terminal; False (nothing printed) when rich is missing or the
-    output isn't a terminal, so the caller prints `summary_text`."""
-    try:
-        from .rich_view import render_summary  # noqa: PLC0415 - rich is optional
-    except ImportError:
-        return False
-    return render_summary(s, file)
 
 
 # --- Run overview (the "super-summary") -------------------------------------------------

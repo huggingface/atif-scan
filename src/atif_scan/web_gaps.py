@@ -2,9 +2,9 @@
 
 from dataclasses import dataclass
 
-from .detectors.web import runner_status_only, web_outcomes_recorded
 from .jsonval import Doc
 from .model import Content, Step, ToolCall, Trace
+from .web_results import runner_status_only, web_outcomes_recorded
 
 
 @dataclass(frozen=True)

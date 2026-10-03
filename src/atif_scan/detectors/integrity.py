@@ -17,14 +17,18 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from ..checks import CheckSpec, Context, Detection, Detector, Severity, Status
-from ..model import Channel, Locator, Trace, step_reasoning_tokens
+from ..facts import output_ratio
+from ..model import Channel, Locator, Trace
 from ..web_inputs import web_input
-from .web import (
+from ..web_results import (
     WebResultState,
     recorded_script_failure,
     web_outcomes_recorded,
     web_result_state,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # A run is "smeared" when at least this fraction of consecutive timestamps are identical.
 SMEAR_FRACTION = 0.9
@@ -260,55 +264,6 @@ def tokens_exceed_recorded_calls(trace: Trace) -> Detection:
 # Outside these bounds the declared completion tokens and the recorded text disagree.
 MIN_CHARS_PER_TOKEN = 1.0
 MAX_CHARS_PER_TOKEN = 8.0
-
-
-@dataclass(frozen=True)
-class OutputRatio:
-    """Agent-authored characters per completion token.
-
-    Unrecorded output (hidden reasoning, compacted history, dropped steps) only *lowers*
-    the ratio, so a high ratio is always meaningful: more text than the reported tokens
-    could encode. A low ratio is only meaningful when reasoning is accounted for.
-    `answer_only`: reasoning text is excluded; the denominator is visible output,
-    either recorded separately or obtained by subtracting reported reasoning tokens."""
-
-    chars: int
-    tokens: int
-    answer_only: bool
-    low_verifiable: bool
-    separate_visible: bool = False
-
-    @property
-    def value(self) -> float:
-        return self.chars / self.tokens
-
-
-def output_ratio(trace: Trace) -> OutputRatio | None:
-    """None when no completion tokens are reported (or none remain after reasoning)."""
-    agent = [s for s in trace.steps if s.authored]
-    usage = trace.authored_usage
-    if usage is not None and usage.completion_tokens is not None:
-        steps, tokens, whole = agent, usage.completion_tokens, True
-    else:  # per-step metrics: compare only the steps that report tokens
-        steps = [s for s in agent if s.completion_tokens is not None]
-        tokens, whole = sum(s.completion_tokens or 0 for s in steps), False
-    reasoning = (
-        usage.reasoning_tokens if usage is not None and whole else step_reasoning_tokens(steps)
-    )
-    chars = sum(
-        len(s.message.text) + sum((c.raw_argument_chars or 0) for c in s.calls) for s in steps
-    )
-    separate = bool(whole and usage and usage.completion_basis == "separate_visible")
-    answer_only = separate or reasoning is not None
-    if not separate and reasoning is not None:
-        tokens -= reasoning
-    if not answer_only:
-        chars += sum(len(s.reasoning.text) for s in steps)
-    if tokens <= 0:
-        return None
-    # Compacted final totals include calls the recorded steps don't show.
-    low = answer_only and not (whole and trace.compacted)
-    return OutputRatio(chars, tokens, answer_only, low, separate)
 
 
 def output_token_ratio(trace: Trace) -> Detection:

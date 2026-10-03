@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from ..checks import CheckSpec, Context, Detection, Status
 from ..model import Channel, Locator, Surface
 from ..web_activity import call_activity
-from .web import recorded_web_content
+from ..web_results import recorded_web_content
 
 if TYPE_CHECKING:
     import re

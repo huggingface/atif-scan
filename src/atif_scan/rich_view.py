@@ -1,5 +1,5 @@
 """The rich (coloured, tabular) view of a per-trace report. Imported only by
-`report.render_rich`, so rich stays optional: without it, callers fall back to text."""
+`views.render_rich`, so rich stays optional: without it, callers fall back to text."""
 
 from __future__ import annotations
 

@@ -7,11 +7,11 @@ import re
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from ..jsonval import as_object, as_str
-from ..loader import content as parse_content
+from .jsonval import as_object, as_str
+from .loader import content as parse_content
 
 if TYPE_CHECKING:
-    from ..model import Content, Step, ToolCall
+    from .model import Content, Step, ToolCall
 
 # A provider acknowledgement is status metadata, not the page/search body.
 STATUS_ONLY = re.compile(
