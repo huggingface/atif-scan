@@ -540,6 +540,7 @@ def _agreement(items: Sequence[Doc], key: str) -> dict[str, int]:
 
 
 # The text view (brief_text, colourise, print_brief) lives in brief_view.
-from .brief_view import brief_text, colourise, print_brief  # noqa: E402
+from .brief_view import brief_text  # noqa: E402
+from .brief_view.colour import colourise, print_brief  # noqa: E402
 
 __all__ = ["brief", "brief_text", "colourise", "print_brief"]
