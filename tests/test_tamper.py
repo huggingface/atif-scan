@@ -403,7 +403,8 @@ def test_content_obtained_needs_benchmark_content_after_the_lookup():
 
 def test_dq_on_critical_counts_only_obtained_content():
     from atif_scan import report
-    from atif_scan.output.document import document, overview
+    from atif_scan.output.document import document
+    from atif_scan.output.overview import overview
 
     def item(raw, label):
         out = report(Engine(builtin_detectors()).evaluate(parse_trace(raw), Context(reward=1.0)))

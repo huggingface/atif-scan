@@ -247,7 +247,7 @@ def test_step_numbers_are_atif_step_ids_not_positions(tmp_path, capsys):
 
 
 def test_items_without_step_id_render_one_based():
-    from atif_scan.output.document import where
+    from atif_scan.output.text import where
 
     old = [{"step": 0, "call": 1, "observation": None, "channel": "command"}]
     assert where(old) == "step 1 call 1 command"
@@ -404,7 +404,8 @@ def test_cite_hides_low_only_trace_blocks(tmp_path, capsys, fmt):
 
 
 def test_cite_empty_selection_keeps_coverage_and_uncertainty():
-    from atif_scan.output.document import filter_findings, to_text
+    from atif_scan.output.document import filter_findings
+    from atif_scan.output.text import to_text
 
     def item(name, *, incomplete=False, status="available", assessments=()):
         return {

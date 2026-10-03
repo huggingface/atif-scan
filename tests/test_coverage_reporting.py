@@ -17,14 +17,8 @@ from atif_scan import (
     report,
     to_text,
 )
-from atif_scan.output.document import (
-    coverage_gaps,
-    coverage_summary,
-    filter_findings,
-    footer,
-    headline,
-    unresolved,
-)
+from atif_scan.output.document import coverage_gaps, coverage_summary, filter_findings
+from atif_scan.output.text import footer, headline, unresolved
 from atif_scan.output.views import render_rich
 
 PRIVATE_TEXT = "private-trajectory-marker"

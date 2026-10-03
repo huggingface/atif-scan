@@ -13,7 +13,7 @@ import pytest
 from test_brief import section
 
 from atif_scan.cli import main
-from atif_scan.output.document import accuracy
+from atif_scan.output.overview import accuracy
 from atif_scan.sources.harbor.files import overrides
 from atif_scan.sources.harbor.hub import job_id
 

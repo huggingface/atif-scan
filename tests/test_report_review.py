@@ -13,14 +13,9 @@ from test_brief_cache import write_run
 from test_harbor_files import harbor_job, result_json
 
 from atif_scan.cli import main
-from atif_scan.output.document import (
-    _m,
-    citation_lines,
-    overview,
-    overview_text,
-    summary,
-    summary_text,
-)
+from atif_scan.output.overview import _m, overview, overview_text
+from atif_scan.output.summary import summary, summary_text
+from atif_scan.output.text import citation_lines
 from atif_scan.output.views import render_rich, render_summary_rich
 
 

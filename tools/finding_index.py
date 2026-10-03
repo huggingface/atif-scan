@@ -20,7 +20,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from atif_scan.output.document import RANK, finding_index
+from atif_scan.output.document import RANK
+from atif_scan.output.overview import finding_index
 
 if TYPE_CHECKING:
     from atif_scan.data.jsonval import Doc

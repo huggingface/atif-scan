@@ -11,7 +11,8 @@ from .detectors import (
     builtin_detectors,
 )
 from .engine import Assessment, Engine
-from .output.document import document, report, to_json, to_text
+from .output.document import document, report, to_json
+from .output.text import to_text
 from .rules import All, Allowance, AnyOf, Not, Ref, Requires, Rule
 
 __all__ = [

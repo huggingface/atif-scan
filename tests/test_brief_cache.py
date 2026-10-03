@@ -547,7 +547,7 @@ def test_step_models_reveal_a_fallback_the_header_hides():
 
 def test_model_names_differing_only_in_prefix_date_or_case_are_the_same_model():
     from atif_scan.output.brief import brief
-    from atif_scan.output.document import model_key
+    from atif_scan.output.overview import model_key
 
     assert model_key("anthropic/Claude-Fable-5") == model_key("claude-fable-5")
     assert model_key("gpt-5.5-2026-04-23") == model_key("openai/gpt-5.5") == "gpt-5.5"

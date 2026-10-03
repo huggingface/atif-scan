@@ -13,7 +13,7 @@ from ..checks import Context
 from ..data.loader import TraceError
 from ..engine import Engine, effective_context
 from ..review.questions import Writer
-from .document import overview
+from .overview import overview
 
 if TYPE_CHECKING:
     from pathlib import Path

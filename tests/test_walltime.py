@@ -9,7 +9,7 @@ from test_brief import section
 from test_harbor_files import harbor_job
 
 from atif_scan.cli import main
-from atif_scan.output.document import walltime_lines, walltime_totals
+from atif_scan.output.overview import walltime_lines, walltime_totals
 from atif_scan.sources.harbor.files import duration, trial_result
 
 

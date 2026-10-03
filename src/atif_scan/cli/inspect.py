@@ -5,12 +5,9 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from ..output.document import (
-    inspection_text,
-    overview,
-    overview_text,
-    to_json,
-)
+from ..output.document import to_json
+from ..output.overview import overview, overview_text
+from ..output.text import inspection_text
 from ..sources.harbor.hub import inspect_job, is_harbor
 from ..sources.inputs import (
     SourceError,

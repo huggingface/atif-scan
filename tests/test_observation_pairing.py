@@ -211,7 +211,7 @@ def test_cli_mismatch_is_scanned_and_no_raw_text_emitted(tmp_path, capsys):
 def test_citations_keep_reconstruction_provenance():
     from atif_scan.data.model import Channel, Locator
     from atif_scan.evidence.cite import cite
-    from atif_scan.output.document import citation_lines
+    from atif_scan.output.text import citation_lines
 
     t = parse_trace(raw())
     for at in (

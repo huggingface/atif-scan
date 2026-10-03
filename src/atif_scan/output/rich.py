@@ -10,24 +10,18 @@ from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
-from .document import (
-    STYLE,
-    _cited,
-    citation_lines,
-    counts,
+from .document import STYLE, sections
+from .document import filter_notice as _filter_notice
+from .summary import (
     detail_heading,
     detail_spread,
-    footer,
-    headline,
     reward_label,
-    sections,
     summary_head_lines,
     summary_tail_lines,
-    where,
 )
-from .document import filter_notice as _filter_notice
-from .document import tally as _tally
-from .document import unresolved as _unresolved
+from .text import _cited, citation_lines, counts, footer, headline, where
+from .text import tally as _tally
+from .text import unresolved as _unresolved
 
 if TYPE_CHECKING:
     from ..data.jsonval import Doc

@@ -7,15 +7,10 @@ from typing import TYPE_CHECKING
 
 from ..checks import Severity
 from ..output.brief import brief, brief_text, print_brief
-from ..output.document import (
-    filter_findings,
-    overview,
-    overview_text,
-    summary,
-    summary_text,
-    to_json,
-    to_text,
-)
+from ..output.document import filter_findings, to_json
+from ..output.overview import overview, overview_text
+from ..output.summary import summary, summary_text
+from ..output.text import to_text
 from ..output.views import render_rich, render_summary_rich
 from ..review.questions import tally as answer_tally
 from .args import output_format

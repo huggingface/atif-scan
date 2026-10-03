@@ -18,11 +18,7 @@ from ..engine import Engine, effective_context
 from ..evidence.cite import citations
 from ..evidence.history import history_counts
 from ..output.bundle import write_review
-from ..output.document import (
-    assemble,
-    document,
-    report,
-)
+from ..output.document import assemble, document, report
 from ..review.questions import Answers, Writer
 from ..sources.inputs import (
     Source,

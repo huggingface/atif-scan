@@ -35,7 +35,8 @@ import textwrap
 from typing import IO, TYPE_CHECKING
 
 from ..sources.harbor.files import override_kind
-from .document import COMPACTED_USAGE_EXPLANATION, MIN_ATTEMPTS_FOR_SE, STYLE, _m, walltime_lines
+from .document import COMPACTED_USAGE_EXPLANATION, STYLE
+from .overview import MIN_ATTEMPTS_FOR_SE, _m, walltime_lines
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
