@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -36,6 +35,8 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from atif_scan.data import paths
 
 if TYPE_CHECKING:
     from atif_scan.data.jsonval import Doc
@@ -193,11 +194,8 @@ def fetch(
 
 
 def default_sync() -> Path:
-    """atif-scan's sync root: $ATIF_SCAN_SYNC_DIR, else the user cache folder."""
-    return Path(
-        os.environ.get("ATIF_SCAN_SYNC_DIR")
-        or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "atif-scan"
-    )
+    """atif-scan's sync root (`atif_scan.data.paths.sync_root`)."""
+    return paths.sync_root()
 
 
 def run_jobs(

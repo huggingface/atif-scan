@@ -19,6 +19,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal, TypedDict
 
+from ..data import paths
 from ..data.loader import MAX_BYTES
 from .harbor.files import (
     ATTEMPT_COST_BYTES,
@@ -89,12 +90,9 @@ def sync_cap(relative: str) -> int | None:
 
 
 def default_sync_root() -> Path:
-    """Where remote inputs are synced: $ATIF_SCAN_SYNC_DIR, $XDG_CACHE_HOME/atif-scan, or
-    ~/.cache/atif-scan. Contents are real traces: documented, and safe to delete."""
-    if os.environ.get("ATIF_SCAN_SYNC_DIR"):
-        return Path(os.environ["ATIF_SCAN_SYNC_DIR"])
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "atif-scan"
+    """Where remote inputs are synced (see `data.paths`): $ATIF_SCAN_SYNC_DIR, else the
+    atif-scan home. Contents are real traces: documented, and safe to delete."""
+    return paths.sync_root()
 
 
 def sync_target(value: str, root: Path) -> Path:

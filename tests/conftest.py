@@ -3,8 +3,10 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolated_sync_dir(tmp_path_factory, monkeypatch):
-    """Syncing is on by default: never let a test write to the real ~/.cache."""
+    """Syncing is on by default: never let a test read or write the real atif-scan home."""
+    monkeypatch.setenv("ATIF_SCAN_HOME", str(tmp_path_factory.mktemp("home")))
     monkeypatch.setenv("ATIF_SCAN_SYNC_DIR", str(tmp_path_factory.mktemp("sync")))
+    monkeypatch.delenv("ATIF_SCAN_GOLD_DIR", raising=False)
 
 
 def _best(fn, size, runs=3):

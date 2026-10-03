@@ -7,24 +7,24 @@
 A snapshot keeps only allowlisted report fields (input label, task, reward, highest
 severity and each check's status) plus the brief's DQ list. It never holds trace text,
 but input labels and tasks are real run identifiers: snapshots live under
-`$ATIF_SCAN_GOLD_DIR` (default `reports/gold/`, which is git-ignored) and must never be
-committed. `diff` rescans SOURCE with the current code and prints, per check, which
+the atif-scan home (`gold/`, or `$ATIF_SCAN_GOLD_DIR`; see `atif_scan.data.paths`) and
+must never be committed. `diff` rescans SOURCE with the current code and prints, per check, which
 traces started or stopped matching, and DQ candidates gained or lost.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+from atif_scan.data import paths
 
 if TYPE_CHECKING:
     from atif_scan.data.jsonval import Doc
 
-GOLD = Path(os.environ.get("ATIF_SCAN_GOLD_DIR", "reports/gold"))
+GOLD = paths.gold_dir()
 SEVERE = ("medium", "high", "critical")
 
 

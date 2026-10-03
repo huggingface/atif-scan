@@ -81,8 +81,8 @@ def _input_arguments(parser: argparse.ArgumentParser) -> None:
         dest="sync_dir",
         type=Path,
         metavar="DIR",
-        help="where local copies live (default: $ATIF_SCAN_SYNC_DIR, $XDG_CACHE_HOME/atif-scan "
-        "or ~/.cache/atif-scan)",
+        help="where local copies live (default: $ATIF_SCAN_SYNC_DIR, else $ATIF_SCAN_HOME, "
+        "$XDG_CACHE_HOME/atif-scan or ~/.cache/atif-scan)",
     )
     harbor.add_argument(
         "--refresh", action="store_true", help="re-download synced files even if present"
