@@ -113,12 +113,14 @@ BENCHMARK_EXAMPLES = [
     "https://github.com/lazyFrogLOL/Harness_Engineering",
     "https://skillsmp.com/skills/x-harness-engineering",
     "https://github.com/openbench-ai/packs/tree/main/openbench-tb-demo",
+    "root = 'data/packs/openbench-tb-demo/demo-task'",
     "https://tbench.oblok.me/transcript/1",
     "https://spylab.ai/notes/terminal-bench",
     "git clone https://example.com/mirror/terminal-bench",
     "https://codeload.github.com/laude-institute/terminal-bench/zip",
     "https://sourcegraph.com/search?q=repo:terminal-bench",
     "harbor download demo",
+    'snapshot_download("someone/demo-harbor-eval", repo_type="dataset")',
 ]
 
 
