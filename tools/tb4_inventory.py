@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from tb21_inventory import gh_json, label, pr_record, run
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 MARKER = re.compile(r"<!-- harbor-hosted-job:(\{.*?\}) -->")
 TASK_PATH = re.compile(r"tasks/([^/]+)/")

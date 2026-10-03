@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 VERDICT_LINK = re.compile(rf"hub\.harborframework\.com/jobs/({UUID})/trials/{UUID}\?tab=artifacts")

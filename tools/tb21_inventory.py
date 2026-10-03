@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from atif_scan.jsonval import Doc
+    from atif_scan.data.jsonval import Doc
 
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 JOB_LINK = re.compile(r"(?:hub\.harborframework\.com/jobs/|harbor://jobs/)(" + UUID.pattern + ")")
