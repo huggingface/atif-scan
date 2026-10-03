@@ -24,7 +24,7 @@ from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from atif_scan.sync import default_sync_root
+from atif_scan.sources.sync import default_sync_root
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

@@ -12,8 +12,8 @@ import uuid
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from .harbor_files import configured_agents, duration, late_trials, overrides, text_label
-from .jsonval import Doc, JsonObject, as_list, as_object, count, identifier, is_object, number
+from ...jsonval import Doc, JsonObject, as_list, as_object, count, identifier, is_object, number
+from .files import configured_agents, duration, late_trials, overrides, text_label
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

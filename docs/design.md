@@ -7,21 +7,22 @@ detector or changing the engine.
 
 | Module | Role |
 |---|---|
-| `sources` | Resolves files, directories, `hf://` paths and Hub URLs to loadable inputs (the only input I/O) |
-| `sync` | Mirrors remote inputs into the private sync folder (inventory, content identities, confinement) |
-| `harbor_runs` | Finds the Harbor files next to each trajectory: reward, trial `result.json` + attempt cost, `exception.txt`, job folders, saved Hub listings and ledgers |
-| `harbor_files` | Parses Harbor's own run files (trial `result.json`, job `config.json`/`result.json`, `trials.jsonl`, harbor-hf `run.json` prices and attempt costs) into allowlisted facts |
+| `sources.inputs` | Resolves files, directories, `hf://` paths and Hub URLs to loadable inputs (the only input I/O) |
+| `sources.sync` | Mirrors remote inputs into the private sync folder (inventory, content identities, confinement) |
+| `sources.harbor.runs` | Finds the Harbor files next to each trajectory: reward, trial `result.json` + attempt cost, `exception.txt`, job folders, saved Hub listings and ledgers |
+| `sources.harbor.files` | Parses Harbor's own run files (trial `result.json`, job `config.json`/`result.json`, `trials.jsonl`, harbor-hf `run.json` prices and attempt costs) into allowlisted facts |
 | `facts` | The one place that decides which record wins for each per-trial fact (reward, task, error, tokens, cost), and the trace-derived facts that are cached |
 | `jsonval` | Narrows untrusted JSON values (`as_object`, `count`, `number`, …); wrong shapes become unknown, never zero |
-| `harbor_hub` | `harbor://jobs/<id>`: Hub listing (task/reward/cost) and trajectory downloads via the `harbor` CLI |
-| `layout` | `--inspect`: classifies a listing (Harbor markers, roles, anomalies) without reading traces |
+| `sources.harbor.hub` | `harbor://jobs/<id>`: Hub listing (task/reward/cost) and trajectory downloads via the `harbor` CLI |
+| `sources.harbor.listing` | Hub listing rows: validation and allowlisted run/trial facts, shared by live and saved listings (no I/O) |
+| `sources.layout` | `--inspect`: classifies a listing (Harbor markers, roles, anomalies) without reading traces |
 | `model`, `loader` | Immutable `Trace → Step → ToolCall / Observation` view of ATIF v1 |
 | `jslit`, `shell` | Static readers for Codex code-mode programs and shell commands (never executed); unreadable input is unknown or falls back to text patterns |
 | `checks` | The plugin contract: `CheckSpec`, `Context`, `Detection`, `Status`, `Severity` |
 | `detectors` | Built-ins (`builtin`, `integrity`) and the `RegexDetector` / `SurfaceDetector` / `ObservationDetector` helpers |
 | `rules`, `policy` | Three-valued rule expressions, `Allowance`, and the JSON rule/allow format |
 | `engine` | Dependency ordering, task scope, error isolation, applying allowances |
-| `report`, `rich_view` | The JSON allowlist, summary rollup, and text/rich views rendered only from it |
+| `report`, `rich_view`, `views` | The JSON allowlist, summary rollup, and text/rich views rendered only from it (`views`: the optional rich entry points) |
 | `brief`, `estimates` | One-screen run integrity report (one renderer per section); token accounting, then cost priced once from given, declared or fitted rates; missing-activity estimates |
 | `cache` | Per-trace result cache keyed by file fingerprint + scanner version + check set + context |
 | `cite` | Opt-in (`--cite`) masked excerpts with before/after context: the only trace-text output |
@@ -29,6 +30,12 @@ detector or changing the engine.
 
 Keep these separate: parsing doesn't know about detectors, detectors don't know about
 rules, and only `report.report` decides what gets written out.
+
+`tests/test_architecture.py` enforces the layering on every runtime import: no cycles;
+the data layer (`model`, `loader`, `jsonval`, `shell`, `jslit`, `credentials`, `facts`,
+`accounting`, `web_*`) imports only itself; `sources` only data and itself; analysis
+(`checks`, `rules`, `policy`, `engine`, `access`, `detectors`, `packs`) only data and
+itself.
 
 ## Input scope
 

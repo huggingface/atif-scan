@@ -11,8 +11,8 @@ from atif_scan.brief import brief, brief_text
 from atif_scan.cli import main
 from atif_scan.estimates import Pricing, choose_pricing, cost_estimate, price_check, unmetered_work
 from atif_scan.facts import recorded_facts, run_facts, trace_facts
-from atif_scan.harbor_files import trial_result
 from atif_scan.loader import parse_trace
+from atif_scan.sources.harbor.files import trial_result
 
 
 def accounting(**changes):

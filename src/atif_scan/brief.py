@@ -26,7 +26,6 @@ from .estimates import (
     stream_retries,
     unmetered_work,
 )
-from .harbor_files import PRICE_KINDS
 from .jsonval import as_object, as_str, count
 from .packs import BUNDLED
 from .questions import tally
@@ -40,6 +39,7 @@ from .report import (
     review_metadata,
     served_models,
 )
+from .sources.harbor.files import PRICE_KINDS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

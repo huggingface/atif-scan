@@ -225,7 +225,7 @@ def test_nonlocal_trace_cannot_get_broken_mcp_binding(tmp_path, monkeypatch, cap
     from atif_scan import cli
     from atif_scan.checks import Context
     from atif_scan.loader import load_trace
-    from atif_scan.sources import Source
+    from atif_scan.sources.inputs import Source
 
     make_manifest(tmp_path, [("demo", 1, "echo hello", "model-a")])
     source = Source("demo", lambda: load_trace(tmp_path / "demo.json"))

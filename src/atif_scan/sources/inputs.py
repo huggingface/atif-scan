@@ -31,8 +31,10 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 from urllib.parse import unquote, urlsplit
 
-from .facts import listed_facts
-from .harbor_runs import (
+from ..facts import listed_facts
+from ..jsonval import Doc, count, identifier
+from ..loader import MAX_BYTES, TraceError, load_bytes, load_trace
+from .harbor.runs import (
     REWARD_BYTES,
     SavedRun,
     errored,
@@ -43,14 +45,12 @@ from .harbor_runs import (
     trial_details,
     trial_folder,
 )
-from .jsonval import Doc, count, identifier
-from .loader import MAX_BYTES, TraceError, load_bytes, load_trace
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from typing import BinaryIO
 
-    from .model import Trace
+    from ..model import Trace
 
 HF_PREFIX = "hf://"
 HF_HOSTS = {"huggingface.co", "www.huggingface.co", "hf.co"}

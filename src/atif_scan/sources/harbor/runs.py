@@ -17,7 +17,8 @@ import json
 from pathlib import Path, PurePath, PurePosixPath
 from typing import TYPE_CHECKING, TypeVar
 
-from .harbor_files import (
+from ...jsonval import Doc, as_object, number
+from .files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,
     LEDGER_BYTES,
@@ -31,13 +32,12 @@ from .harbor_files import (
     trial_ledger,
     trial_result,
 )
-from .harbor_listing import SAVED_LISTING, saved_listing
-from .jsonval import Doc, as_object, number
+from .listing import SAVED_LISTING, saved_listing
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-    from .sources import Entry, Listing
+    from ..inputs import Entry, Listing
 
 REWARD_FILES = ("reward.json", "reward.txt")  # Harbor reads reward.json first
 REWARD_NAMES = tuple(f"verifier/{name}" for name in REWARD_FILES)

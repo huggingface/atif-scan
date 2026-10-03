@@ -15,13 +15,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from atif_scan import harbor_hub, harbor_runs, layout
-from atif_scan.harbor_files import dataset_source, job_meta, primary_reward, trial_result
-from atif_scan.harbor_hub import HarborCLI, harbor_sources, inspect_job
-from atif_scan.harbor_listing import run_meta, trial_meta
 from atif_scan.jsonval import Doc, number
-from atif_scan.sources import Entry, Listing, confined, list_input, resolve
-from atif_scan.sync import sync_remote
+from atif_scan.sources import layout
+from atif_scan.sources.harbor import hub as harbor_hub
+from atif_scan.sources.harbor import runs as harbor_runs
+from atif_scan.sources.harbor.files import dataset_source, job_meta, primary_reward, trial_result
+from atif_scan.sources.harbor.hub import HarborCLI, harbor_sources, inspect_job
+from atif_scan.sources.harbor.listing import run_meta, trial_meta
+from atif_scan.sources.inputs import Entry, Listing, confined, list_input, resolve
+from atif_scan.sources.sync import sync_remote
 
 if TYPE_CHECKING:
     from collections.abc import Callable

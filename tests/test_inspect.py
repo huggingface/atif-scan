@@ -11,8 +11,8 @@ if TYPE_CHECKING:
 import pytest
 
 from atif_scan.cli import main
-from atif_scan.layout import document
-from atif_scan.sources import list_input
+from atif_scan.sources.inputs import list_input
+from atif_scan.sources.layout import document
 
 # Deliberately not valid JSON: inspection must never read trace contents.
 NOT_READ = "not json: inspection must not open this"

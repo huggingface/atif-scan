@@ -19,7 +19,8 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal, TypedDict
 
-from .harbor_files import (
+from ..loader import MAX_BYTES
+from .harbor.files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,
     LEDGER_BYTES,
@@ -27,9 +28,8 @@ from .harbor_files import (
     RUN_MANIFEST_BYTES,
     TRIAL_LEDGER,
 )
-from .harbor_runs import EXCEPTION_MARKER, RESULT_BYTES, REWARD_BYTES
-from .loader import MAX_BYTES
-from .sources import (
+from .harbor.runs import EXCEPTION_MARKER, RESULT_BYTES, REWARD_BYTES
+from .inputs import (
     DEFAULT_PATTERN,
     HF_PREFIX,
     SYNC_STATE,
@@ -43,7 +43,7 @@ from .sources import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from .sources import Entry, Listing, RemoteFS, SyncRow
+    from .inputs import Entry, Listing, RemoteFS, SyncRow
 
 # Besides matching trajectories, the small files the scan reads next to them, and the
 # largest size synced for each (exception.txt is only checked for presence).

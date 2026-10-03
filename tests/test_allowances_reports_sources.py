@@ -23,10 +23,10 @@ from atif_scan import (
     report,
     to_text,
 )
-from atif_scan import sources as sources_module
 from atif_scan.cli import main
 from atif_scan.policy import load_rules
-from atif_scan.sources import SourceError, resolve
+from atif_scan.sources import inputs as sources_module
+from atif_scan.sources.inputs import SourceError, resolve
 from atif_scan.views import render_rich
 
 SECRET = "SECRET-sk-live-0000"

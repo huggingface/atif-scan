@@ -13,9 +13,9 @@ import pytest
 from test_brief import section
 
 from atif_scan.cli import main
-from atif_scan.harbor_files import overrides
-from atif_scan.harbor_hub import job_id
 from atif_scan.report import accuracy
+from atif_scan.sources.harbor.files import overrides
+from atif_scan.sources.harbor.hub import job_id
 
 if TYPE_CHECKING:
     from atif_scan.jsonval import Doc
@@ -411,7 +411,7 @@ def test_inspect_leaderboard_row(row_harbor, capsys):
 
 
 def test_leaderboard_row_reports_progress_without_identifiers(row_harbor, tmp_path):
-    from atif_scan.harbor_hub import harbor_sources
+    from atif_scan.sources.harbor.hub import harbor_sources
 
     messages = []
     harbor_sources(f"harbor://rows/{ROW}", tmp_path / "dl", progress=messages.append)
@@ -432,7 +432,7 @@ def test_leaderboard_row_reports_progress_without_identifiers(row_harbor, tmp_pa
 
 
 def test_harbor_download_progress_counts_failures(harbor, tmp_path):
-    from atif_scan.harbor_hub import harbor_sources
+    from atif_scan.sources.harbor.hub import harbor_sources
 
     messages = []
     harbor_sources(f"harbor://jobs/{JOB}", tmp_path / "dl", workers=1, progress=messages.append)
@@ -475,7 +475,7 @@ class _PagedCLI:
 
 
 def test_job_listing_asks_for_large_pages_and_follows_a_smaller_server_cap():
-    from atif_scan.harbor_hub import PAGE_SIZE, listing
+    from atif_scan.sources.harbor.hub import PAGE_SIZE, listing
 
     assert PAGE_SIZE == 1000  # a 2,225-trial job is 3 calls, not 23
     cli = _PagedCLI(size=10)  # the server caps pages lower: still lists everything
@@ -484,7 +484,7 @@ def test_job_listing_asks_for_large_pages_and_follows_a_smaller_server_cap():
 
 
 def test_row_listing_stops_paging_once_the_rows_trials_are_found():
-    from atif_scan.harbor_hub import listing
+    from atif_scan.sources.harbor.hub import listing
 
     cli = _PagedCLI(size=10)  # the row holds one agent's share, all on page 1
     _, rows = listing(cli, JOB, want={"t01", "t05"})
@@ -498,7 +498,7 @@ def test_local_copy_of_a_hub_job_keeps_hub_facts(harbor, tmp_path, capsys):
     """A synced job scanned from its folder reports the same task/reward/error facts as a
     harbor:// scan (the listing is saved next to the trajectories): reward-gated rules and
     DQ candidates don't turn unknown on a rescan."""
-    from atif_scan.harbor_listing import SAVED_LISTING
+    from atif_scan.sources.harbor.listing import SAVED_LISTING
 
     data = json.loads((tmp_path / "data.json").read_text())
     data["show"]["config"]["agents"][0]["env"] = {"OPENAI_API_KEY": "sk-proj-secret1234567890"}
@@ -541,8 +541,8 @@ def test_row_syncs_sharing_a_job_keep_each_others_listing_rows(tmp_path):
     trials. The sidecar used to be replaced by the last row's rows, so a later scan of
     the job folder lost the other rows' tasks and every task-scoped check went unknown
     (TB2.1: 1,779 of 2,219 trials of one combined job)."""
-    from atif_scan.harbor_hub import save_listing
-    from atif_scan.harbor_listing import SAVED_LISTING, saved_listing
+    from atif_scan.sources.harbor.hub import save_listing
+    from atif_scan.sources.harbor.listing import SAVED_LISTING, saved_listing
 
     def row(n: int, task: str) -> Doc:
         tid = f"00000000-0000-4000-8000-{n:012d}"
@@ -571,7 +571,7 @@ def test_row_syncs_sharing_a_job_keep_each_others_listing_rows(tmp_path):
 
 
 def test_harbor_sync_permissions_are_private(harbor, tmp_path):
-    from atif_scan.harbor_hub import harbor_sources
+    from atif_scan.sources.harbor.hub import harbor_sources
 
     dest = tmp_path / "copy"
     dest.mkdir(mode=0o755)

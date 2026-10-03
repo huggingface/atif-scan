@@ -8,9 +8,9 @@ import pytest
 
 from atif_scan import Context, Engine, Severity, Status, builtin_detectors, parse_trace
 from atif_scan.cli import main
-from atif_scan.harbor_runs import parse_reward
 from atif_scan.packs.tb21 import checks
-from atif_scan.sources import resolve
+from atif_scan.sources.harbor.runs import parse_reward
+from atif_scan.sources.inputs import resolve
 
 PACK = ["--plugin", "atif_scan.packs.tb21:checks"]
 

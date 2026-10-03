@@ -29,12 +29,24 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
-from .harbor_files import (
+from ...jsonval import (
+    Doc,
+    JsonObject,
+    as_list,
+    as_object,
+    count,
+    is_object,
+    number,
+)
+from ...loader import TraceError, load_trace
+from ..inputs import Source, SourceError, local_fingerprint
+from ..sync import private_directory, private_tree
+from .files import (
     OVERRIDE,
     _flatten,
     text_label,
 )
-from .harbor_listing import (
+from .listing import (
     SAVED_LISTING,
     TRIAL_ID,
     TRIAL_NAME,
@@ -45,24 +57,12 @@ from .harbor_listing import (
     trial_meta,
     valid_row,
 )
-from .jsonval import (
-    Doc,
-    JsonObject,
-    as_list,
-    as_object,
-    count,
-    is_object,
-    number,
-)
-from .loader import TraceError, load_trace
-from .sources import Source, SourceError, local_fingerprint
-from .sync import private_directory, private_tree
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from .model import Trace
+    from ...model import Trace
 
 JOB = re.compile(
     r"^(?:harbor://jobs/|https?://hub\.harborframework\.com/jobs/)(" + UUID + r")(?:[/?#].*)?$"

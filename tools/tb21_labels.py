@@ -26,11 +26,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from atif_scan.harbor_hub import HarborCLI, listing, row_listing
+from atif_scan.sources.harbor.hub import HarborCLI, listing, row_listing
 
 if TYPE_CHECKING:
-    from atif_scan.harbor_hub import RowJobs
     from atif_scan.jsonval import Doc, JsonObject
+    from atif_scan.sources.harbor.hub import RowJobs
 
 
 def slug(task: object) -> str:

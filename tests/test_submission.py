@@ -11,8 +11,8 @@ from test_brief_cache import _item
 
 from atif_scan.brief import brief, brief_text
 from atif_scan.cli import main
-from atif_scan.harbor_files import late_trials, submission
-from atif_scan.harbor_listing import run_meta
+from atif_scan.sources.harbor.files import late_trials, submission
+from atif_scan.sources.harbor.listing import run_meta
 
 V4 = "11111111-1111-4111-8111-111111111111"
 V5 = "22222222-2222-5222-8222-222222222222"

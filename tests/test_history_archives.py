@@ -243,7 +243,7 @@ def test_archive_count_limit_is_explicit(local):
 
 
 def test_full_harbor_archive_exposes_companions_without_following_summary_paths(local, tmp_path):
-    from atif_scan.harbor_hub import fetch
+    from atif_scan.sources.harbor.hub import fetch
 
     class ArchiveCLI:
         def __init__(self):

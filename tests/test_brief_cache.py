@@ -408,7 +408,7 @@ def test_shards_of_one_submission_still_flag_a_fallback_model():
 
 
 def test_configured_agents_from_job_config():
-    from atif_scan.harbor_files import configured_agents
+    from atif_scan.sources.harbor.files import configured_agents
 
     agents = [{"name": "terminus-2", "model_name": m} for m in ("a/x", "b/y")]
     assert configured_agents({"agents": agents}) == 2

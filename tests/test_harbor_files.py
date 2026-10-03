@@ -8,7 +8,7 @@ import pytest
 from test_brief import section
 
 from atif_scan.cli import main
-from atif_scan.harbor_files import job_meta, primary_reward, trial_result
+from atif_scan.sources.harbor.files import job_meta, primary_reward, trial_result
 
 
 def result_json(task, reward=None, error=None, cost=None, tokens=(1000, 500, 100)):
@@ -186,7 +186,7 @@ def test_infrastructure_overrides_and_forked_tasks_are_told_apart():
     # fork of the task repo that only swaps images are infrastructure; the agent timeout
     # override changes the score.
     from atif_scan.brief import brief_text
-    from atif_scan.harbor_files import dataset_source, job_meta, override_kind
+    from atif_scan.sources.harbor.files import dataset_source, job_meta, override_kind
 
     assert override_kind("agents[].override_setup_timeout_sec") == "infrastructure"
     assert override_kind("agent_setup_timeout_multiplier") == "infrastructure"
@@ -315,7 +315,7 @@ def test_job_listing_missing_or_incomplete_is_unknown_not_clean(tmp_path, capsys
 
 
 def test_job_listed_trials_tolerates_malformed_stats():
-    from atif_scan.harbor_files import job_listed_trials
+    from atif_scan.sources.harbor.files import job_listed_trials
 
     def listed(stats):
         return job_listed_trials(json.dumps({"stats": stats}).encode())

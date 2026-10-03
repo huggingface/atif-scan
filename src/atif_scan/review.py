@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .jsonval import Doc
-    from .sources import Source
+    from .sources.inputs import Source
 
 SCOPES = ("dq-candidates", "rewarded", "all")
 README = (

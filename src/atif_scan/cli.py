@@ -22,10 +22,7 @@ from .cite import citations
 from .detectors import builtin_detectors
 from .engine import Engine, effective_context
 from .facts import recorded_facts, run_facts, trace_facts, trial_reward, trial_task
-from .harbor_files import SUBMISSION_BYTES, submission, text_label
-from .harbor_hub import harbor_sources, inspect_job, is_harbor
 from .history import history_counts
-from .layout import document as inspection
 from .loader import TraceError
 from .packs import recognise, tasks_needed
 from .packs.reference import ENV as PACK_ENV
@@ -46,7 +43,9 @@ from .report import (
     to_text,
 )
 from .review import SCOPES, write_review
-from .sources import (
+from .sources.harbor.files import SUBMISSION_BYTES, submission, text_label
+from .sources.harbor.hub import harbor_sources, inspect_job, is_harbor
+from .sources.inputs import (
     DEFAULT_PATTERN,
     HF_PREFIX,
     Source,
@@ -56,7 +55,8 @@ from .sources import (
     normalize,
     resolve,
 )
-from .sync import default_sync_root, sync_remote, sync_target
+from .sources.layout import document as inspection
+from .sources.sync import default_sync_root, sync_remote, sync_target
 from .views import render_rich, render_summary_rich
 from .web_activity import web_activity
 

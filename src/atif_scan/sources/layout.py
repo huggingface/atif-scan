@@ -19,14 +19,14 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from .jsonval import identifier
-from .loader import MAX_BYTES
-from .sources import Entry, Listing, label_for, selected
+from ..jsonval import identifier
+from ..loader import MAX_BYTES
+from .inputs import Entry, Listing, label_for, selected
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from .jsonval import Doc
+    from ..jsonval import Doc
 
 EXAMPLES = 20
 TOP = 10  # most common alongside/other file names listed

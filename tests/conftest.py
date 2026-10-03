@@ -42,8 +42,8 @@ def linear():
 
 # The two seams tests replace, named once: moving a module means editing these paths only.
 # Library calls take `fs=` directly; these are for tests that drive the whole CLI.
-HF_FILESYSTEM = "atif_scan.sources.hf_filesystem"
-LOAD_TRACE = "atif_scan.sources.load_trace"
+HF_FILESYSTEM = "atif_scan.sources.inputs.hf_filesystem"
+LOAD_TRACE = "atif_scan.sources.inputs.load_trace"
 
 
 @pytest.fixture

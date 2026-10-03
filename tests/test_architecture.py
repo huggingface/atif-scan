@@ -3,8 +3,9 @@
 Layers, lowest first. A layer may import itself and the layers listed for it:
 
 - data      parsing and per-trial facts (stdlib only): model, loader, jsonval, shell, jslit,
-            credentials, facts, accounting, loader_accounting, web_inputs, web_results, web_gaps, web_activity
-- sources   finding and fetching inputs: sources, sync, layout, harbor_*
+            credentials, facts, accounting, loader_accounting, web_inputs, web_results,
+            web_gaps, web_activity
+- sources   finding and fetching inputs: the sources package (inputs, sync, layout, harbor)
 - analysis  checks and their evaluation: checks, rules, policy, engine, access, detectors,
             packs
 
@@ -33,7 +34,7 @@ DATA = {
     "web_gaps",
     "web_activity",
 }
-SOURCES = {"sources", "sync", "layout"}
+SOURCES = {"sources"}
 ANALYSIS = {"checks", "rules", "policy", "engine", "access"}
 
 
@@ -41,7 +42,7 @@ def layer(module: str) -> str | None:
     head = module.split(".", maxsplit=1)[0]
     if head in DATA:
         return "data"
-    if head in SOURCES or head.startswith("harbor_"):
+    if head in SOURCES:
         return "sources"
     if head in ANALYSIS or head in ("detectors", "packs"):
         return "analysis"
