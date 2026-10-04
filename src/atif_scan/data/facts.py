@@ -52,7 +52,9 @@ if TYPE_CHECKING:
 # the run brief and by the integrity.output_token_ratio check.
 @dataclass(frozen=True)
 class OutputRatio:
-    """Agent-authored characters per completion token.
+    """Visible agent-message and tool-argument characters per output token.
+
+    Reasoning text is always excluded: its completeness is not established by ATIF.
 
     Unrecorded output (hidden reasoning, compacted history, dropped steps) only *lowers*
     the ratio, so a high ratio is always meaningful: more text than the reported tokens
@@ -90,8 +92,6 @@ def output_ratio(trace: Trace) -> OutputRatio | None:
     answer_only = separate or reasoning is not None
     if not separate and reasoning is not None:
         tokens -= reasoning
-    if not answer_only:
-        chars += sum(len(s.reasoning.text) for s in steps)
     if tokens <= 0:
         return None
     # Compacted final totals include calls the recorded steps don't show.
@@ -219,7 +219,7 @@ def trace_facts(trace: Trace | None) -> Doc:
         # Agent steps per step-level model (most used first): what actually ran.
         "step_models": dict(models) or None,
         "llm_calls": trace.llm_calls or trace.agent_steps,
-        # A fixed code (Trace.reasoning_exposure): what the recorded reasoning covers.
+        # A fixed code (Trace.reasoning_exposure): presence, not completeness.
         "reasoning": trace.reasoning_exposure,
         # A number and a fixed code only: authored characters per reported completion token.
         "chars_per_output_token": round(ratio.value, 2) if ratio else None,
@@ -229,7 +229,7 @@ def trace_facts(trace: Trace | None) -> Doc:
         if ratio.separate_visible
         else "answer_only"
         if ratio.answer_only
-        else "all_text",
+        else "visible_only",
         # Final-metrics semantics only, not a claim about run/step totals or billing.
         "trajectory_completion_token_basis": (
             trace.usage.completion_basis

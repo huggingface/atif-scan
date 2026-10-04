@@ -34,12 +34,8 @@ class Channel(StrEnum):
 
 # Channels whose meaning depends on recognizing the tool that produced them.
 TOOL_INPUT_CHANNELS = frozenset({Channel.COMMAND, Channel.PATH, Channel.QUERY, Channel.URL})
-# Recorded reasoning characters per reported reasoning token. Full reasoning text runs
-# ~3-4 (open-weight GLM/DeepSeek p10-p90 2.9-4.1; some builds up to ~9); summaries run far
-# below (GPT-5.5, Gemini flash p10-p90 0.04-0.39). Calibrated on ~4k leaderboard traces.
-SUMMARY_CHARS_PER_TOKEN = 1.5
-# Values of `Trace.reasoning_exposure`, most to least exposed.
-REASONING_EXPOSURE = ("full", "recorded", "summarised", "withheld", "none")
+# Presence only: ATIF reasoning_content does not identify full text versus summaries.
+REASONING_EXPOSURE = ("recorded", "withheld", "none")
 
 
 SPAN_LENGTH = 2  # (start, end)
@@ -335,30 +331,21 @@ class Trace:
 
     @cached_property
     def reasoning_exposure(self) -> str:
-        """How much of the model's reasoning the trace shows. A property of the model and
-        its API, not a recording defect: proprietary models withhold or summarise their
-        reasoning by design, open-weight models usually expose it. Checks read whatever
-        text is recorded; this says what that text covers.
+        """Recorded reasoning presence, never inferred completeness.
 
-        `full` / `summarised`: reasoning text recorded, and the reported reasoning tokens
-        tell which (a summary is far shorter than the tokens it stands for); `recorded`:
-        text but nothing to judge it by (no reasoning token count, or compacted totals);
-        `withheld`: reasoning tokens reported, no text; `none`: neither (not exposed, or
-        not a reasoning model: the trace can't tell)."""
+        ATIF's reasoning_content can contain either a summary or reasoning text.
+        Character/token ratios cannot distinguish them. Missing text with reported
+        reasoning tokens is tokens-only; without either, exposure is unknown.
+        """
         steps = [s for s in self.steps if s.authored]
+        if any(s.reasoning.text for s in steps):
+            return "recorded"
         usage = self.authored_usage
         tokens = usage.reasoning_tokens if usage else None
         if tokens is None and (usage is None or usage.completion_tokens is None):
             metered = [s for s in steps if s.completion_tokens is not None]
             tokens = step_reasoning_tokens(metered)
-            if tokens is not None:
-                steps = metered
-        chars = sum(len(s.reasoning.text) for s in steps)
-        if not chars:
-            return "withheld" if tokens else "none"
-        if not tokens or self.compacted:
-            return "recorded"
-        return "full" if chars / tokens >= SUMMARY_CHARS_PER_TOKEN else "summarised"
+        return "withheld" if tokens else "none"
 
     @property
     def reasoning_hidden(self) -> bool:

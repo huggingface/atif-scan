@@ -173,7 +173,7 @@ def _usage_gaps(b: Doc) -> Lines:
 
 def _text_ratio(b: Doc) -> Lines:
     return [
-        f"{INFO} agent text per output token: median {r['median']:.2f} characters"
+        f"{INFO} visible agent text per output token: median {r['median']:.2f} characters"
         f"{spread(r)} over {plural(r['traces'], 'trace')}, {RATIO_BASIS[basis]}"
         for basis, r in (b.get("output_ratio") or {}).items()
     ]

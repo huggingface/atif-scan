@@ -60,18 +60,19 @@ RUN_KINDS = {"harbor_hub": "Harbor job", "harbor_leaderboard_row": "leaderboard 
 
 
 REASONING = {
-    "full": "full text",
-    "summarised": "summarised",
-    "recorded": "text without a token count",
+    "recorded": "text recorded (completeness unknown)",
     "withheld": "withheld (tokens only)",
     "none": "not exposed",
 }
 
 
 RATIO_BASIS = {
+    "separate_visible": "reasoning excluded (visible output tokens recorded separately)",
     "answer_only": "reasoning excluded (its tokens are reported separately)",
-    "all_text": "reasoning included (summaries read lower)",
-    "visible_only": "no usable reasoning split for this comparison; lower bound cannot be checked",
+    "visible_only": (
+        "visible text / total completion tokens; no usable reasoning split for this comparison;"
+        " lower bound cannot be checked"
+    ),
 }
 
 

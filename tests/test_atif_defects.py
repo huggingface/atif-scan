@@ -85,13 +85,17 @@ def test_withheld_reasoning_is_a_model_property_not_a_coverage_gap():
     assert parse_trace(hidden).reasoning_exposure == "withheld"
 
 
-def test_reasoning_exposure_tells_full_from_summarised_by_reported_tokens():
+def test_reasoning_presence_never_infers_completeness_from_reported_tokens():
     def exposure(steps, final_metrics=None):
         return parse_trace(trace(steps, final_metrics)).reasoning_exposure
 
     tokens = {"extra": {"total_reasoning_tokens": 1_000}}
-    assert exposure([agent(reasoning="x" * 3_600)], tokens) == "full"  # ~3.6 chars/token
-    assert exposure([agent(reasoning="x" * 200)], tokens) == "summarised"  # 0.2
+    assert (
+        exposure([agent(reasoning="x" * 3_600)], tokens) == "recorded"
+    )  # long summary is not full reasoning
+    assert (
+        exposure([agent(reasoning="x" * 200)], tokens) == "recorded"
+    )  # short text has the same presence status
     assert exposure([agent(reasoning="x" * 200)]) == "recorded"  # nothing to judge by
     assert exposure([agent()]) == "none"
     # Compacted totals include calls the recorded steps don't show: not judged.
@@ -238,7 +242,7 @@ def test_ratio_in_report_and_brief(tmp_path, capsys):
     assert items["a"]["chars_per_output_token"] == 2.51
     assert items["a"]["output_ratio_basis"] == "answer_only"
     assert items["b"]["chars_per_output_token"] == 20.01
-    assert items["b"]["output_ratio_basis"] == "all_text"
+    assert items["b"]["output_ratio_basis"] == "visible_only"
     main([str(tmp_path), "--format", "text", "--no-cache"])
     out = " ".join(capsys.readouterr().out.split())  # unwrapped: phrases may span lines
     assert "⚠ 1 trial (50.0%): agent text doesn't fit reported output tokens" in out
@@ -258,10 +262,10 @@ def test_output_ratio_spread_is_consistent_for_small_and_large_runs():
     from atif_scan.output.brief import output_ratios
 
     ratios = output_ratios(
-        [{"chars_per_output_token": v, "output_ratio_basis": "all_text"} for v in (1.83, 0.6)]
+        [{"chars_per_output_token": v, "output_ratio_basis": "visible_only"} for v in (1.83, 0.6)]
     )
     assert ratios is not None
-    two = ratios["all_text"]
+    two = ratios["visible_only"]
     assert two["median"] == pytest.approx(1.215)
     assert (two["min"], two["max"]) == (0.6, 1.83)
     assert two["p5"] <= two["median"] <= two["p95"]
@@ -276,3 +280,62 @@ def test_output_ratio_spread_is_consistent_for_small_and_large_runs():
     many = ratios["answer_only"]
     assert many["median"] == 10.0
     assert many["p5"] == pytest.approx(1.0) and many["p95"] == pytest.approx(19.0)
+
+
+def test_reasoning_text_never_changes_visible_output_ratio_without_token_split():
+    # A long provider summary used to inflate all_text beyond the high bound.
+    from atif_scan.data.facts import trace_facts
+
+    for step_metered in (False, True):
+        for reasoning in (None, "summary", "summary " * 10_000):
+            raw = trace(
+                [said(3_000, reasoning=reasoning, tokens=1_000 if step_metered else None)],
+                None if step_metered else {"total_completion_tokens": 1_000},
+            )
+            parsed = parse_trace(raw)
+            ratio = output_ratio(parsed)
+            assert ratio is not None
+            assert (ratio.chars, ratio.tokens) == (3_014, 1_000)
+            assert not ratio.low_verifiable
+            assert ratio_status(raw) == Status.UNKNOWN
+            assert trace_facts(parsed)["output_ratio_basis"] == "visible_only"
+
+
+def test_unmetered_reasoning_text_is_still_recorded():
+    # Token accounting scope must not hide reasoning text on an unmetered step.
+    metered = said(100, tokens=100)
+    metered["metrics"]["extra"] = {"reasoning_tokens": 80}
+    parsed = parse_trace(trace([metered, agent(reasoning="A synthetic summary.", cid="c2")]))
+    assert parsed.reasoning_exposure == "recorded"
+
+
+def test_visible_ratio_brief_reports_presence_without_inferred_completeness(tmp_path, capsys):
+    raw = trace(
+        [said(3_000, reasoning="summary " * 10_000)],
+        {"total_completion_tokens": 1_000},
+    )
+    path = tmp_path / "trajectory.json"
+    path.write_text(json.dumps(raw))
+    main([str(path), "--brief", "--format", "text", "--no-cache"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "text recorded (completeness unknown)" in out
+    assert "visible text / total completion tokens" in out
+    assert "full text" not in out
+
+
+def test_separate_visible_ratio_can_be_rendered():
+    from atif_scan.output.brief_view.usage import _text_ratio
+
+    lines = _text_ratio(
+        {
+            "output_ratio": {
+                "separate_visible": {
+                    "median": 3.0,
+                    "min": 3.0,
+                    "max": 3.0,
+                    "traces": 1,
+                }
+            }
+        }
+    )
+    assert "visible output tokens recorded separately" in lines[0]

@@ -90,7 +90,9 @@ def test_step_fallback_not_blindly_corrected():
     trace = parse_trace(raw)
     ratio = output_ratio(trace)
     assert ratio and not ratio.separate_visible and not ratio.answer_only
-    assert ratio.chars == 12000
+    assert ratio.chars == 3000  # reasoning text is excluded even without a token split
+    assert not ratio.low_verifiable
+    assert output_token_ratio(trace).status == Status.UNKNOWN
     assert trace_facts(trace)["trajectory_completion_token_basis"] is None
 
 

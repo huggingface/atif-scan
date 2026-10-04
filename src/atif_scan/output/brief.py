@@ -71,38 +71,26 @@ RATIO_BASIS = {
         "visible output tokens as recorded; reasoning separate, not billed completion"
     ),
     "answer_only": "excl. reasoning (reasoning tokens reported)",
-    "all_text": "incl. recorded reasoning (summaries read lower)",
     "visible_only": "no usable reasoning split for this comparison; lower bound cannot be checked",
 }
 REASONING_LABELS = {
-    "full": "full",
-    "recorded": "recorded",
-    "summarised": "summarised",
+    "recorded": "text recorded (completeness unknown)",
     "withheld": "withheld (tokens only)",
     "none": "not exposed",
 }
 
 
 def reasoning_exposure(items: Sequence[Doc]) -> dict[str, int]:
-    """Scanned traces per `reasoning` exposure code, most to least exposed."""
+    """Scanned traces by recorded reasoning presence, not inferred completeness."""
     counts = Counter(i.get("reasoning") for i in items if i.get("input_status") == "available")
     return {k: counts[k] for k in REASONING_LABELS if counts[k]}
-
-
-def _ratio_basis(item: Doc) -> str | None:
-    basis = as_str(item.get("output_ratio_basis"))
-    if basis == "all_text" and item.get("reasoning") in ("withheld", "none"):
-        # No reasoning text or separate token count: hidden reasoning could lower
-        # the ratio, but its presence and amount are not established.
-        return "visible_only"
-    return basis
 
 
 def output_ratios(items: Sequence[Doc]) -> Doc | None:
     """Run-level spread of authored characters per completion token, per basis."""
     by_basis: dict[str, list[float]] = {}
     for item in items:
-        value, basis = item.get("chars_per_output_token"), _ratio_basis(item)
+        value, basis = item.get("chars_per_output_token"), as_str(item.get("output_ratio_basis"))
         if isinstance(value, int | float) and basis in RATIO_BASIS:
             by_basis.setdefault(basis, []).append(float(value))
     if not by_basis:

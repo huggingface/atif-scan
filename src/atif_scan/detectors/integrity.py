@@ -260,8 +260,9 @@ def tokens_exceed_recorded_calls(trace: Trace) -> Detection:
 
 # Output text vs output tokens. Tokenizers encode ~2-4.5 characters of English/code per
 # token. Calibrated on ~6k leaderboard traces (13 agent/model pairs), where the
-# answer-only ratio ran p1 >= 1.48 and p99 <= 4.4 and the all-text ratio p99 <= 6.3.
-# Outside these bounds the declared completion tokens and the recorded text disagree.
+# answer-only ratio ran p1 >= 1.48 and p99 <= 4.4 (before full tool-payload counting).
+# Reasoning text is never compared with tokens. Without a reasoning-token split,
+# visible text / total completion tokens only supports the upper-bound check.
 MIN_CHARS_PER_TOKEN = 1.0
 MAX_CHARS_PER_TOKEN = 8.0
 
