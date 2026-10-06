@@ -13,7 +13,7 @@ import re
 from typing import TYPE_CHECKING
 
 from ..checks import check_selected
-from ..data import credentials
+from ..data import account_ids, credentials
 from ..data.model import Channel, Content, Locator, Step, ToolCall, Trace
 
 if TYPE_CHECKING:
@@ -72,7 +72,9 @@ def mask(text: str, known: frozenset[str] = frozenset()) -> str:
     Order matters: private-key blocks first (a header mask stops at the line end), then
     the broad header/assignment masks (a token glued to another would otherwise be cut by
     its shape and the rest left unmatched), then token shapes, then `credentials.mask`,
-    whose named-value test sees tokens already masked (a glued token isn't "code")."""
+    whose named-value test sees tokens already masked (a glued token isn't "code").
+    OpenAI account identifiers go first, while their keys are still intact."""
+    text = _mask_spans(text, account_ids.spans(text))
     text = credentials.PRIVATE_KEY.sub("[private key]", text)
     for pattern, replacement in HEADERS:
         text = pattern.sub(replacement, text)
@@ -81,6 +83,17 @@ def mask(text: str, known: frozenset[str] = frozenset()) -> str:
     for pattern, replacement in SHAPES:
         text = pattern.sub(replacement, text)
     return credentials.mask(text, known)
+
+
+def _mask_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    out: list[str] = []
+    last = 0
+    for start, end in sorted(spans):
+        if start >= last:
+            out += [text[last:start], "***"]
+            last = end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _mask_keyed(text: str) -> str:
@@ -94,19 +107,21 @@ def _mask_keyed(text: str) -> str:
 
 
 def trace_secrets(trace: Trace) -> frozenset[str]:
-    """Every credential value anywhere in the trace, so each occurrence gets masked."""
+    """Every credential value and OpenAI account identifier anywhere in the trace, so
+    each occurrence gets masked (an account UUID repeated bare is no longer key-bound)."""
     texts = []
     for step in trace.steps:
         texts += [step.message.text or "", step.reasoning.text or ""]
         texts += [c.text or "" for call in step.calls for _, c in call.fields]
         texts += [o.content.text or "" for o in step.observations]
-    return credentials.values(texts)
+    return credentials.values(texts) | account_ids.values(texts)
 
 
 def _secret_spans(text: str, known: frozenset[str]) -> list[tuple[int, int]]:
     spans = [m.span() for pattern, _ in SECRETS for m in pattern.finditer(text)]
     spans += [(start, end) for start, _, end in _keyed(text)]
     spans += [f.value for f in credentials.find(text)]
+    spans += account_ids.spans(text)
     for value in known:
         start = text.find(value)
         while start != -1:

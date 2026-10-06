@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from itertools import islice
 from typing import TYPE_CHECKING
 
-from ..data import credentials
+from ..data import account_ids, credentials
 from .cite import mask
 
 if TYPE_CHECKING:
@@ -101,7 +101,7 @@ class HistoryArchive:
         if type(file) is not int or not 0 <= file < len(self.files):
             raise ValueError("no such archive file")
         text = _read(self.files[file]).decode("utf-8")
-        return mask(text, known | credentials.values((text,)))
+        return mask(text, known | credentials.values((text,)) | account_ids.values((text,)))
 
     def search(self, file: int, term: str, known: frozenset[str] = frozenset()) -> Doc:
         """Ten literal windows in one bound, fully masked file; no regex execution."""
