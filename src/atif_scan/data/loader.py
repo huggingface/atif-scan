@@ -7,6 +7,7 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
+from itertools import pairwise
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeGuard
 
@@ -652,6 +653,7 @@ def parse_trace(value: object) -> Trace:
     tokens = as_object(as_object(metrics).get("extra")).get("total_tool_use_tokens")
     per_step, unmetered, partial_kinds = step_usage(raw_steps)
     retry_steps, retry_attempts, calls_complete = stream_retries(raw_steps, metrics)
+    last, metered, rising = last_call(raw_steps)
     return Trace(
         version,
         tuple(steps),
@@ -670,6 +672,9 @@ def parse_trace(value: object) -> Trace:
         step_usage=per_step,
         calls_without_usage=unmetered if per_step is not None else 0,
         step_kinds_partial=partial_kinds,
+        last_step_usage=last,
+        metered_steps=metered,
+        step_usage_rising=rising,
         stream_retry_steps=retry_steps,
         stream_retry_attempts=retry_attempts,
         usage_calls_complete=calls_complete,
@@ -944,6 +949,24 @@ def step_usage(raw_steps: list[object]) -> tuple[Usage | None, int, tuple[str, .
         name for name, r in zip(TOKEN_KIND_NAMES, recorded, strict=True) if 0 < r < seen
     )
     return Usage(None, *kinds), missing, partial
+
+
+def last_call(raw_steps: list[object]) -> tuple[Usage | None, int, bool]:
+    """(the last metered agent step's own usage, agent steps with usage, whether every
+    metered step's prompt and completion tokens are both at least the previous step's).
+    A step is metered as in step_usage: prompt or completion tokens recorded."""
+    metered: list[list[int | None]] = []
+    for raw in raw_steps:
+        if not is_object(raw) or raw.get("source") != "agent":
+            continue
+        metrics = as_object(raw.get("metrics"))
+        values = [count(metrics.get(k)) for k in STEP_TOKEN_KINDS]
+        if values[0] is not None or values[1] is not None:
+            metered.append(values)
+    if not metered:
+        return None, 0, False
+    rising = all((b[n] or 0) >= (a[n] or 0) for a, b in pairwise(metered) for n in (0, 1))
+    return Usage(None, *metered[-1]), len(metered), rising
 
 
 FAST_AGENT_RETRY_SCHEMA = "fast-agent.retry/v1"

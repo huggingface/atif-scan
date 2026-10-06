@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..document import COMPACTED_USAGE_EXPLANATION
+from ..estimates import LAST_CALL_CHECK
 from ..overview import _m, walltime_lines
 
 if TYPE_CHECKING:
@@ -206,10 +207,24 @@ def _token_finding_texts(b: Doc, n: int) -> Lines:
                 + (
                     "; recorded usage may omit failed-attempt tokens"
                     if check == "integrity.incomplete_tool_generation"
+                    else _last_call_tokens(b)
+                    if check == LAST_CALL_CHECK
                     else ""
                 )
             )
     return texts
+
+
+def _last_call_tokens(b: Doc) -> str:
+    """What the steps of trials with last-call totals add, in tokens."""
+    tk = (b.get("last_call_totals") or {}).get("tokens") or {}
+    if not tk:
+        return ""
+    return (
+        f"; their steps record {_m(tk.get('uncached_input', 0) + tk.get('cached_input', 0))}"
+        f" input ({_m(tk.get('cached_input', 0))} cached) · {_m(tk.get('output', 0))} output"
+        " more, not in the totals above"
+    )
 
 
 def tokens_section(b: Doc) -> Lines:
@@ -318,10 +333,23 @@ def _other_model_spend(b: Doc) -> str:
     return f", {usd(mm['cost_usd'])} of it on another model"
 
 
+def _last_call_cost(b: Doc) -> Lines:
+    lc = b.get("last_call_totals") or {}
+    if not lc.get("trials"):
+        return []
+    who = f"{plural(lc['trials'], 'trial')} whose totals cover only their last model call"
+    if lc.get("estimate_usd") is None:
+        return [f"{WARN} the {who} undercount, not estimated ({lc.get('method')})"]
+    return [
+        f"{WARN} est. +{usd(lc['estimate_usd'])} from the step metrics of {who}, not in the"
+        f" total ({lc['method']})"
+    ]
+
+
 def _gap_costs(b: Doc) -> Lines:
     pu = (b.get("usage") or {}).get("partial") or {}
     um = b.get("unmetered_work") or {"trials": 0}
-    texts = []
+    texts = _last_call_cost(b)
     if pu.get("trials") and pu.get("estimate_usd") is not None:
         texts.append(
             f"{INFO} est. +{usd(pu['estimate_usd'])} for the"

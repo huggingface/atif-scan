@@ -283,6 +283,46 @@ def tokens_exceed_recorded_calls(trace: Trace) -> Detection:
     return replace(found, measure=(*measure, ("per_call", round(per_call, 1))))
 
 
+def _last_call_measure(trace: Trace) -> Measure:
+    usage, last, steps = trace.usage, trace.last_step_usage, trace.step_usage
+    return tuple(
+        (name, value)
+        for name, value in (
+            ("prompt_tokens", usage.prompt_tokens if usage else None),
+            ("completion_tokens", usage.completion_tokens if usage else None),
+            ("cached_tokens", usage.cached_tokens if usage else None),
+            ("step_prompt_tokens", steps.prompt_tokens if steps else None),
+            ("step_completion_tokens", steps.completion_tokens if steps else None),
+            ("step_cached_tokens", steps.cached_tokens if steps else None),
+            ("last_prompt_tokens", last.prompt_tokens if last else None),
+            ("last_completion_tokens", last.completion_tokens if last else None),
+            ("metered_steps", trace.metered_steps),
+        )
+        if value is not None
+    )
+
+
+def totals_are_last_call(trace: Trace) -> Detection:
+    """final_metrics totals equal the last metered call's own prompt and completion
+    tokens, while the metered steps sum to more: the harness wrote one call's usage as
+    the run's totals (seen when a run is cut off), so every total-based token and cost
+    figure undercounts. Step metrics that only ever rise could be running totals, where
+    totals = last step is right: unknown, not a match."""
+    usage = trace.usage
+    if usage is None or usage.prompt_tokens is None or usage.completion_tokens is None:
+        return Detection(Status.UNKNOWN, complete=False, unread=NO_USAGE)
+    measure = _last_call_measure(trace)
+    if trace.totals_match_last_call and trace.step_usage_rising:
+        return Detection(
+            Status.UNKNOWN,
+            complete=False,
+            unread=(Unread("step_metrics_may_be_cumulative"),),
+            measure=measure,
+        )
+    found = _result([], complete=True, matched=trace.totals_match_last_call)
+    return replace(found, measure=measure)
+
+
 # Output text vs output tokens. Tokenizers encode ~2-4.5 characters of English/code per
 # token. Calibrated on ~6k leaderboard traces (13 agent/model pairs), where the
 # answer-only ratio ran p1 >= 1.48 and p99 <= 4.4 (before full tool-payload counting).
@@ -541,6 +581,14 @@ def integrity_detectors() -> list[Detector]:
                 title="Token totals exceed the recorded calls",
             ),
             tokens_exceed_recorded_calls,
+        ),
+        TraceCheck(
+            CheckSpec(
+                "integrity.totals_are_last_call",
+                Severity.LOW,
+                title="Token totals cover only the last model call",
+            ),
+            totals_are_last_call,
         ),
         TraceCheck(
             CheckSpec(

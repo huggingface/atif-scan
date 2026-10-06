@@ -53,6 +53,7 @@ TELEMETRY_CHECKS = frozenset(
         "integrity.timestamp_regression",
         "integrity.timestamp_smearing",
         "integrity.tokens_exceed_recorded_calls",
+        "integrity.totals_are_last_call",
     }
 )
 

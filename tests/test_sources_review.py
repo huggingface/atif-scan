@@ -152,6 +152,8 @@ class StubCLI:
             return {"name": "demo"}
         if args[:3] == ("hub", "job", "trials"):
             return {"items": self.rows, "total_pages": 1}
+        if args[:3] == ("hub", "trial", "show"):
+            return {}  # no trial record: timings unknown
         if args[:5] == ("hub", "leaderboard", "row", "trial", "list"):
             return {"items": self.row_items, "total_pages": 1}
         raise AssertionError(args)

@@ -151,8 +151,9 @@
     no_model_calls_recorded: "no LLM calls are recorded to divide the token totals by",
     reasoning_tokens_not_split: "reasoning tokens aren't reported separately, so only the upper bound can be checked (it passed)",
     calls_without_usage: "some model calls report no token usage, so a plausible ratio over the others can't clear them",
+    step_metrics_may_be_cumulative: "every step's token counts are at least the previous step's, so they may be running totals, where totals equal to the last step are correct",
   };
-  const COMPARE = new Set(["usage_not_recorded", "no_model_calls_recorded", "reasoning_tokens_not_split", "calls_without_usage"]);
+  const COMPARE = new Set(["usage_not_recorded", "no_model_calls_recorded", "reasoning_tokens_not_split", "calls_without_usage", "step_metrics_may_be_cumulative"]);
   // Why an unknown is unknown, in one line: missing figures or unread parts of the trace.
   function unknownLead(finding) {
     const reasons = (finding?.unread ?? []).map(u => u.reason);
@@ -241,6 +242,9 @@
         return [`${num(m.prompt_tokens)} prompt tokens ÷ ${num(m.llm_calls)} LLM calls` +
           (typeof m.per_call === "number" ? ` = ${num(m.per_call)} per call` : "") +
           ` · flagged above ${num(m.limit_per_call)} per call`];
+      case "integrity.totals_are_last_call":
+        return [`Trajectory totals: ${num(m.prompt_tokens)} prompt + ${num(m.completion_tokens)} completion tokens = the last model call's ${num(m.last_prompt_tokens)} + ${num(m.last_completion_tokens)}`,
+          `The ${num(m.metered_steps)} metered steps sum to ${num(m.step_prompt_tokens)} prompt + ${num(m.step_completion_tokens)} completion tokens`];
       case "integrity.output_token_ratio":
         return [`${num(m.visible_chars)} visible characters ÷ ${num(m.output_tokens)} output tokens = ${num(m.chars_per_token)} per token`,
           `Expected ${num(m.min)}–${num(m.max)} per token · ${m.basis === "answer_only" ? "reasoning excluded" : "output tokens include reasoning"}` +

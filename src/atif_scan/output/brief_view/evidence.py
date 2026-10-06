@@ -29,6 +29,7 @@ from .words import (
 # Recording checks shown under TOKENS or COST instead (they concern usage or cost).
 USAGE_CHECKS = (
     "integrity.tokens_exceed_recorded_calls",
+    "integrity.totals_are_last_call",
     "integrity.output_token_ratio",
     "integrity.incomplete_tool_generation",
 )

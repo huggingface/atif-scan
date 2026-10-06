@@ -22,6 +22,9 @@ Both are fitted on the run's own data and stay estimates; the brief labels them 
   unbiased in aggregate; a single $/call ratio if the fit is ill-posed. When the run
   declares its prices (or --price gives them), trials priced at those rates are
   references too.
+- totals covering only the last call: trials whose final_metrics totals are one model
+  call's usage (integrity.totals_are_last_call) undercount by what their other metered
+  steps used; that difference (step sums minus totals) is priced at the run's rates.
 - declared prices: a run that declares its token prices (harbor-hf's run.json) is priced
   at them instead of a fit, and any cost it also recorded is checked against them.
 """
@@ -37,6 +40,7 @@ if TYPE_CHECKING:
     from ..data.jsonval import Doc
 
 from ..data.accounting import has_scoped_cost
+from ..data.jsonval import count
 
 MIN_PRICED = 20
 MIN_REFERENCES = 10
@@ -302,6 +306,52 @@ def partial_usage(items: Sequence[Doc], pricing: Pricing | None = None) -> Doc:
             min(i.get("stream_retry_attempts") or 0, i.get("calls_without_usage") or 0)
             for i in rows
         ),
+    }
+
+
+LAST_CALL_CHECK = "integrity.totals_are_last_call"
+
+
+def _beyond_totals(measure: Doc) -> list[float]:
+    """(uncached, cached, output) tokens the steps record beyond the totals (>= 0)."""
+
+    def more(kind: str) -> int:
+        steps, totals = count(measure.get(f"step_{kind}")), count(measure.get(kind))
+        return max((steps or 0) - (totals or 0), 0)
+
+    prompt, cached = more("prompt_tokens"), more("cached_tokens")
+    return [
+        float(max(prompt - cached, 0)),
+        float(min(cached, prompt)),
+        float(more("completion_tokens")),
+    ]
+
+
+def last_call_totals(items: Sequence[Doc], pricing: Pricing | None = None) -> Doc:
+    """Trials whose totals cover only their last model call: the tokens their steps
+    record beyond those totals, priced at the run's rates (None without rates)."""
+    pricing = pricing or Pricing()
+    rows = []
+    for item in items:
+        found = next(
+            (
+                a
+                for a in item.get("assessments") or []
+                if a.get("id") == LAST_CALL_CHECK and a.get("status") == "match"
+            ),
+            None,
+        )
+        if found is not None:
+            rows.append((item, _beyond_totals(found.get("measure") or {})))
+    costs = [pricing.price(row) for _, row in rows]
+    priced = rows and all(c is not None for c in costs)
+    return {
+        "trials": len(rows),
+        "ids": [i["input_id"] for i, _ in rows],
+        "rewarded": sum(1 for i, _ in rows if (i.get("reward") or 0) > 0),
+        "tokens": _token_totals([row for _, row in rows]),
+        "estimate_usd": round(sum(c or 0.0 for c in costs), 2) if priced else None,
+        "method": pricing.method if rows else None,
     }
 
 

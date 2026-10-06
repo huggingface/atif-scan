@@ -33,3 +33,21 @@ in final totals covering a different scope.
 A plausible ratio for metered output does not clear attempts without usage. Partial
 usage, retry counts and explicit provider-usage incompleteness remain evidence gaps.
 The ratio is a character-count sanity check, not a tokenizer measurement.
+
+## Totals that cover only the last call
+
+Some harnesses write one model call's usage as the run's `final_metrics` totals when a
+run is cut off (indusagi 0.2.12/0.2.13 timeouts and crashes). The totals then equal the
+last metered step's prompt and completion tokens exactly, while two or more metered
+steps sum to more; Harbor's recorded tokens and cost copy the short totals.
+
+`integrity.totals_are_last_call` reports the pattern with the totals, the step sums and
+the last step's figures. Canonical totals are not rewritten: the brief adds what the
+steps record beyond them (step sums minus totals) as tokens under TOKENS and, priced at
+the run's rates, as an estimate outside the recorded total under COST. The text/token
+ratio uses the steps' own tokens for these trials, since the whole run's text can't be
+compared with one call's output.
+
+Step metrics where every step's prompt and completion tokens are at least the previous
+step's may be running totals, for which totals equal to the last step are correct: the
+check is unknown (`step_metrics_may_be_cumulative`) and the totals are used as recorded.

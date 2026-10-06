@@ -119,6 +119,7 @@ UNREAD_REASONS = frozenset(
         "no_model_calls_recorded",  # nothing to divide token totals by
         "reasoning_tokens_not_split",  # only the upper bound of a ratio can be checked
         "calls_without_usage",  # some model calls report no tokens: a subset can't clear them
+        "step_metrics_may_be_cumulative",  # per-step usage only rises: may be running totals
     }
 )
 # Places listed per assessment; the first few say where, all of them only add volume.

@@ -63,6 +63,52 @@ def trial(i, task, reward, error=None, cost=0.5, tokens=1000, has_trajectory=Tru
     }
 
 
+PRIVATE = "operator-home-secret"
+
+
+def record(row):
+    """A synthetic `hub trial show --json` reply: phase timings plus fields the synced
+    result.json must not keep (owner, user, paths, config, exception text)."""
+    error = row["error_type"]
+    return {
+        "id": row["id"],
+        "trial_name": row["name"],
+        "task_name": row["task_name"],
+        "started_at": "2026-08-27T16:12:00+00:00",
+        "finished_at": "2026-08-27T16:17:00+00:00",
+        "environment_setup": {
+            "started_at": "2026-08-27T16:12:00+00:00",
+            "finished_at": "2026-08-27T16:12:30+00:00",
+        },
+        "agent_setup": {
+            "started_at": "2026-08-27T16:12:30+00:00",
+            "finished_at": "2026-08-27T16:13:00+00:00",
+        },
+        "agent_execution": {
+            "started_at": "2026-08-27T16:13:00+00:00",
+            "finished_at": "2026-08-27T16:16:00+00:00",
+        },
+        "verifier": {
+            "started_at": "2026-08-27T16:16:00+00:00",
+            "finished_at": "2026-08-27T16:17:00+00:00",
+        },
+        "verifier_result": {"rewards": {"reward": row["reward"]}}
+        if row["reward"] is not None
+        else None,
+        "exception_info": {
+            "exception_type": error,
+            "occurred_at": "2026-08-27T16:16:00+00:00",
+            "exception_message": PRIVATE,
+            "exception_traceback": PRIVATE,
+        }
+        if error
+        else None,
+        "owner_org": {"name": PRIVATE},
+        "created_by_user": {"username": PRIVATE, "avatar_url": "https://example.invalid/a"},
+        "config": {"trials_dir": f"/home/{PRIVATE}/runs"},
+    }
+
+
 TRIALS = [
     trial(1, "alpha", 1),
     trial(2, "alpha", 0),
@@ -98,6 +144,8 @@ FAKE = textwrap.dedent(
         out = pathlib.Path(args[args.index("-o") + 1]) / row["name"]
         out.mkdir(parents=True, exist_ok=True)
         (out / "trajectory.json").write_text(json.dumps(data["trajectories"][row["id"]]))
+    elif args[:3] == ["hub", "trial", "show"]:
+        print(json.dumps(data["records"][args[3]]))
     elif args[:3] == ["hub", "job", "download"]:
         root = pathlib.Path(args[args.index("-o") + 1]) / "my-job"
         for row in data["trials"]:
@@ -133,6 +181,7 @@ def harbor(tmp_path, monkeypatch):
             },
         },
         "trials": TRIALS,
+        "records": {t["id"]: record(t) for t in TRIALS},
         "trajectories": {
             t["id"]: trajectory(COMMANDS.get(i + 1, "ls")) for i, t in enumerate(TRIALS)
         },
@@ -386,8 +435,9 @@ def test_leaderboard_row_scans_exactly_its_trials(row_harbor, capsys, value):
         JOB,
         JOB2,
     }
-    # One `trial show` per job, not per trial (plus the unresolved one).
-    assert len(calls(row_harbor, "trial show")) == 3
+    # Finding jobs: one `trial show` per job, not per trial (plus the unresolved one);
+    # then one per scanned trial for its timings (result.json).
+    assert len(calls(row_harbor, "trial show")) == 3 + 4
 
 
 def test_leaderboard_row_brief_compares_with_reported(row_harbor, capsys):
@@ -420,6 +470,7 @@ def test_leaderboard_row_reports_progress_without_identifiers(row_harbor, tmp_pa
     assert "listing job 1 trials · page 1/1 · 3 trials" in messages
     downloads = [m for m in messages if m.startswith("downloading")]
     assert downloads[-1].startswith("downloading trajectories 2/2")  # per job
+    assert downloads[-1].endswith("· 2 without timings")  # the fake has no trial records
     joined = "\n".join(messages)
     assert (
         ROW not in joined and JOB not in joined and "alpha" not in joined and "0000" not in joined
@@ -438,6 +489,44 @@ def test_harbor_download_progress_counts_failures(harbor, tmp_path):
     harbor_sources(f"harbor://jobs/{JOB}", tmp_path / "dl", workers=1, progress=messages.append)
     assert "listing job trials · page 2/2 · 6 trials" in messages
     assert messages[-1] == "downloading trajectories 6/6 · 1 failed"  # trial 6 has none
+
+
+def test_hub_trial_records_are_saved_reduced_and_read_as_result_json(harbor, tmp_path, capsys):
+    """Each synced trial gets the allowlisted fields of its Hub record as result.json:
+    the agent walltime and failed phase are then known, and nothing personal is kept."""
+    from atif_scan.sources.harbor.hub import harbor_sources
+
+    sources, _ = harbor_sources(f"harbor://jobs/{JOB}", tmp_path / "dl", workers=1)
+    saved = sorted((tmp_path / "dl").rglob("result.json"))
+    assert len(saved) == 6  # trial 6 has no trajectory but still has its record
+    for path in saved:
+        text = path.read_text()
+        assert PRIVATE not in text and "example.invalid" not in text
+        assert path.stat().st_mode & 0o777 == 0o600
+    timed_out = next(s for s in sources if s.label == "beta__T4").details()
+    assert timed_out["agent_duration_sec"] == 180
+    assert timed_out["failed_phase"] == "agent_execution"
+    assert timed_out["error_type"] == "AgentTimeoutError"
+
+    # A resumed sync asks for nothing it already has.
+    log_before = len(calls(harbor, "trial show"))
+    harbor_sources(f"harbor://jobs/{JOB}", tmp_path / "dl", workers=1)
+    assert len(calls(harbor, "trial show")) == log_before
+
+
+def test_hub_exception_time_at_the_trial_end_is_not_a_failed_phase():
+    """Regression: the Hub stamps occurred_at with the trial's finish, so every timeout
+    read as failing after the verifier. That time is dropped: the phase is unknown."""
+    from atif_scan.sources.harbor.files import trial_result
+    from atif_scan.sources.harbor.hub import reduced_result
+
+    show = record(TRIALS[3])
+    show["exception_info"]["occurred_at"] = "2026-08-27 16:17:00+00"  # = finished_at
+    reduced = reduced_result(show)
+    assert reduced is not None
+    assert reduced["exception_info"] == {"exception_type": "AgentTimeoutError"}
+    facts = trial_result(json.dumps(reduced).encode())
+    assert facts["error_type"] == "AgentTimeoutError" and "failed_phase" not in facts
 
 
 def test_harbor_status_line_only_on_terminals(harbor, capsys, monkeypatch):
@@ -528,12 +617,17 @@ def test_local_copy_of_a_hub_job_keeps_hub_facts(harbor, tmp_path, capsys):
     assert run["job_id"] == JOB and run["overrides"] == live["runs"][0]["overrides"]
     assert run["listed_trials"] == len(live["inputs"]) > len(local["inputs"])  # T6: none
 
-    # A damaged or foreign sidecar is ignored, never trusted or fatal.
+    # A damaged or foreign sidecar is ignored, never trusted or fatal: the listing's
+    # facts go (no Hub trial id, cost), while each trial's synced result.json still
+    # gives its reward, as for a local Harbor run.
     for junk in ("not json", json.dumps({"version": 1, "job": "../x", "show": {}, "rows": []})):
         saved.write_text(junk)
         assert main([str(sync / "harbor" / JOB), "--format", "json"]) in (0, 1)
         doc = json.loads(capsys.readouterr().out)
-        assert all(i["reward"] is None for i in doc["inputs"])
+        assert all(i.get("hub_trial_id") is None for i in doc["inputs"])
+        assert {i["input_id"]: i["reward"] for i in doc["inputs"]} == {
+            k: v[1] for k, v in facts.items()
+        }
 
 
 def test_row_syncs_sharing_a_job_keep_each_others_listing_rows(tmp_path):

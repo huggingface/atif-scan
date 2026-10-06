@@ -144,6 +144,11 @@ test("accounting checks show their own calculation", () => {
   assert.deepEqual(E.calcLines({ check_id: "integrity.tokens_exceed_recorded_calls",
     measure: { prompt_tokens: 1108874, llm_calls: 33, limit_per_call: 2000000, per_call: 33602.2 } }),
     ["1,108,874 prompt tokens ÷ 33 LLM calls = 33,602.2 per call · flagged above 2,000,000 per call"]);
+  assert.deepEqual(E.calcLines({ check_id: "integrity.totals_are_last_call",
+    measure: { prompt_tokens: 50000, completion_tokens: 30, last_prompt_tokens: 50000, last_completion_tokens: 30,
+      step_prompt_tokens: 90000, step_completion_tokens: 1330, metered_steps: 3 } }),
+    ["Trajectory totals: 50,000 prompt + 30 completion tokens = the last model call's 50,000 + 30",
+      "The 3 metered steps sum to 90,000 prompt + 1,330 completion tokens"]);
   assert.equal(E.calcLines({ check_id: "integrity.cost_missing", measure: { prompt_tokens: 40103, completion_tokens: 2411, cost_usd: null } })[0],
     "Trajectory totals: 40,103 prompt + 2,411 completion tokens · cost: not recorded");
   assert.match(E.calcLines({ check_id: "integrity.output_token_ratio",

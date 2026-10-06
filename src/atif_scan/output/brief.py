@@ -25,6 +25,7 @@ from .estimates import (
     Pricing,
     choose_pricing,
     cost_estimate,
+    last_call_totals,
     missing_activity,
     partial_usage,
     price_check,
@@ -438,6 +439,8 @@ def brief(
         "cost_estimate": cost_estimate(items, pricing, other_model),
         "scoped_costs": _scoped_costs(items),
         "unmetered_work": unmetered_work(items, pricing, other_model),
+        # Totals that are only the last call's usage: what the steps add, priced.
+        "last_call_totals": last_call_totals(items, pricing),
         "usage": _usage(items, pricing),
         "cost_integrity": {
             "declared_prices": declared,

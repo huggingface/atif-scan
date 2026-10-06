@@ -218,6 +218,8 @@ class Usage:
 # A trace's results read as status-only when at least this many are recorded and this
 # share of them is a bare status word.
 MIN_STATUS_RESULTS = 5
+# Fewer metered calls than this: the one call's usage is the run's own total.
+MIN_METERED_CALLS = 2
 STATUS_ONLY_SHARE = 0.9
 STATUS_ONLY = frozenset(
     {
@@ -273,6 +275,12 @@ class Trace:
     # Token kinds ("input", "output", "cached") only some metered steps record: their
     # step sums are lower bounds, never complete totals.
     step_kinds_partial: tuple[str, ...] = ()
+    # The last metered agent step's own usage, how many agent steps recorded usage, and
+    # whether every metered step's prompt and completion tokens are at least the
+    # previous one's (the step metrics could then be running totals; loader.last_call).
+    last_step_usage: Usage | None = None
+    metered_steps: int = 0
+    step_usage_rising: bool = False
     # Explicit fast-agent provider retries (legacy "stream" names). These are
     # harness events, not proof that usage or agent history is missing.
     stream_retry_steps: int = 0
@@ -287,6 +295,25 @@ class Trace:
     usage_calls_complete: bool | None = None
     # Root-only totals after reconciling declared child usage with embedded records.
     root_usage: Usage | None = None
+
+    @cached_property
+    def totals_match_last_call(self) -> bool:
+        """final_metrics prompt and completion totals equal the last metered step's own,
+        while two or more metered steps sum to more. With rising step metrics they may
+        be running totals instead (`step_usage_rising`), where that is correct."""
+        usage, last, steps = self.usage, self.last_step_usage, self.step_usage
+        if usage is None or last is None or steps is None or self.metered_steps < MIN_METERED_CALLS:
+            return False
+        if usage.prompt_tokens is None or usage.completion_tokens is None:
+            return False
+        same = (usage.prompt_tokens, usage.completion_tokens) == (
+            last.prompt_tokens,
+            last.completion_tokens,
+        )
+        more = (steps.prompt_tokens or 0) > usage.prompt_tokens or (
+            steps.completion_tokens or 0
+        ) > usage.completion_tokens
+        return same and more
 
     @property
     def authored_usage(self) -> Usage | None:

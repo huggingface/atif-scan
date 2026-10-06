@@ -77,7 +77,9 @@ def output_ratio(trace: Trace) -> OutputRatio | None:
     """None when no completion tokens are reported (or none remain after reasoning)."""
     agent = [s for s in trace.steps if s.authored]
     usage = trace.authored_usage
-    if usage is not None and usage.completion_tokens is not None:
+    # Totals that are only the last call's usage can't be compared with every step's text.
+    last_call = trace.totals_match_last_call and not trace.step_usage_rising
+    if usage is not None and usage.completion_tokens is not None and not last_call:
         steps, tokens, whole = agent, usage.completion_tokens, True
     else:  # per-step metrics: compare only the steps that report tokens
         steps = [s for s in agent if s.completion_tokens is not None]

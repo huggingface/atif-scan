@@ -7,7 +7,12 @@
 2. `harbor hub job trials <id> --json` (paged) for each trial's name, task, reward, error,
    cost and tokens, which the Hub records authoritatively;
 3. trajectories: `harbor hub trial download <trial> --trajectory` per trial, in parallel
-   (default), or one `harbor hub job download <id>` for the full archive (`full=True`).
+   (default), or one `harbor hub job download <id>` for the full archive (`full=True`);
+4. with each trajectory, `harbor hub trial show <trial> --json` (~4 KB): phase timings,
+   exception type and time, rewards. Reduced to the allowlisted fields of a Harbor trial
+   result.json (`reduced_result`) and saved as `result.json` beside the trajectory, so a
+   Hub trial reads like a local one (agent walltime, failed phase). The archive already
+   has each trial's result.json.
 
 The CLI is run without a shell, with fixed arguments and a validated UUID; nothing from a
 trace is ever passed to it. Its stderr is withheld (it can carry URLs or tokens). Using
@@ -27,6 +32,7 @@ import threading
 from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from ...data.jsonval import (
@@ -34,6 +40,7 @@ from ...data.jsonval import (
     JsonObject,
     as_list,
     as_object,
+    as_str,
     count,
     is_object,
     number,
@@ -43,8 +50,10 @@ from ..inputs import Source, SourceError, local_fingerprint
 from ..sync import private_directory, private_tree
 from .files import (
     OVERRIDE,
+    PHASES,
     _flatten,
     text_label,
+    trial_result,
 )
 from .listing import (
     SAVED_LISTING,
@@ -344,6 +353,88 @@ def _fetch_trajectory(cli: Harbor, row: Mapping[str, object], path: Path, dest: 
     return path.is_file()
 
 
+RESULT = "result.json"
+RESULT_BYTES = 1024 * 1024
+RESULT_TEXT = ("id", "trial_name", "task_name", "started_at", "finished_at")
+PHASE_TIMES = ("started_at", "finished_at")
+EXCEPTION_KEYS = ("exception_type", "occurred_at")
+
+
+def _strings(record: Mapping[str, object], keys: Sequence[str]) -> Doc:
+    return {k: v for k in keys if (v := as_str(record.get(k))) is not None}
+
+
+def _same_time(a: object, b: object) -> bool:
+    try:
+        return datetime.fromisoformat(str(a)) == datetime.fromisoformat(str(b))
+    except ValueError:
+        return False
+
+
+def reduced_result(show: Mapping[str, object]) -> Doc | None:
+    """The fields of a Hub trial record (`hub trial show --json`) that Harbor's trial
+    result.json has and `trial_result` reads: names, timings, exception type and time,
+    numeric rewards. Owner and user names, the operator's paths, the run config and
+    exception messages are dropped. The Hub stamps an exception's `occurred_at` with the
+    trial's end, which says nothing about where it failed (a timeout would read as after
+    the verifier): that time is dropped, leaving the failed phase unknown. None when it
+    isn't a trial record."""
+    if as_str(show.get("trial_name")) is None and as_str(show.get("task_name")) is None:
+        return None
+    result: Doc = _strings(show, RESULT_TEXT)
+    for phase in PHASES:
+        if is_object(times := show.get(phase)):
+            result[phase] = _strings(times, PHASE_TIMES)
+    rewards = as_object(as_object(show.get("verifier_result")).get("rewards"))
+    numeric = {k: v for k, v in rewards.items() if number(v) is not None}
+    if numeric:
+        result["verifier_result"] = {"rewards": numeric}
+    if is_object(exception := show.get("exception_info")):
+        kept = _strings(exception, EXCEPTION_KEYS)
+        if _same_time(kept.get("occurred_at"), result.get("finished_at")):
+            del kept["occurred_at"]
+        result["exception_info"] = kept
+    return result
+
+
+def _write_private(path: Path, doc: Doc) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(doc))
+    tmp.chmod(0o600)
+    tmp.replace(path)
+
+
+def _fetch_result(cli: Harbor, row: Mapping[str, object], path: Path) -> bool:
+    """Save one trial's reduced Hub record as `path` (result.json); False when the Hub
+    gave none. A reply that isn't a trial record is saved as `{}` so a resumed sync
+    doesn't ask again; a failed command is retried next time. Best effort: without it
+    the trial's timings are unknown, not wrong."""
+    try:
+        result = reduced_result(_object(cli.json("hub", "trial", "show", str(row["id"]))))
+        _write_private(path, result or {})
+    except (SourceError, OSError):
+        return False
+    return result is not None
+
+
+def _details(trajectory: Path) -> Callable[[], Doc]:
+    """Lazy reader for the trial's result.json: beside the trajectory (synced) or one
+    folder up (the job archive's `<trial>/agent/trajectory.json`)."""
+
+    def read() -> Doc:
+        for path in (trajectory.parent / RESULT, trajectory.parent.parent / RESULT):
+            try:
+                with path.open("rb") as handle:
+                    if facts := trial_result(handle.read(RESULT_BYTES)):
+                        return facts
+            except OSError:
+                continue
+        return {}
+
+    return read
+
+
 @dataclass
 class _Downloads:
     """Progress of parallel trajectory downloads (fixed text and counts only)."""
@@ -353,6 +444,7 @@ class _Downloads:
     progress: Progress
     done: int = 0
     failed: int = 0
+    no_result: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def report(self) -> None:
@@ -360,12 +452,14 @@ class _Downloads:
             f"downloading trajectories {self.done}/{self.total}"
             + (f" · {self.local} already local" if self.local else "")
             + (f" · {self.failed} failed" if self.failed else "")
+            + (f" · {self.no_result} without timings" if self.no_result else "")
         )
 
-    def finished(self, ok: bool) -> None:
+    def finished(self, ok: bool, result: bool = True) -> None:
         with self.lock:
             self.done += 1
             self.failed += not ok
+            self.no_result += not result
             self.report()
 
 
@@ -379,20 +473,31 @@ def fetch(
     refresh: bool = False,
     progress: Progress = _quiet,
 ) -> dict[str, Path]:
-    """Download trajectories into `dest`; returns trial id -> expected trajectory path.
+    """Download trajectories (and each trial's reduced result.json) into `dest`;
+    returns trial id -> expected trajectory path.
 
-    Trajectory mode resumes: files already present are not downloaded again. A failed
-    download leaves the trial unavailable (reported), never aborts the scan.
+    Trajectory mode resumes: files already present are not downloaded again, and an
+    older sync without result.json gets just those. A failed download leaves the trial
+    unavailable (reported), never aborts the scan.
     """
     private_tree(dest)
     if full:
         return _fetch_archive(cli, job, rows, dest, refresh, progress)
     paths = {str(r["id"]): dest / trial_label(r) / "trajectory.json" for r in rows}
-    todo = [r for r in rows if refresh or not paths[str(r["id"])].is_file()]
+
+    def missing(row: Mapping[str, object]) -> tuple[bool, bool]:
+        path = paths[str(row["id"])]
+        return refresh or not path.is_file(), refresh or not (path.parent / RESULT).is_file()
+
+    todo = [r for r in rows if any(missing(r))]
     downloads = _Downloads(len(todo), len(rows) - len(todo), progress)
 
     def one(row: Mapping[str, object]) -> None:
-        downloads.finished(_fetch_trajectory(cli, row, paths[str(row["id"])], dest))
+        path = paths[str(row["id"])]
+        trajectory, result = missing(row)
+        ok = _fetch_trajectory(cli, row, path, dest) if trajectory else True
+        saved = _fetch_result(cli, row, path.parent / RESULT) if result else True
+        downloads.finished(ok, saved)
 
     if todo:
         downloads.report()
@@ -524,6 +629,7 @@ def _trial_sources(
             _loader(paths[str(row["id"])]),
             meta=trial_meta(row),
             fingerprint=local_fingerprint(paths[str(row["id"])]),
+            details=_details(paths[str(row["id"])]),
             local=paths[str(row["id"])],
         )
         for row in rows
