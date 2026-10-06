@@ -11,8 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
-from ..checks import CheckSpec, Context, Detection, Detector, Severity
+from ..checks import CheckSpec, Context, Detection, Detector, Severity, Unread
 from ..data import account_ids
+from .text import unrecorded_results
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,16 +52,16 @@ class AccountIdExposure:
 
     def evaluate(self, trace: Trace, context: Context) -> Detection:
         hits: list[Locator] = []
-        complete = bool(trace.steps)
-        for surface in _surfaces(trace):
-            complete = complete and surface.content.understood
+        surfaces = list(_surfaces(trace))
+        unread = [Unread("unreadable", s.at) for s in surfaces if not s.content.understood]
+        for surface in surfaces:
             for found in account_ids.find(surface.content.text):
                 if found.kind == self.kind:
                     hits.append(replace(surface.at, span=found.span))
-        # A call without a recorded result may have printed one: not a clean negative.
-        if any(not step.results_for(call) for step, call in trace.agent_calls()):
-            complete = False
-        return Detection.of(hits, complete)
+        # A call without a recorded result may have printed one: not a clean negative,
+        # and the report says which call and why (run ended, compaction, not recorded).
+        unread += unrecorded_results(trace)
+        return Detection.of(hits, bool(trace.steps) and not unread, unread)
 
 
 def account_id_detectors() -> list[Detector]:

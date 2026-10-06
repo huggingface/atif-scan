@@ -260,3 +260,26 @@ def test_report_and_citation_never_carry_the_value():
     assert "chatgpt_account_id" in cited
     command = json.dumps(cite(t, Locator(0, Channel.COMMAND, call=0, field=0, span=(0, 4))))
     assert ACCOUNT not in command
+
+
+def test_unknown_says_which_call_left_no_result():
+    from atif_scan import Context, Status, parse_trace
+    from atif_scan.detectors.account_ids import account_id_detectors
+
+    steps = [
+        {"source": "user", "message": "Fix /app."},
+        {
+            "source": "agent",
+            "message": "",
+            "tool_calls": [
+                {"tool_call_id": "c1", "function_name": "bash", "arguments": {"command": "env"}}
+            ],
+        },
+    ]
+    trace = parse_trace({"schema_version": "ATIF-v1.7", "steps": steps})
+    for detector in account_id_detectors():
+        result = detector.evaluate(trace, Context())
+        assert result.status == Status.UNKNOWN
+        assert [(u.reason, u.at.step if u.at else None) for u in result.unread] == [
+            ("run_ended", 1)
+        ]
