@@ -226,6 +226,13 @@ def _recording_texts(b: Doc) -> Lines:
         )
     if not texts:
         texts.append(f"{OK} no recording defect detected")
+    if (cc := b.get("context_compactions") or {}).get("trials"):
+        # Not a gap: the steps stay in the file; the agent worked from a summary after it.
+        texts.append(
+            f"{INFO} agent context compacted in {plural(cc['trials'], 'trial')}"
+            f" ({plural(cc['total'], 'compaction')}); earlier steps stay in the recording, the"
+            " agent continued from a summary"
+        )
     if exposure := b.get("reasoning"):
         # A property of the model and its API, not a recording defect: never a warning.
         shown = " · ".join(f"{REASONING[k]} {v:,}" for k, v in exposure.items())

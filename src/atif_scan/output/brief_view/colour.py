@@ -10,11 +10,19 @@ from ..document import STYLE
 if TYPE_CHECKING:
     from rich.text import Text
 
+from .words import LABEL, MARK_HANG
 
-LABELS = "WEB|RUN|SCORE|REVIEW|FINDINGS|AWARENESS|EVIDENCE|TOKENS|COST|SETTINGS|MORE"
+LABELS = "WEB|RUN|SCORE|REPLACED|REVIEW|FINDINGS|AWARENESS|EVIDENCE|TOKENS|COST|SETTINGS|MORE"
 
 
 SEVERITY_STYLE = {**STYLE, "none": "dim", "unavailable": "yellow"}
+
+
+# A · context row is dim. wrap() continues that row MARK_HANG spaces past the label
+# column, under the text after the mark, so the row pattern misses the rest.
+_CONTEXT_LINE = rf"^ {{{LABEL}}}· .*$"
+_CONTEXT_LINE_RE = re.compile(_CONTEXT_LINE, re.M)
+_MARK_WRAP = re.compile(rf"^ {{{LABEL + MARK_HANG}}}\S")
 
 
 PATTERNS = [
@@ -24,7 +32,7 @@ PATTERNS = [
     (r"✓", "bold green"),
     (r"⚠", "bold yellow"),
     (r"→", "bold magenta"),
-    (r"^ {11}· .*$", "dim"),
+    (_CONTEXT_LINE, "dim"),
     (r"(?<=^SCORE {6})\d+\.\d+%(?: ± \d+\.\d+)?", "bold"),
     (r"\best\. [^;·(]*?\d[\d.,–%$<]*", "magenta"),
     (r"^ {11}priority +trials +rewarded +finding$", "dim underline"),
@@ -41,16 +49,30 @@ COMPILED = [(re.compile(pattern, re.M), style) for pattern, style in PATTERNS] +
 ]
 
 
+def _wraps_context(line: str, hanging: bool) -> bool:
+    """A wrap() continuation of a · row, not a new mark or a table row."""
+    return hanging and _MARK_WRAP.match(line) is not None
+
+
 def colourise(text: str) -> Text:
-    """The brief as a rich Text with styles applied by pattern."""
+    """The brief as a rich Text with styles applied by pattern.
+
+    A wrapped continuation of a · context line stays dim. The line pattern only
+    matches the row that starts with the mark.
+    """
     from rich.text import Text  # noqa: PLC0415 - rich is optional, imported only to colour
 
     out = Text()
+    hanging = False
     for line in text.splitlines(keepends=True):
+        continuing = _wraps_context(line, hanging)
         styled = Text(line)
+        if continuing:
+            styled.stylize("dim")
         for pattern, style in COMPILED:
             styled.highlight_regex(pattern, style)
         out.append_text(styled)
+        hanging = continuing or _CONTEXT_LINE_RE.match(line) is not None
     return out
 
 

@@ -9,14 +9,14 @@ Harbor's schema validator checks timestamp syntax only, not ordering or smearing
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from ..checks import CheckSpec, Context, Detection, Detector, Severity, Status
+from ..checks import CheckSpec, Context, Detection, Detector, Measure, Severity, Status, Unread
 from ..data.facts import output_ratio
 from ..data.model import Channel, Locator, Trace
 from ..data.web_inputs import web_input
@@ -179,9 +179,13 @@ WEB_INPUT = {"web_search": Channel.QUERY, "web_fetch": Channel.URL}
 
 
 def web_results_not_recorded(trace: Trace) -> Detection:
-    """Only missing/unusable outcomes, not explicit retrieval errors or input gaps."""
+    """Missing/unusable outcomes, located at each recorded call (not a missing body).
+
+    Explicit retrieval errors and input gaps keep their existing classification.
+    A metadata locator avoids pretending that absent arguments/results were recorded.
+    """
     hits = [
-        _meta(step)
+        Locator(step.index, Channel.METADATA, call=call.index)
         for step, call in trace.agent_calls()
         if call.tool in WEB_INPUT and not web_outcomes_recorded(step, call)
     ]
@@ -234,13 +238,22 @@ def subagent_unrecorded(trace: Trace) -> Detection:
     return _result(hits, complete=True)
 
 
+NO_USAGE = (Unread("usage_not_recorded"),)
+
+
 def cost_missing(trace: Trace) -> Detection:
     """Positive final token counts without ATIF cost; other records may carry cost."""
     usage = trace.usage
     if usage is None:
-        return Detection(Status.UNKNOWN, complete=False)
+        return Detection(Status.UNKNOWN, complete=False, unread=NO_USAGE)
     tokens = (usage.prompt_tokens or 0) + (usage.completion_tokens or 0)
-    return _result([], complete=True, matched=usage.cost_usd is None and tokens > 0)
+    measure = (
+        ("prompt_tokens", usage.prompt_tokens),
+        ("completion_tokens", usage.completion_tokens),
+        ("cost_usd", usage.cost_usd),
+    )
+    found = _result([], complete=True, matched=usage.cost_usd is None and tokens > 0)
+    return replace(found, measure=measure)
 
 
 # No single model call consumes more prompt tokens than this; more per recorded call means
@@ -251,11 +264,23 @@ TOKENS_PER_CALL = 2_000_000
 def tokens_exceed_recorded_calls(trace: Trace) -> Detection:
     usage = trace.usage
     if usage is None or usage.prompt_tokens is None:
-        return Detection(Status.UNKNOWN, complete=False)
+        return Detection(Status.UNKNOWN, complete=False, unread=NO_USAGE)
     calls = trace.llm_calls or trace.agent_steps
+    measure: Measure = (
+        ("prompt_tokens", usage.prompt_tokens),
+        ("llm_calls", calls or 0),
+        ("limit_per_call", TOKENS_PER_CALL),
+    )
     if not calls:
-        return Detection(Status.UNKNOWN, complete=False)
-    return _result([], complete=True, matched=usage.prompt_tokens / calls > TOKENS_PER_CALL)
+        return Detection(
+            Status.UNKNOWN,
+            complete=False,
+            unread=(Unread("no_model_calls_recorded"),),
+            measure=measure,
+        )
+    per_call = usage.prompt_tokens / calls
+    found = _result([], complete=True, matched=per_call > TOKENS_PER_CALL)
+    return replace(found, measure=(*measure, ("per_call", round(per_call, 1))))
 
 
 # Output text vs output tokens. Tokenizers encode ~2-4.5 characters of English/code per
@@ -272,14 +297,40 @@ def output_token_ratio(trace: Trace) -> Detection:
     issue: tokens under/over-reported, or text added/dropped after the fact)."""
     ratio = output_ratio(trace)
     if ratio is None:
-        return Detection(Status.UNKNOWN, complete=False)
+        return Detection(Status.UNKNOWN, complete=False, unread=NO_USAGE)
+    measure: Measure = (
+        ("visible_chars", ratio.chars),
+        ("output_tokens", ratio.tokens),
+        ("chars_per_token", round(ratio.value, 2)),
+        ("min", MIN_CHARS_PER_TOKEN),
+        ("max", MAX_CHARS_PER_TOKEN),
+        ("basis", "answer_only" if ratio.answer_only else "includes_reasoning"),
+    )
     if ratio.value > MAX_CHARS_PER_TOKEN:
-        return _result([], complete=True, matched=True)
+        return replace(_result([], complete=True, matched=True), measure=measure)
     if not ratio.low_verifiable:  # upper bound passed; lower bound can't be checked
-        return Detection(Status.UNKNOWN, complete=False)
-    # A plausible metered subset cannot clear attempts whose usage is unknown.
-    complete = not trace.calls_without_usage and trace.usage_calls_complete is not False
-    return _result([], complete=complete, matched=ratio.value < MIN_CHARS_PER_TOKEN)
+        return Detection(
+            Status.UNKNOWN,
+            complete=False,
+            unread=(Unread("reasoning_tokens_not_split"),),
+            measure=measure,
+        )
+    # A plausible metered subset cannot clear attempts whose usage is unknown, except
+    # provider attempts the harness recorded as failed and retried (fast-agent retry/v1):
+    # their tokens are never in the metered count, so they can't make text look
+    # under-tokenised, and any of their output that reached the trace only adds
+    # characters, which the upper bound above already judges.
+    retried = min(trace.calls_without_usage, trace.stream_retry_attempts)
+    unexplained = trace.calls_without_usage - retried
+    complete = not unexplained and (bool(retried) or trace.usage_calls_complete is not False)
+    found = _result([], complete=complete, matched=ratio.value < MIN_CHARS_PER_TOKEN)
+    unread = () if found.complete else (Unread("calls_without_usage"),)
+    measure = (
+        *measure,
+        ("calls_without_usage", trace.calls_without_usage),
+        ("failed_retry_attempts", trace.stream_retry_attempts),
+    )
+    return replace(found, measure=measure, unread=unread)
 
 
 def incomplete_tool_generation(trace: Trace) -> Detection:
@@ -450,7 +501,7 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec(
                 "integrity.web_results_not_recorded",
                 Severity.LOW,
-                version="2",
+                version="3",
                 title="Web search or fetch result not recorded",
             ),
             web_results_not_recorded,
@@ -495,7 +546,7 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec(
                 "integrity.output_token_ratio",
                 Severity.LOW,
-                version="3",
+                version="4",
                 title="Agent text doesn't fit reported output tokens",
             ),
             output_token_ratio,

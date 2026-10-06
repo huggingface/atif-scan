@@ -44,7 +44,7 @@ def task_name_pattern(names: Iterable[str]) -> re.Pattern[str]:
 def catalog_version(names: Iterable[str]) -> str:
     """Check version: a changed catalog rescans cached results (like the reference pack's
     digest suffix)."""
-    return "2." + hashlib.sha256(" ".join(sorted(names)).encode()).hexdigest()[:8]
+    return "3." + hashlib.sha256(" ".join(sorted(names)).encode()).hexdigest()[:8]
 
 
 def catalog_names(

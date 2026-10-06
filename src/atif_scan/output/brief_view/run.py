@@ -4,6 +4,7 @@ awareness."""
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING
 
 from ..overview import MIN_ATTEMPTS_FOR_SE
@@ -408,3 +409,36 @@ def awareness_section(b: Doc) -> Lines:
             " web output evidence unavailable"
         )
     return wrap("AWARENESS", [head, *rows])
+
+
+def replaced_section(b: Doc) -> Lines:
+    """--run/--release: which trials count. Replacements re-run infrastructure failures;
+    the score uses them, the replaced originals stay as evidence, the as-run score too."""
+    sel = b.get("selection")
+    if not sel:
+        return []
+    rows = [r for r in sel["replacements"] if r.get("state") != "superseded"]
+    superseded = len(sel["replacements"]) - len(rows)
+    source = "release" if sel["kind"] == "release" else "bench-run"
+    if not sel["replacements"]:
+        return wrap("REPLACED", [f"{OK} no replacements in {source} {sel['name']}: scored as run"])
+    errors = Counter(r.get("replaced_error") or "unknown" for r in rows)
+    body = [
+        f"{plural(len(rows), 'trial')} re-run after an infrastructure failure ({source}"
+        f" {sel['name']}): " + " · ".join(f"{e} {n}" for e, n in errors.most_common())
+    ]
+    acc = sel.get("as_run_accuracy")
+    if acc:
+        body.append(
+            f"{INFO} SCORE uses the replacements; as first run it was {acc[0]:.1f}%"
+            + (f" ± {acc[1]:.1f}" if acc[1] else "")
+        )
+    if superseded:
+        body.append(f"{INFO} {plural(superseded, 'replacement')} failed too and was re-run again")
+    if sel["pending"]:
+        body.append(f"{WARN} {plural(sel['pending'], 'replacement')} not started: no trial yet")
+    body.append(
+        f"{INFO} {plural(sel['not_counted'], 'replaced trial')} kept as evidence, not scored"
+        + (" (--as-run scans the original jobs)" if sel["kind"] == "bench_run" else "")
+    )
+    return wrap("REPLACED", body)

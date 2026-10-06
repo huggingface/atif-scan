@@ -39,9 +39,16 @@ if TYPE_CHECKING:
 
     from ...data.jsonval import Doc
 from .evidence import evidence_section, web_activity_section
-from .run import awareness_section, findings_section, review_section, run_section, score_section
+from .run import (
+    awareness_section,
+    findings_section,
+    replaced_section,
+    review_section,
+    run_section,
+    score_section,
+)
 from .usage import cost_section, tokens_section, walltime_section
-from .words import INFO, OK, WARN, Lines, plural, wrap
+from .words import INFO, OK, WARN, Lines, collecting, plural, wrap
 
 
 def settings_section(b: Doc) -> Lines:
@@ -129,6 +136,7 @@ def more_section(b: Doc) -> Lines:
 SECTIONS: tuple[Callable[[Doc], Lines], ...] = (
     run_section,
     score_section,
+    replaced_section,
     review_section,
     findings_section,
     awareness_section,
@@ -151,3 +159,12 @@ def brief_text(b: Doc) -> str:
     ]
     blocks = [lines for section in SECTIONS if (lines := section(b))]
     return "\n\n".join("\n".join(block) for block in [head, *blocks]) + "\n"
+
+
+def sections(b: Doc, skip: frozenset[str] = frozenset({"MORE"})) -> list[Doc]:
+    """The brief's sections as unwrapped entries, one per line of meaning, for views that
+    reflow text themselves. Same words as `brief_text`: built from the brief document."""
+    with collecting() as sink:
+        for section in SECTIONS:
+            section(b)
+    return [s for s in sink if s["label"] not in skip]

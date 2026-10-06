@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from ..checks import CheckSpec
     from ..data.jsonval import Doc
+    from ..data.model import Locator
     from ..data.web_activity import WebActivity
     from ..engine import Assessment
 
@@ -190,6 +191,17 @@ def report(
             return None
         return int(step_numbers[position])
 
+    def place(e: Locator) -> Doc:
+        return {
+            "step": e.step,
+            "step_id": step_id(e.step),
+            "channel": e.channel.value,
+            "call": e.call,
+            "observation": e.observation,
+            "field": e.field,
+            "span": list(e.span) if e.span else None,
+        }
+
     counted = [a for a in assessments if a.counts]
     severity = max((a.spec.severity for a in counted), default=Severity.INFO)
     output = {
@@ -223,17 +235,13 @@ def report(
                 "dependencies": list(a.dependencies),
                 "covers": list(a.covers),
                 "expected_by": list(a.expected_by),
-                "evidence": [
-                    {
-                        "step": e.step,
-                        "step_id": step_id(e.step),
-                        "channel": e.channel.value,
-                        "call": e.call,
-                        "observation": e.observation,
-                        "field": e.field,
-                        "span": list(e.span) if e.span else None,
-                    }
-                    for e in a.result.evidence
+                "evidence": [place(e) for e in a.result.evidence],
+                # The check's own figures (numbers and fixed codes): what it compared.
+                "measure": dict(a.result.measure),
+                # Context the check couldn't read (fixed reason codes): why it's unknown.
+                "unread": [
+                    {"reason": u.reason, **(place(u.at) if u.at is not None else {})}
+                    for u in a.result.unread
                 ],
             }
             for a in assessments

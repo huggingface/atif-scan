@@ -1,0 +1,57 @@
+/* Adapted from examples/trajectory-browser: forward palette, dossier panels,
+   field buttons and recorded-neighbour inspection. No external assets. */
+:root {
+  color-scheme: light;
+  --ivory:#fff7e8; --paper:#fffcf4; --inset:#f4ead5; --petrol:#082c34;
+  --amber:#ffb52e; --teal:#277c80; --muted:#426068; --danger:#923627;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:var(--petrol); background:var(--ivory);
+}
+* { box-sizing:border-box }
+body { margin:0 }
+header { background:var(--petrol); color:var(--ivory); padding:18px 24px; display:flex; gap:24px; align-items:center }
+header strong { font-size:24px }
+header span { letter-spacing:.15em; font-size:12px }
+main { max-width:1800px; margin:auto; padding:20px }
+h1 { font-size:clamp(28px,4vw,44px); margin:8px 0 16px; letter-spacing:-.04em }
+h2 { font-size:18px; border-bottom:2px solid var(--petrol); padding-bottom:10px }
+h3 { font-size:16px }
+p { line-height:1.5 }
+small,.muted { color:var(--muted) }
+.warning { border-left:5px solid var(--amber); background:var(--inset); padding:12px }
+.filters { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-top:18px }
+label { display:flex; flex-direction:column; gap:5px; font-size:13px; font-weight:600 }
+input,select,textarea,button { font:inherit; border:1px solid var(--petrol); border-radius:5px; padding:8px; color:var(--petrol); background:var(--paper); max-width:100% }
+button { cursor:pointer; font-size:13px }
+button:hover:not(:disabled) { background:var(--inset) }
+button:disabled { opacity:.5; cursor:default }
+:focus-visible { outline:3px solid var(--teal); outline-offset:3px }
+input,textarea { min-width:0 }
+textarea { resize:vertical; width:100% }
+.workspace { display:grid; grid-template-columns:minmax(180px,.7fr) minmax(280px,1fr) minmax(350px,1.5fr); gap:16px; align-items:start }
+.panel { border:1px solid var(--petrol); border-radius:8px; background:var(--paper); padding:12px; min-width:0 }
+.panel h2 { margin-top:0 }
+.scroll { max-height:540px; overflow:auto; padding:3px }
+.row,.field-button { display:block; width:100%; text-align:left; margin:6px 0; overflow-wrap:anywhere }
+.row strong,.row span { display:block; margin-bottom:4px }
+.row[aria-pressed="true"],.field-button[aria-pressed="true"] { border-left:5px solid var(--teal); background:var(--inset) }
+.coverage { border:1px dashed var(--muted); padding:10px; margin:12px 0; overflow-wrap:anywhere }
+summary { cursor:pointer; font-weight:600 }
+pre { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; background:var(--inset); padding:12px; border-radius:5px; font:12px/1.6 ui-monospace,monospace; max-height:480px; overflow:auto }
+#field-text { min-height:120px }
+.toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between }
+#page-range { font:12px ui-monospace,monospace }
+.step-card { border:1px solid var(--muted); border-radius:5px; margin:10px 0; padding:8px }
+.step-card.active { border:2px solid var(--teal) }
+.step-card h3 { margin:0 }
+form { margin:14px 0 }
+fieldset { border:1px solid var(--muted); border-radius:5px; min-width:0 }
+fieldset label { margin:10px 0 }
+#locations button,#search-results button { display:block; margin:6px 0; text-align:left }
+#trial-title,#review-heading,#finding-meta,#field-title { overflow-wrap:anywhere }
+[hidden] { display:none!important }
+@media(max-width:1150px) { .workspace { grid-template-columns:minmax(200px,.7fr) minmax(300px,1fr) } .inspection { grid-column:1/-1 } }
+@media(max-width:650px) { main { padding:12px } .workspace { display:block } .panel { margin-bottom:16px } .filters label { width:100% } header { flex-wrap:wrap; gap:8px } .scroll { max-height:360px } }
+
+#field-text mark { background:var(--amber); color:var(--petrol); border-bottom:2px solid var(--petrol) }
+#focus-note { border-left:3px solid var(--teal); padding-left:10px }

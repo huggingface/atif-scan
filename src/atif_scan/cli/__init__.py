@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from ..sources.harbor.files import SUBMISSION_BYTES, submission, text_label
 from ..sources.sync import default_sync_root
-from . import hunt, labels
+from . import bench, hunt, labels
 from .args import _check_combinations, build_parser, price
 from .inspect import inspect
 from .scan import scan
@@ -39,7 +39,20 @@ def _submission(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Do
 
 
 # Subcommands come first; scan an input with one of these names as ./labels or ./hunt.
-COMMANDS = {"labels": labels.main, "hunt": hunt.main}
+COMMANDS = {"labels": labels.main, "hunt": hunt.main, "runs": bench.main}
+
+
+def _scan_mode(args: argparse.Namespace) -> int:
+    """A normal scan, or one followed by the private desk or the static viewer export."""
+    if args.browse:
+        from .browse import browse  # noqa: PLC0415 - POSIX support is opt-in.
+
+        return browse(args)
+    if args.viewer is not None:
+        from .viewer import export_viewer  # noqa: PLC0415 - export is opt-in.
+
+        return export_viewer(args)
+    return scan(args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         return COMMANDS[argv[0]](argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
+    bench.select(parser, args)
     _check_combinations(parser, args)
     args.price_rates = price(args.price)  # validate early, whatever the output format
     args.submission_doc = _submission(parser, args)
@@ -58,4 +72,4 @@ def main(argv: list[str] | None = None) -> int:
         # Harbor downloads: kept under the sync root with --sync, else a temp dir.
         args.download_dir = args.sync_root / "harbor" if args.sync else Path(scratch)
         args.runs = []
-        return scan(args)
+        return _scan_mode(args)

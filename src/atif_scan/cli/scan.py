@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from ..cache import ResultCache, checks_signature
 from ..checks import Context, Severity, Status, check_selected
 from ..data.facts import recorded_facts, run_facts, trace_facts, trial_reward, trial_task
+from ..data.jsonval import as_object
 from ..data.loader import TraceError
 from ..data.web_activity import web_activity
 from ..engine import Engine, effective_context
@@ -83,6 +84,8 @@ def scanned_item(
         input_status="available" if trace is not None else "unavailable_or_invalid",
         input_error=error,
         compacted=bool(trace is not None and trace.compacted),
+        # Harness context compactions with the history kept (fast-agent): a count only.
+        context_compactions=len(trace.context_compactions) if trace is not None else None,
         task=context.task,
         reward=context.reward,
         partial=context.partial,
@@ -125,6 +128,9 @@ class Scanner:
         if item.get("compacted"):
             # Companion artifacts change independently of trajectory-result caches.
             item["history_archive"] = history_counts(source.local)
+        if source.selection:
+            # Whether it counts, and its replacement lineage (codes and trial names).
+            item["selection"] = dict(source.selection)
         return item
 
     def _item(self, source: Source, context: Context) -> Doc:
@@ -187,6 +193,8 @@ def _scan_all(
             status_line(f"scanning {number}/{len(records)}")
         item = scanner.item(source, context)
         output.append(item)
+        if not counted(item):
+            continue  # replaced trials are evidence: they don't fail the scan
         bad, fail = outcome(item, threshold)
         invalid, failed = invalid or bad, failed or fail
     if progress:
@@ -194,9 +202,19 @@ def _scan_all(
     return output, invalid, failed
 
 
+def counted(item: Doc) -> bool:
+    """Part of the run's canonical set (always, without --run/--release selection)."""
+    return as_object(item.get("selection")).get("role", "canonical") == "canonical"
+
+
 def _document(output: list[Doc], args: argparse.Namespace, sync_failed: int, engine: Engine) -> Doc:
     # The catalog comes from this scan's engine, never from the per-trace result cache.
-    doc = document(output, version("atif-scan"), engine.catalog())
+    doc = document([i for i in output if counted(i)], version("atif-scan"), engine.catalog())
+    selection = getattr(args, "selection", None)
+    if selection is not None:
+        # Replaced originals and superseded links: scanned for inspection, never scored.
+        doc["selection"] = selection.document()
+        doc["not_counted"] = [i for i in output if not counted(i)]
     if sync_failed:
         doc["coverage"]["sync_failed_files"] = sync_failed
     if args.runs:

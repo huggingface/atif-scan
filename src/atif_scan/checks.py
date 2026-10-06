@@ -102,30 +102,106 @@ def _locators(values: tuple[object, ...]) -> bool:
     return all(isinstance(x, Locator) for x in values)
 
 
+# Why a check could not read part of the trace (fixed codes; reports carry no text).
+UNREAD_REASONS = frozenset(
+    {
+        "prompt_not_recorded",
+        "compacted",
+        "web_result_not_recorded",
+        "media",
+        "unreadable",
+        "result_not_recorded",  # a call with no recorded result
+        "result_compacted",  # its result was dropped by the context compaction after it
+        "run_ended",  # the run stopped before the call returned
+        "undecidable",  # the predicate can't judge it statically (`find $(…)`)
+        "prompt_names_benchmark",  # the prompt already says what the evidence says
+        "usage_not_recorded",  # the trajectory records no token totals to compare
+        "no_model_calls_recorded",  # nothing to divide token totals by
+        "reasoning_tokens_not_split",  # only the upper bound of a ratio can be checked
+        "calls_without_usage",  # some model calls report no tokens: a subset can't clear them
+    }
+)
+# Places listed per assessment; the first few say where, all of them only add volume.
+MAX_UNREAD = 10
+
+
+@dataclass(frozen=True)
+class Unread:
+    """Context a check could not read: whatever it held may have primed the evidence.
+    `at` is the first such place; None when it isn't in the trace (an unrecorded prompt)."""
+
+    reason: str
+    at: Locator | None = None
+
+    def __post_init__(self) -> None:
+        if self.reason not in UNREAD_REASONS or not (
+            self.at is None or isinstance(self.at, Locator)
+        ):
+            raise ValueError("invalid_unread")
+
+
+# A check's own figures (what it compared): names, then numbers or short fixed codes.
+Measure = tuple[tuple[str, int | float | str | None], ...]
+MEASURE_CODE = re.compile(r"[a-z][a-z0-9_]{0,40}")
+MEASURE_PAIR = 2  # (name, value)
+
+
+def _measure(values: object) -> bool:
+    """Plugins build detections: only identifier names with numbers, None or codes."""
+    return isinstance(values, tuple) and all(
+        isinstance(pair, tuple)
+        and len(pair) == MEASURE_PAIR
+        and isinstance(pair[0], str)
+        and MEASURE_CODE.fullmatch(pair[0]) is not None
+        and (
+            pair[1] is None
+            or (
+                isinstance(pair[1], int | float)
+                and not isinstance(pair[1], bool)
+                and math.isfinite(pair[1])
+            )
+            or (isinstance(pair[1], str) and MEASURE_CODE.fullmatch(pair[1]) is not None)
+        )
+        for pair in values
+    )
+
+
 @dataclass(frozen=True)
 class Detection:
     status: Status
     evidence: tuple[Locator, ...] = ()
     complete: bool = True
+    unread: tuple[Unread, ...] = ()
+    measure: Measure = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, Status) or type(self.complete) is not bool:
             raise ValueError("invalid_detection")
         if not isinstance(self.evidence, tuple) or not _locators(self.evidence):
             raise ValueError("invalid_evidence")
+        if not isinstance(self.unread, tuple) or not all(
+            isinstance(u, Unread) for u in self.unread
+        ):
+            raise ValueError("invalid_unread")
+        if not _measure(self.measure):
+            raise ValueError("invalid_measure")
         if self.status == Status.NO_MATCH and not self.complete:
             raise ValueError("incomplete_negative_must_be_unknown")
         if self.status in {Status.UNKNOWN, Status.ERROR} and self.complete:
             raise ValueError("unknown_or_error_cannot_be_complete")
 
     @classmethod
-    def of(cls, hits: Iterable[Locator], complete: bool) -> Detection:
+    def of(
+        cls, hits: Iterable[Locator], complete: bool, unread: Iterable[Unread] = ()
+    ) -> Detection:
         """Match on any hit (deduplicated, order kept); otherwise no_match only when the
-        search was complete, else unknown."""
+        search was complete, else unknown. `unread` says where coverage fell short; it is
+        kept only when the result is incomplete."""
         evidence = tuple(dict.fromkeys(hits))
+        places = () if complete else tuple(dict.fromkeys(unread))[:MAX_UNREAD]
         if evidence:
-            return cls(Status.MATCH, evidence, complete)
-        return cls(Status.NO_MATCH if complete else Status.UNKNOWN, (), complete)
+            return cls(Status.MATCH, evidence, complete, places)
+        return cls(Status.NO_MATCH if complete else Status.UNKNOWN, (), complete, places)
 
 
 class Detector(Protocol):

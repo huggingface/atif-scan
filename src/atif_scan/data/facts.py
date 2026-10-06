@@ -107,6 +107,14 @@ RECORDED = (
     "in_job_result",
     "duration_sec",
     "agent_duration_sec",
+    # How a failed trial failed: Harbor's phase timings and the phase the exception fell
+    # in, plus the provider's safety codes from fast-agent's results file (codes only).
+    "setup_duration_sec",
+    "verifier_duration_sec",
+    "failed_phase",
+    "safety_provider",
+    "safety_reason",
+    "safety_category",
 )
 TOKENS = ("input_tokens", "cache_tokens", "output_tokens")
 # Facts derived from the trajectory alone (cacheable with its scan), in report order.
@@ -125,6 +133,8 @@ TRACE_FACTS = (
     "usage_basis",
     "calls_without_usage",
     "stream_retry_attempts",
+    "termination_error",
+    "final_stop_reason",
     "step_kinds_partial",
     "cache_write_tokens",
     "steps_vs_totals",
@@ -244,6 +254,10 @@ def trace_facts(trace: Trace | None) -> Doc:
         # Explicit fast-agent provider retries are harness events, not proof of
         # missing usage or agent history, whatever the accounting basis.
         "stream_retry_attempts": trace.stream_retry_attempts,
+        # How the trajectory says it ended, when in error (a code; never the message).
+        "termination_error": trace.termination_error,
+        # Why the last model turn stopped (a code, e.g. "safety"): how a run ended.
+        "final_stop_reason": trace.final_stop_reason,
         # Token kinds only some metered steps record (their step sums are lower bounds).
         "step_kinds_partial": list(trace.step_kinds_partial) or None,
         "cache_write_tokens": trace.usage.cache_write_tokens if trace.usage else None,

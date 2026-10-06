@@ -112,7 +112,7 @@ def test_report_brief_and_cache_signature(tmp_path, capsys):
     assert ratios["separate_visible"]["median"] == 3
     assert "not billed completion" in RATIO_BASIS["separate_visible"]
     signature = checks_signature(Engine(builtin_detectors()))
-    assert next(s for s in signature if s[0] == "integrity.output_token_ratio")[1] == "3"
+    assert next(s for s in signature if s[0] == "integrity.output_token_ratio")[1] == "4"
 
 
 def test_missing_final_completion_and_repeat_parse():

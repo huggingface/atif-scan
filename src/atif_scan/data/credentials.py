@@ -194,6 +194,14 @@ _PEM_PLACEHOLDER = re.compile(
 )
 
 
+# These exact public algorithm identifiers overlap the broad sk-* token mask.
+# Require the full OpenSSH name and boundary, not a prefix that could hide a key.
+_PUBLIC_SSH_ALGORITHM = re.compile(
+    r"(?<![\w@.-])sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)(?:-cert-v01)?"
+    r"@openssh\.com(?![\w@.-])"
+)
+
+
 def _exposure_name(name: str) -> bool:
     if not secret_name(name):
         return False
@@ -211,7 +219,11 @@ def _exposure_value(value: str) -> bool:
     # globally in prompts and citations, not just at the assignment site.
     if len(value) < MIN_SECRET_LENGTH or value.isdigit():
         return False
-    if _LITERAL_PLACEHOLDER.fullmatch(value) or _DUMMY_CREDENTIAL.fullmatch(value):
+    if (
+        _LITERAL_PLACEHOLDER.fullmatch(value)
+        or _DUMMY_CREDENTIAL.fullmatch(value)
+        or _PUBLIC_SSH_ALGORITHM.fullmatch(value)
+    ):
         return False
     return not _code_like(value) and any(c.isalpha() for c in value)
 
@@ -244,13 +256,17 @@ def find(text: str) -> Iterator[Found]:
 def find_exposures(text: str) -> Iterator[Found]:
     """Context-aware review findings; deliberately narrower than masking candidates.
 
-    Known token shapes override non-secret assignment names. Only self-contained,
-    explicit dummy tokens and placeholder-only closed PEM blocks are excluded.
-    Incomplete or otherwise suspicious PEM blocks remain review candidates.
+    Known token shapes override non-secret assignment names. Self-contained dummy
+    tokens, placeholder-only closed PEM blocks and exact public OpenSSH algorithm
+    names are excluded. Incomplete/suspicious PEM blocks remain review candidates.
     """
     for m in TOKEN_SHAPES.finditer(text):
         value = m.group()
-        if not _DUMMY_CREDENTIAL.fullmatch(value) and not _PEM_PLACEHOLDER.fullmatch(value):
+        if (
+            not _DUMMY_CREDENTIAL.fullmatch(value)
+            and not _PEM_PLACEHOLDER.fullmatch(value)
+            and not _PUBLIC_SSH_ALGORITHM.match(text, m.start())
+        ):
             yield Found("token", m.span(), m.span())
     yield from _named(text, _exposure_name, _exposure_value)
 

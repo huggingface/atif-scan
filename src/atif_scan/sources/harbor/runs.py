@@ -21,6 +21,8 @@ from ...data.jsonval import Doc, as_object, number
 from .files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,
+    FAST_AGENT_RESULTS,
+    FAST_AGENT_RESULTS_BYTES,
     LEDGER_BYTES,
     RUN_MANIFEST,
     RUN_MANIFEST_BYTES,
@@ -29,6 +31,7 @@ from .files import (
     declared_prices,
     job_listed_trials,
     job_meta,
+    safety_details,
     trial_ledger,
     trial_result,
 )
@@ -136,12 +139,16 @@ def trial_details(listing: Listing, entry: Entry, value: str) -> Callable[[], Do
     if listing.remote:
         return _no_details
     candidates = _near(Path(value), ["result.json"])
+    # fast-agent's results file sits beside the trajectory (<trial>/agent/).
+    companion = Path(value).parent / FAST_AGENT_RESULTS
 
     def local() -> Doc:
         for candidate in candidates:
             if candidate.is_file() and (
                 facts := trial_result(_read_local(candidate, RESULT_BYTES))
             ):
+                if facts.get("error_type") and companion.is_file():
+                    facts |= safety_details(_read_local(companion, FAST_AGENT_RESULTS_BYTES))
                 return facts
         return {}
 
@@ -153,10 +160,14 @@ def _listed_details(listing: Listing, entry: Entry) -> Callable[[], Doc]:
     found = [p for p in (f.as_posix() for f in near) if p in listing.paths]
     if not found or listing.reader is None:
         return _no_details
+    # fast-agent's results file sits beside the trajectory (<trial>/agent/).
+    companion = (PurePosixPath(entry.path).parent / FAST_AGENT_RESULTS).as_posix()
 
     def listed() -> Doc:
         for path in found:
             if facts := trial_result(listing.read(path, RESULT_BYTES)):
+                if facts.get("error_type") and companion in listing.paths:
+                    facts |= safety_details(listing.read(companion, FAST_AGENT_RESULTS_BYTES))
                 return with_attempt_cost(listing, path, facts)
         return {}
 

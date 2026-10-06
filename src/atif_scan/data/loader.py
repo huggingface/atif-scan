@@ -36,10 +36,15 @@ MEDIA_PLACEHOLDER = re.compile(
     r"^[^\S\n]*\[(?:Image|Screenshot|Attachment)\s*#?\d*\][^\S\n]*$", re.I | re.M
 )
 # Media serialized into a string: Codex `view_image` results (a repr of
-# `[{'type': 'input_image', 'image_url': 'data:image/png;base64,…'}]`), Claude Code's
-# image-size note for a Read image, and PDF/image blocks written as JSON (TB2.1).
+# `[{'type': 'input_image', 'image_url': 'data:image/png;base64,…'}]`), a data URI with a
+# real payload (the smallest PNG is ~90 base64 characters), Claude Code's image-size
+# note for a Read image, and PDF/image blocks written as JSON (TB2.1). A short data URI
+# is text, not an image: sanitizer tests and HTML the agent writes (`<img
+# src="data:image/png;base64,abc">`, TB4 html-js-filter) would otherwise make the field
+# unreadable and every unprompted-recall check unknown from that step on.
 MEDIA_INLINE = re.compile(
-    r"\bdata:(?:image|audio|video)/[\w.+-]+;base64,|"
+    r"\bdata:(?:image|audio|video)/[\w.+-]+;base64,[A-Za-z0-9+/]{64}|"
+    r"""["']image_url["']\s*:\s*["']data:(?:image|audio|video)/|"""
     r"^\s*\[Image: original \d+x\d+, displayed at \d+x\d+\.|"
     r"""["']media_type["']\s*:\s*["'](?:image/|audio/|video/|application/pdf)""",
     re.I | re.M,
@@ -657,6 +662,9 @@ def parse_trace(value: object) -> Trace:
             for s in steps
             if s.source in ("system", "user") and not s.copied and COMPACTED.search(s.message.text)
         ),
+        context_compactions=context_compactions(raw_steps),
+        termination_error=termination_error(value),
+        final_stop_reason=final_stop_reason(raw_steps),
         llm_calls=_llm_calls(raw_steps),
         agent=agent_info(value.get("agent")),
         step_usage=per_step,
@@ -666,6 +674,39 @@ def parse_trace(value: object) -> Trace:
         stream_retry_attempts=retry_attempts,
         usage_calls_complete=calls_complete,
         root_usage=root_usage(value),
+    )
+
+
+def final_stop_reason(raw_steps: list[object]) -> str | None:
+    """The last agent step's `extra.stop_reason` as a code ("LlmStopReason.SAFETY" ->
+    "safety", "end_turn" -> "end_turn"); None when absent or not code-like."""
+    for raw in reversed(raw_steps):
+        step = as_object(raw)
+        if step.get("source") != "agent":
+            continue
+        reason = as_str(as_object(step.get("extra")).get("stop_reason"))
+        code = reason.rsplit(".", 1)[-1].lower() if reason else None
+        return code if code and re.fullmatch(r"[a-z][a-z0-9_]{0,40}", code) else None
+    return None
+
+
+def termination_error(value: JsonObject) -> str | None:
+    """The trajectory's own record of how it ended in error (fast-agent `extra.termination`):
+    an error type code only, never its message."""
+    termination = as_object(as_object(value.get("extra")).get("termination"))
+    kind = as_str(termination.get("error_type"))
+    if as_str(termination.get("status")) != "error" or kind is None:
+        return None
+    return kind if re.fullmatch(r"[A-Za-z_][\w.]{0,80}", kind) else None
+
+
+def context_compactions(raw_steps: list[object]) -> tuple[int, ...]:
+    """Steps recording a harness context compaction (`extra.context_management.type`)."""
+    return tuple(
+        index
+        for index, raw in enumerate(raw_steps)
+        if as_object(as_object(as_object(raw).get("extra")).get("context_management")).get("type")
+        == "compaction"
     )
 
 

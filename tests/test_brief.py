@@ -185,3 +185,93 @@ def test_benchmark_awareness_is_counted_at_any_priority():
     assert "2 1 remarked on being benchmarked" in text
     assert "1 1 looked the benchmark up" in text
     assert "1 trial (1 rewarded) talked about hidden tests or the verifier" in text
+
+
+def _covered(styled, start, end, style):
+    return any(
+        span.start <= start and end <= span.end and style in str(span.style).split()
+        for span in styled.spans
+    )
+
+
+def _every(styled, needle, style):
+    """Every occurrence of `needle` is covered by one span of `style`."""
+    plain, at, found = styled.plain, 0, False
+    while (found_at := plain.find(needle, at)) >= 0:
+        found = True
+        if not _covered(styled, found_at, found_at + len(needle), style):
+            return False
+        at = found_at + len(needle)
+    return found
+
+
+def test_wrapped_context_line_stays_dim():
+    """A · line stays dim on the rows wrap() continues under the mark.
+
+    The row pattern only matches the line that starts with ·, so the continuation
+    "traces, reasoning excluded (its tokens are reported separately)" rendered in
+    the default colour. A wrapped ✓ line is not dimmed with it.
+    """
+    from atif_scan.output.brief_view.words import INFO, OK, wrap
+
+    phrase = "reasoning excluded (its tokens are reported separately)"
+    context = (
+        f"{INFO} visible agent text per output token: median 3.02 characters"
+        f" (p5-p95 2.58-3.71) over 434 traces, {phrase}"
+    )
+    longer = f"{INFO} " + "context stays dim across every wrapped row " * 6
+    checked = f"{OK} " + "recorded totals match the trajectories' own " * 3
+    text = (
+        "\n".join(
+            wrap(
+                "TOKENS",
+                [
+                    "255.1M input (243.6M cached) · 1.7M output, from 434 of 434 trials",
+                    context,
+                    longer,
+                    checked,
+                ],
+            )
+        )
+        + "\n"
+    )
+    styled = colourise(text)
+    assert styled.plain == text
+    # The explanation sits on its own row, not on the · row, and is still dim.
+    assert any(phrase in line and "·" not in line for line in text.splitlines())
+    assert _every(styled, phrase, "dim")
+    assert sum("context stays dim" in line for line in text.splitlines()) >= 3
+    assert _every(styled, "context stays dim across every wrapped row", "dim")
+    check_wraps = [
+        line for line in text.splitlines() if "recorded totals" in line and "✓" not in line
+    ]
+    assert check_wraps
+    for row in check_wraps:
+        at = text.index(row)
+        assert not _covered(styled, at, at + len(row), "dim")
+
+
+def test_sections_are_the_text_brief_unwrapped():
+    from atif_scan.output.brief_view import sections
+
+    b = summary(item("one", ["match", "match"]), item("two", ["unknown"]))
+    text = brief_text(b)
+    flat = " ".join(text.split())
+    collected = sections(b)
+    starts = {line.split()[0] for line in text.splitlines() if line[:1].isupper()}
+    labels = [s["label"] for s in collected]
+    assert labels and set(labels) <= starts
+    assert "MORE" in starts and "MORE" not in labels
+    for s in collected:
+        for line in s["lines"]:
+            assert " ".join(line["text"].split()) in flat
+    assert brief_text(b) == text  # collecting doesn't change the text brief
+
+
+def test_context_compactions_are_context_not_a_defect():
+    one, two = item("one", []), item("two", [])
+    one["context_compactions"] = 2
+    text = brief_text(summary(one, two))
+    evidence = section(text, "EVIDENCE")
+    assert "agent context compacted in 1 trial (2 compactions)" in " ".join(evidence.split())
+    assert "no recording defect detected" in evidence

@@ -131,6 +131,9 @@ class Source:
     # The trajectory's local file, when there is one (never reported; used to point
     # follow-up tooling such as the read-only trace tool at the same file).
     local: Path | None = field(default=None, repr=False)
+    # Whether this trial counts (`role`: canonical, replaced, not_selected) and its
+    # replacement lineage (codes and trial names), from --run/--release; {} otherwise.
+    selection: Mapping[str, object] = field(default_factory=dict, repr=False)
 
 
 def local_fingerprint(path: Path) -> Callable[[], str | None]:

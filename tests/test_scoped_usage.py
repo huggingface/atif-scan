@@ -181,7 +181,10 @@ def test_reasoning_summary_excluded_from_metered_subset():
     assert ratio and ratio.chars == 60 and ratio.tokens == 20
 
 
-def test_retry_with_one_usage_record_stays_incomplete():
+def test_retry_with_one_usage_record_keeps_usage_partial_but_decides_the_ratio():
+    # Usage stays partial (the failed attempt's tokens are unknown: billing isn't
+    # established). The text/token ratio still decides: an unmetered failed attempt
+    # adds no tokens, and any of its output in the trace only raises the ratio.
     step = metered_step()
     step["llm_call_count"] = 2
     step["extra"] = {"retry": {"schema": "fast-agent.retry/v1", "provider_attempts": 2}}
@@ -191,7 +194,7 @@ def test_retry_with_one_usage_record_stays_incomplete():
     assert facts["calls_without_usage"] == 1
     assert facts["usage_basis"] == "steps_partial"
     assert facts["output_ratio_basis"] == "answer_only"
-    assert output_token_ratio(trace).status is Status.UNKNOWN
+    assert output_token_ratio(trace).status is Status.NO_MATCH
 
 
 @pytest.mark.parametrize("field", ["root_prompt_tokens", "subagent_prompt_tokens"])

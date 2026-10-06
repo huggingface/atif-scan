@@ -59,6 +59,21 @@
 - Network access happens only for `hf://` / huggingface.co inputs you name, via
   `huggingface_hub` and your saved token. Other URLs are refused. Remote error messages
   (which may contain URLs) are withheld; files over the size cap are rejected.
+- Bench-run discovery reads only capped cohort catalogs, receipts and receipt-pinned
+  configs. It never imports or executes bench-run code, follows auth/config paths, or
+  contacts a provider. Codex diagnostic receipts are recognized by `kind` and a
+  top-level `run_id` only; `plan_path` is not opened. Job selection is confined to the
+  chosen root's `jobs/` directory; paths escaping the root are rejected. Listing exports
+  only run IDs, allowlisted lifecycle statuses, counts and fixed issue codes.
+  Replacement receipts (`runs/replacements/*/receipt.json`) and release manifests are
+  read the same way: capped, digest-checked against the parent run, confined to the
+  root, failing closed when one names the run but doesn't verify. Reports carry only
+  their codes (error types, phases), IDs and trial folder names, never operator `reason`
+  text.
+- For an errored trial only, fast-agent's `fast-agent-results.json` (beside the
+  trajectory, capped) is read for its provider safety details: `provider`, `reason` and
+  `category`, each kept only as an identifier-like code. The provider's explanation and
+  every message in that file are never reported.
 - Plugins and rule files are **trusted** code/configuration, not a sandbox. A plugin can
   read raw text and do its own I/O. Only load modules you have reviewed. Plugins are
   never discovered automatically. The only code loaded without `--plugin` is this
@@ -66,6 +81,30 @@
   disables that.
 - The loader has a size cap, but there is no isolation for JSON depth, regex runtime or
   plugin CPU/filesystem use. Use a restricted worker for hostile inputs.
+- `--browse` is private inspection, not report export: a token-authenticated IPv4
+  loopback server with strict Host/Origin checks, fixed assets/routes, CSP, no request
+  logging and no-store responses. Never publish or tunnel its port or share its launch
+  URL. Whole-field masking precedes paging/search; text is rendered literally and no
+  trace commands or URLs are executed. Masking is best effort. Local sources are pinned
+  by digest before scanning, checked again before serving, and revalidated on access;
+  changed sources require a new scan. Browser inputs are opaque IDs, not client paths.
+  Finding-level feedback is separate from reports and trial labels, stored privately in
+  `<atif-scan home>/feedback/` (or `--feedback-dir`). Notes are unmasked reviewer text:
+  keep them and the append-only journal out of Git. Feedback is bound to source/task,
+  trace content and assessment identity; it cannot clear coverage gaps. Latest append
+  wins: this is a single-reviewer POSIX tool, not a multi-user adjudication service.
+- `--viewer DIR` is the one output that deliberately contains trace text: a static
+  folder (fixed HTML/CSS/JS plus `data.js`) for publishing an individually reviewed
+  trajectory. Every field is masked as a whole before export, but masking is best
+  effort, so read the export before publishing it; it is not a clearance. The data is
+  allowlisted (labels, task, reward, coverage, check IDs/titles/priorities, field
+  locators and masked field text) and never includes source paths, citations, feedback
+  or raw metadata; media is not exported. Highlights are offsets proven against the
+  masked text, otherwise the whole field is marked as the evidence. Sources are pinned
+  by digest before scanning and must still match when exported. The page loads nothing
+  outside its folder (CSP, no fonts, images or network), renders trace text literally
+  and executes nothing. The folder is created `0700` with `0600` files and must be new
+  or empty.
 - A finding doesn't authorize accusation, disqualification or exclusion. Keep the
   coverage information and get human review.
 

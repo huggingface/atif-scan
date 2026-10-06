@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
-from ..checks import CheckSpec, Context, Detection, Detector, Severity
+from ..checks import CheckSpec, Context, Detection, Detector, Severity, Unread
 from ..data import credentials
 from ..data.model import Channel, Locator, Surface, Trace
-from .text import SurfaceDetector
+from .text import SurfaceDetector, unrecorded_results
 
 WRITTEN = frozenset({Channel.COMMAND, Channel.ARGUMENTS, Channel.PAYLOAD})
 # Model calls, not bare imports, model names, prose or generic HTTP. Names shared with
@@ -103,9 +103,9 @@ CREDENTIAL_READ = re.compile(
 
 CREDENTIALS_EXPOSED = CheckSpec(
     "observation.credentials_exposed",
-    Severity.MEDIUM,
-    "3",
-    title="Credential-shaped value in the trace",
+    Severity.LOW,
+    "4",
+    title="Possible credential-like value",
 )
 
 
@@ -117,16 +117,15 @@ class CredentialExposure:
 
     def evaluate(self, trace: Trace, context: Context) -> Detection:
         hits: list[Locator] = []
-        complete = trace.agent_steps > 0
         surfaces = [*trace.agent_surfaces(), *trace.observation_surfaces()]
+        unread = [Unread("unreadable", s.at) for s in surfaces if not s.content.understood]
         for surface in surfaces:
-            complete = complete and surface.content.understood
             for found in credentials.find_exposures(surface.content.text):
                 hits.append(replace(surface.at, span=found.span))
-        # One observed result does not establish coverage for every other call.
-        if any(not step.results_for(call) for step, call in trace.agent_calls()):
-            complete = False
-        return Detection.of(hits, complete)
+        # One observed result does not establish coverage for every other call: output
+        # that wasn't recorded may have held a credential.
+        unread += unrecorded_results(trace)
+        return Detection.of(hits, trace.agent_steps > 0 and not unread, unread)
 
 
 def side_channel_detectors() -> list[Detector]:

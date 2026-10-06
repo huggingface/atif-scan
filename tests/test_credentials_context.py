@@ -2,7 +2,7 @@
 
 import pytest
 
-from atif_scan import Context, Status, parse_trace
+from atif_scan import Context, Severity, Status, parse_trace
 from atif_scan.data import credentials as c
 from atif_scan.detectors.side_channel import CredentialExposure
 from atif_scan.evidence.cite import mask as cite_mask
@@ -180,7 +180,56 @@ def test_existing_code_and_reference_exclusions(text):
 
 
 def test_exposure_detector_version_invalidates_old_results():
-    assert CredentialExposure().spec.version == "3"
+    spec = CredentialExposure().spec
+    assert spec.version == "4"
+    assert spec.severity == Severity.LOW
+    assert spec.title == "Possible credential-like value"
+
+
+@pytest.mark.parametrize(
+    "algorithm",
+    [
+        "sk-ssh-ed25519@openssh.com",
+        "sk-ssh-ed25519-cert-v01@openssh.com",
+        "sk-ecdsa-sha2-nistp256@openssh.com",
+        "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com",
+    ],
+)
+@pytest.mark.parametrize("template", ["{value}", 'api_key="{value}"', "--api-key {value}"])
+def test_public_ssh_algorithms_are_not_credentials(algorithm, template):
+    text = template.format(value=algorithm)
+    assert not list(c.find_exposures(text))
+    assert CredentialExposure().evaluate(trace(text), Context()).status == Status.NO_MATCH
+    # Existing broad masking stays independent, including partial token-shape matches.
+    for found in c.find(text):
+        candidate = text[slice(*found.value)]
+        assert candidate in trace_secrets(trace(text))
+        assert candidate not in cite_mask(text)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "sk-ssh-ed25519-cert-v01",
+        "sk-ssh-ed25519-cert-v01@untrusted.example",
+        "sk-ssh-ed25519-cert-v01@openssh.com.attacker",
+        "sk-ecdsa-sha2-nistp256@openssh.com-extra",
+        "sk-proj-syntheticCredential8274",
+    ],
+)
+def test_near_ssh_names_and_opaque_tokens_remain_candidates(value):
+    assert list(c.find_exposures(value))
+    assert c.mask(value) != value
+
+
+def test_public_algorithm_does_not_hide_adjacent_credential():
+    public = "sk-ssh-ed25519-cert-v01@openssh.com"
+    token = "sk-proj-syntheticCredential8274"
+    text = f"{public}, {token}"
+    hits = list(c.find_exposures(text))
+    assert len(hits) == 1
+    assert text[slice(*hits[0].value)] == token
+    assert token not in cite_mask(text)
 
 
 @pytest.mark.parametrize("value", ["p", "abc", "aB7", "aB7defg", "42", "12345678", "123456789012"])

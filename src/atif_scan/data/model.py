@@ -254,6 +254,11 @@ class Trace:
     # Steps whose system/user message says earlier history was compacted/summarized away:
     # the recorded steps then cover only part of the session.
     compacted: tuple[int, ...] = ()
+    # Steps where the harness recorded compacting the agent's context while keeping the
+    # earlier steps in the file (fast-agent `extra.context_management.type: compaction`).
+    # Nothing is missing for a reader of the trace, but a tool call pending at that point
+    # can lose its result. Not a recording gap: `compacted` is the history-gone case.
+    context_compactions: tuple[int, ...] = ()
     # Sum of agent steps' `llm_call_count` when recorded (None when never recorded).
     llm_calls: int | None = None
     # ATIF root `agent` block: (name, version, model_name), each None when absent.
@@ -272,6 +277,12 @@ class Trace:
     # harness events, not proof that usage or agent history is missing.
     stream_retry_steps: int = 0
     stream_retry_attempts: int = 0
+    # The harness's recorded termination error type (`extra.termination.error_type`, a
+    # label-safe code such as ResponsesWebSocketError); None when absent or not an error.
+    termination_error: str | None = None
+    # The last agent step's recorded stop reason as a lowercase code (fast-agent
+    # `extra.stop_reason: "LlmStopReason.SAFETY"` -> "safety"); None when absent.
+    final_stop_reason: str | None = None
     # final_metrics.extra.llm_usage_calls_complete as the harness recorded it (None: absent).
     usage_calls_complete: bool | None = None
     # Root-only totals after reconciling declared child usage with embedded records.

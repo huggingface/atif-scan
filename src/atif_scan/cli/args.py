@@ -15,6 +15,7 @@ from ..sources.inputs import (
 
 # --price: $/M tokens for uncached input, cached input and output.
 PRICE_PARTS = 3
+MAX_PORT = 65535
 
 
 PRICE_USAGE = "atif-scan: --price takes three numbers: U,C,O ($/M tokens)"
@@ -57,6 +58,26 @@ def _input_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="list what's under each path (layout, Harbor markers, what would be scanned) "
         "without reading any trace",
+    )
+    parser.add_argument(
+        "--run",
+        help="bench-run ID: scan its receipt-pinned job parts, each replaced trial swapped for "
+        "its replacement (replaced originals kept as evidence; --as-run for the original jobs)",
+    )
+    parser.add_argument(
+        "--as-run",
+        action="store_true",
+        help="with --run: scan the original job parts only, ignoring replacements",
+    )
+    parser.add_argument(
+        "--release",
+        type=Path,
+        metavar="FILE",
+        help="bench-run release manifest: scan exactly its reported trials (Harbor Hub's "
+        "trial_ids), with replaced trials kept as evidence",
+    )
+    parser.add_argument(
+        "--bench-root", type=Path, help="bench-run checkout (default: ~/source/bench-run)"
     )
     parser.add_argument("--manifest", type=Path, help="explicit input manifest (JSON)")
     parser.add_argument(
@@ -258,6 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     _check_arguments(parser)
     _output_arguments(parser)
     _review_arguments(parser)
+    _browse_arguments(parser)
     return parser
 
 
@@ -278,6 +300,7 @@ def _check_review_dir(parser: argparse.ArgumentParser, args: argparse.Namespace)
 
 
 def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    _check_browse(parser, args)
     if args.judge_scope and not args.judge_prompts:
         parser.error("--judge-scope requires --judge-prompts DIR")
     if args.judge_prompts:
@@ -287,4 +310,78 @@ def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespac
     if args.cite and (args.view in ("brief", "overview") or args.inspect):
         parser.error(
             "--cite/--cite-check require detail or summary output, not brief/overview/inspect"
+        )
+
+
+def _browse_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("port must be an integer from 0 to 65535") from None
+    if not 0 <= port <= MAX_PORT:
+        raise argparse.ArgumentTypeError("port must be an integer from 0 to 65535")
+    return port
+
+
+def _browse_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--browse",
+        action="store_true",
+        help="serve a private local evidence browser after scanning; never opens a browser",
+    )
+    parser.add_argument(
+        "--browse-port",
+        type=_browse_port,
+        metavar="N",
+        help="loopback port for --browse (default: 0, choose a free port)",
+    )
+    parser.add_argument(
+        "--feedback-dir",
+        type=Path,
+        metavar="DIR",
+        help="private browser feedback (default: <atif-scan home>/feedback); requires --browse",
+    )
+    parser.add_argument(
+        "--viewer",
+        type=Path,
+        metavar="DIR",
+        help="write a static trajectory viewer (masked trace text) to a new or empty DIR",
+    )
+
+
+def _check_viewer_dir(parser: argparse.ArgumentParser, directory: Path) -> None:
+    try:
+        if directory.is_symlink() or (
+            directory.exists() and (not directory.is_dir() or any(directory.iterdir()))
+        ):
+            parser.error("--viewer requires a new or empty directory")
+    except OSError:
+        parser.error("viewer directory unavailable (details withheld)")
+
+
+def _check_browse(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if not args.browse and (args.browse_port is not None or args.feedback_dir is not None):
+        parser.error("--browse-port and --feedback-dir require --browse")
+    if args.viewer is not None:
+        if args.browse:
+            parser.error("--viewer cannot be combined with --browse")
+        _check_viewer_dir(parser, args.viewer)
+    if not args.browse and args.viewer is None:
+        return
+    incompatible = (
+        args.inspect,
+        not args.sync,
+        args.cite,
+        args.cite_check,
+        args.questions,
+        args.answers,
+        args.judge_prompts,
+        args.question,
+        args.judge_scope,
+    )
+    if any(incompatible):
+        flag = "--browse" if args.browse else "--viewer"
+        parser.error(
+            f"{flag} cannot be combined with --inspect, --no-sync, --cite/--cite-check, "
+            "--questions, --answers, --judge-prompts, --question or --judge-scope"
         )

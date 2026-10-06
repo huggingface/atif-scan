@@ -8,16 +8,21 @@ import json
 import os
 import re
 import sys
+from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..access import access_rules
 from ..checks import Context, identifier
 from ..data.facts import trial_task
+from ..data.loader import TraceError
 from ..detectors import builtin_detectors
 from ..packs import recognise, tasks_needed
 from ..packs.reference import ENV as PACK_ENV
 from ..policy import load_rules
+from ..sources.harbor.files import trial_result
 from ..sources.harbor.hub import harbor_sources, is_harbor
+from ..sources.harbor.runs import RESULT_BYTES
 from ..sources.inputs import (
     HF_PREFIX,
     Source,
@@ -29,10 +34,12 @@ from ..sources.sync import sync_remote, sync_target
 
 if TYPE_CHECKING:
     import argparse
-    from pathlib import Path
 
     from ..checks import Detector
+    from ..data.jsonval import Doc
+    from ..data.model import Trace
     from ..rules import Allowance, Rule
+    from ..sources.selection import Selection
 
     Check = Detector | Rule | Allowance
 
@@ -86,11 +93,7 @@ def inputs(args: argparse.Namespace) -> list[Record]:
     else:
         # Local/hf:// inputs resolve together so positional labels stay unique.
         local = [sync_if_remote(v, args) for v in args.paths if not is_harbor(v)]
-        found = (
-            resolve(local, args.pattern, runs=args.runs, sync_failures=args.sync_failures)
-            if local
-            else []
-        )
+        found = resolve_local(local, args) if local else []
         for value in (v for v in args.paths if is_harbor(v)):
             hub, run = harbor_sources(
                 value,
@@ -102,10 +105,77 @@ def inputs(args: argparse.Namespace) -> list[Record]:
             )
             args.runs.append(run)
             found += hub
+        if getattr(args, "selection", None) is not None:
+            found = select_sources(found, args.selection, [Path(p) for p in local])
+            jobs = args.selection.replacement_jobs
+            args.runs[:] = [r for r in args.runs if r.get("job_name") not in jobs]
         result = [(s, Context(task_for(s, args), args.partial)) for s in found]
     if not result or len({s.label for s, _ in result}) != len(result):
         raise ValueError("empty_or_duplicate_inputs")
     return result
+
+
+def resolve_local(values: list[str], args: argparse.Namespace) -> list[Source]:
+    """Selected bench parts get disjoint labels, even when trial names repeat."""
+    if not getattr(args, "run", None) and getattr(args, "selection", None) is None:
+        return resolve(values, args.pattern, runs=args.runs, sync_failures=args.sync_failures)
+    found = []
+    for index, value in enumerate(values, 1):
+        part = resolve([value], args.pattern, runs=args.runs, sync_failures=args.sync_failures)
+        found.extend(replace(s, label=f"part-{index}/{s.label}") for s in part)
+    return found
+
+
+def _trial_key(source: Source, jobs: set[Path]) -> tuple[str, str] | None:
+    """(job folder, trial folder) of a local trajectory under one of `jobs`."""
+    if source.local is None:
+        return None
+    for folder in source.local.parents:
+        if folder.parent in jobs:
+            return folder.parent.name, folder.name
+    return None
+
+
+def _missing_trial(label: str, trial: Path, lineage: Doc) -> Source:
+    """A replaced trial that left no trajectory (it failed before the agent ran): an
+    item all the same, with its result.json facts, so its lineage can be inspected."""
+
+    def load() -> Trace:
+        raise TraceError("trajectory_missing")
+
+    def details() -> Doc:
+        path = trial / "result.json"
+        try:
+            with path.open("rb") as stream:
+                return trial_result(stream.read(RESULT_BYTES))
+        except OSError:
+            return {}
+
+    return Source(label, load, details=details, selection=lineage)
+
+
+def select_sources(found: list[Source], selection: Selection, jobs: list[Path]) -> list[Source]:
+    """Each source stamped with its role and lineage; replaced trials without a
+    trajectory added as sources of their own, labelled like their job's other trials."""
+    folders = {job.resolve() for job in jobs} | set(jobs)
+    parts = {job.name: (job, f"part-{i}/") for i, job in enumerate(jobs, 1)}
+    out: list[Source] = []
+    seen: set[tuple[str, str]] = set()
+    for source in found:
+        key = _trial_key(source, folders)
+        if key is None:
+            out.append(source)
+            continue
+        seen.add(key)
+        stamp = {"role": selection.role(key), **selection.lineage(key)}
+        out.append(replace(source, selection=stamp))
+    for key, lineage in selection.replaced.items():
+        if key in seen or key[0] not in parts:
+            continue
+        job, prefix = parts[key[0]]
+        stamp = {**lineage, "role": "replaced"}
+        out.append(_missing_trial(f"{prefix}{key[1]}/agent", job / key[1], stamp))
+    return out
 
 
 def status_line(message: str) -> None:

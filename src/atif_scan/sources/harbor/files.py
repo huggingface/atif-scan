@@ -161,6 +161,42 @@ def primary_reward(rewards: object) -> float | None:
     return values[0] if len(values) == 1 else None
 
 
+# Harbor's trial phases in order (result.json keys), for when a trial failed.
+PHASES = ("environment_setup", "agent_setup", "agent_execution", "verifier")
+
+
+def failed_phase(d: Mapping[str, object], occurred_at: object) -> str | None:
+    """The phase whose window holds the exception's timestamp: a fixed phase name, or
+    "after" a finished phase when it fell between or after them; None when unknown."""
+    try:
+        when = datetime.fromisoformat(str(occurred_at))
+    except (TypeError, ValueError):
+        return None
+    last = None
+    for phase in PHASES:
+        record = as_object(d.get(phase))
+        try:
+            start = datetime.fromisoformat(str(record["started_at"]))
+            end = datetime.fromisoformat(str(record["finished_at"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start <= when <= end:
+            return phase
+        if end < when:
+            last = phase
+    return f"after_{last}" if last else None
+
+
+def phase_durations(d: Mapping[str, object]) -> Doc:
+    """Seconds spent setting up (environment + agent install) and verifying."""
+    setup = [duration(as_object(d.get(p))) for p in ("environment_setup", "agent_setup")]
+    known = [s for s in setup if s is not None]
+    return {
+        "setup_duration_sec": sum(known) if known else None,
+        "verifier_duration_sec": duration(as_object(d.get("verifier"))),
+    }
+
+
 def trial_result(data: bytes | None) -> Doc:
     """Allowlisted facts from a trial's result.json ({} when absent or unreadable)."""
     d = _json(data)
@@ -184,6 +220,8 @@ def trial_result(data: bytes | None) -> Doc:
         "output_tokens": count(agent.get("n_output_tokens")),
         "duration_sec": duration(d),
         "agent_duration_sec": duration(as_object(d.get("agent_execution"))),
+        **phase_durations(d),
+        "failed_phase": failed_phase(d, exception.get("occurred_at")) if exception else None,
         # Harbor's trial id (a UUID): the key of harbor-hf's attempt-costs file. Used for
         # that lookup only, never reported.
         "attempt_id": attempt if attempt and ATTEMPT_ID.fullmatch(attempt) else None,
@@ -415,3 +453,35 @@ def job_meta(config: bytes | None, result: bytes | None) -> Doc | None:
         "cost_usd": number(stats.get("cost_usd"), 0),
         "overrides": overrides(cfg),
     }
+
+
+FAST_AGENT_RESULTS = "fast-agent-results.json"
+FAST_AGENT_RESULTS_BYTES = 32 * 1024 * 1024
+SAFETY_CHANNEL = "fast-agent-safety-details"
+SAFETY_CODE = re.compile(r"[a-z][a-z0-9_-]{0,40}")
+
+
+def safety_details(data: bytes | None) -> Doc:
+    """Provider safety codes from fast-agent's results file: the last assistant message's
+    `fast-agent-safety-details` channel. Only `provider`, `reason` and `category`, each
+    an identifier-like code; the provider's explanation text is never read out."""
+    messages = as_list(_json(data).get("messages"))
+    for message in reversed(messages):
+        msg = as_object(message)
+        if msg.get("role") != "assistant":
+            continue
+        for block in as_list(as_object(msg.get("channels")).get(SAFETY_CHANNEL)):
+            try:
+                detail = as_object(json.loads(as_str(as_object(block).get("text")) or ""))
+            except (ValueError, RecursionError):
+                continue
+            codes = {
+                f"safety_{key}": value.lower()
+                for key in ("provider", "reason", "category")
+                if isinstance(value := detail.get(key), str)
+                and SAFETY_CODE.fullmatch(value.lower())
+            }
+            if codes:
+                return codes
+        return {}
+    return {}

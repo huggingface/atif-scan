@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from ..data.jsonval import Doc
 
 PARTS = ("message", "reasoning", "calls", "results")
-SegmentPart = Literal["message", "reasoning", "call", "result"]
+SegmentPart = Literal["message", "reasoning", "call", "call_info", "result"]
 MAX_SEGMENT_CHARS = 6000
 
 
@@ -67,7 +67,24 @@ def _segment_content(step: Step, part: SegmentPart, index: int, field: int) -> t
             raise ValueError("no such observation index")
         observation = step.observations[index]
         return observation.content, _pairing_provenance(observation)
+    if part == "call_info":
+        return _call_metadata(step, index, field)
     return _call_segment_content(step, index, field)
+
+
+def _call_metadata(step: Step, index: int, field: int) -> tuple[Content, Doc]:
+    """Counts-only call anchor, including calls with no inspectable argument fields."""
+    if field or index >= len(step.calls):
+        raise ValueError("invalid call metadata index")
+    call = step.calls[index]
+    inspectable = sum(bool(c.understood or c.text or c.media) for _, c in call.fields)
+    text = (
+        f"Recorded tool call {index}.\n"
+        f"Inspectable argument fields: {inspectable}.\n"
+        f"Linked recorded results: {len(step.results_for(call))}.\n"
+        "Call metadata only; missing arguments or results have not been recovered."
+    )
+    return Content(text), {"metadata_only": True}
 
 
 def _call_segment_content(step: Step, index: int, field: int) -> tuple[Content, Doc]:
@@ -108,7 +125,7 @@ def read_segment(
     tool arguments, paths or sibling fields are returned. Empty message/reasoning
     cannot be distinguished from absence in the parsed model.
     """
-    if part not in ("message", "reasoning", "call", "result"):
+    if part not in ("message", "reasoning", "call", "call_info", "result"):
         raise ValueError("invalid part")
     if any(type(n) is not int or n < 0 for n in (index, field, offset)):
         raise ValueError("indices and offset must be non-negative integers")

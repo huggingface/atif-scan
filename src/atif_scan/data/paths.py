@@ -5,11 +5,13 @@
       harbor/    mirrors of harbor:// jobs, harbor/<job id>/              (sync)
       results/   the per-trace result cache                              (--cache)
       labels/    the label store and its run splits                      (atif-scan labels)
+      feedback/  finding-level browser annotations and private notes     (--browse)
       gold/      gold snapshots of scan results                          (tools/gold.py, e2e)
       bundles/   question and hunt bundles                               (--questions, hunt)
 
 Everything under it names real runs or holds trace text: it is private (folders 0700,
-files 0600 where atif-scan writes them), never committed, and safe to delete. Two older
+files 0600 where atif-scan writes them), never committed. Mirrors/results are expendable;
+labels, feedback, gold and bundles may not be recoverable after deletion. Two older
 variables still win for their part: ATIF_SCAN_SYNC_DIR (hf/, harbor/, results/) and
 ATIF_SCAN_GOLD_DIR (gold/).
 """

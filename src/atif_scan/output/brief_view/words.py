@@ -4,10 +4,12 @@ money), and the label/wrap layout every section uses."""
 from __future__ import annotations
 
 import textwrap
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
     from ...data.jsonval import Doc
 
@@ -25,6 +27,10 @@ LABEL = 11  # the label column, including its trailing space
 
 
 PAD = " " * LABEL
+
+
+# A mark line wraps under the text after the mark, not under the mark itself.
+MARK_HANG = 2
 
 
 NBSP = "\u00a0"  # glues a separator to the word before it while wrapping
@@ -137,17 +143,42 @@ def spread(r: Doc) -> str:
     return f" (p5–p95 {r['p5']:.2f}–{r['p95']:.2f})"
 
 
+# While set, `wrap` also records each section's unwrapped body (for HTML views).
+_SECTIONS: ContextVar[list[Doc] | None] = ContextVar("brief_sections", default=None)
+
+
+@contextmanager
+def collecting() -> Iterator[list[Doc]]:
+    """Collect `{"label", "lines": [{"text", "pre"}]}` per section rendered inside."""
+    sink: list[Doc] = []
+    token = _SECTIONS.set(sink)
+    try:
+        yield sink
+    finally:
+        _SECTIONS.reset(token)
+
+
 def wrap(label: str, body: Lines) -> Lines:
     """A section: the label on its first line, every line wrapped to WIDTH. A body line
     that starts with a mark wraps under the text after the mark; a line starting with
     spaces is pre-formatted (a table row) and kept as it is."""
+    sink = _SECTIONS.get()
+    if sink is not None and body:
+        sink.append(
+            {
+                "label": label,
+                "lines": [
+                    {"text": t.replace(NBSP, " ").strip(), "pre": t.startswith(" ")} for t in body
+                ],
+            }
+        )
     out: Lines = []
     for j, text in enumerate(body):
         head = f"{label if j == 0 else '':<{LABEL}}"
         if text.startswith(" "):
             out.append((head + text[1:]).replace(NBSP, " ").rstrip())
             continue
-        indent = PAD + ("  " if text[:1] in MARKS and text[1:2] == " " else "")
+        indent = PAD + (" " * MARK_HANG if text[:1] in MARKS and text[1:2] == " " else "")
         # A " · " separator never starts a wrapped line (it would read as a mark).
         glued = text[:2] + text[2:].replace(" · ", NBSP + "· ")
         out += [
