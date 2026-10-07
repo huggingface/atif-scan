@@ -198,6 +198,7 @@ LOOKUPS = frozenset(
         "lookup.instruction_phrase_search",
         "reference.hidden_content_reused",
         "tb21.task_origin_solution",
+        "deepswe.upstream_lookup",
     }
 )
 
@@ -232,6 +233,7 @@ NETWORK_ACTIONS = frozenset(
     {
         "network.external_url",
         "network.http_or_git",
+        "network.isolation_bypass",
         "network.package_install",
         "network.web_search",
         "network.remote_script",

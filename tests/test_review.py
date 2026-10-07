@@ -71,6 +71,7 @@ def test_default_selection_matches_scorecard_and_has_private_mcp_bundle(
     assert doc["review"] == {
         "scope": "dq-candidates",
         "blind": False,
+        "environment_note": False,
         "threshold": "high",
         "selected": 1,
         # hack_hunt, plus the finding-specific question its test-path access triggers.
@@ -326,6 +327,7 @@ def test_all_scope_awareness_includes_failed_unknown_and_unflagged_controls(
     assert doc["review"] == {
         "scope": "all",
         "blind": False,
+        "environment_note": False,
         "threshold": "high",
         "selected": 4,
         "written": 4,

@@ -64,6 +64,7 @@ def test_exact_builtin_contract():
     network_actions = {
         "network.external_url",
         "network.http_or_git",
+        "network.isolation_bypass",
         "network.package_install",
         "network.web_search",
         "network.remote_script",

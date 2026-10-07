@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from ..checks import Context
 from ..data.loader import TraceError
 from ..engine import Engine, effective_context
+from ..packs import review_note
 from ..review.catalogue import QUESTIONS, SHARED_SAMPLES
 from ..review.prompts import Writer, instruction_text, shared_suffix
 from ..sources.harbor.runs import submission_near
@@ -78,7 +79,8 @@ def write_review(
         or (scope == "rewarded" and (i.get("reward") or 0) > 0)
     }
     question_ids = list(dict.fromkeys(questions or (BLIND_DEFAULT if blind else DEFAULT_QUESTIONS)))
-    writer = Writer(root, question_ids, _harness_template(records, selected), blind)
+    environment = review_note(doc.get("packs") or [])
+    writer = Writer(root, question_ids, _harness_template(records, selected), blind, environment)
     manifest: list[Doc] = []
     selection: list[Doc] = []
     try:
@@ -107,6 +109,7 @@ def write_review(
     metadata = {
         "scope": scope,
         "blind": blind,
+        "environment_note": bool(environment),
         "threshold": dq,
         "selected": len(selected),
         "written": writer.count,
