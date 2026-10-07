@@ -1,6 +1,6 @@
 """atif-scan hunt: answer a question bundle with fast-agent.
 
-    atif-scan JOB --questions DIR [--question hack_hunt]       # write the prompts
+    atif-scan JOB --questions DIR [--question hack_hunt]       # write the bundle
     atif-scan hunt --model MODEL --questions DIR [--inspect-tool] [--jobs 4]
     atif-scan JOB --answers DIR --brief                        # read the answers back
 

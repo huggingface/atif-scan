@@ -21,7 +21,6 @@ from ..evidence.history import history_counts
 from ..output.bundle import write_review
 from ..output.document import assemble, document, report
 from ..review.answers import Answers
-from ..review.prompts import Writer
 from ..sources.inputs import (
     Source,
     SourceError,
@@ -105,23 +104,21 @@ class Scanner:
     engine: Engine
     task: str | None  # --task, which beats any recorded task
     cache: ResultCache | None = None
-    writer: Writer | None = None
     answers: Answers | None = None
     cite: Severity | None = None
     cite_checks: tuple[str, ...] = ()  # --cite-check globs; empty cites every check
 
     @classmethod
     def for_args(cls, args: argparse.Namespace, engine: Engine) -> Scanner:
-        writer = Writer(args.questions, args.question) if args.questions else None
         answers = Answers.load(args.answers) if args.answers else None
         cite = Severity[args.cite.upper()] if args.cite else None
         cache = None
         # Citations and questions carry trace text, and answers need the trace: never cached.
         # `cite is not None`: Severity.INFO is 0, so `--cite info` is falsy (regression).
-        if not (args.no_cache or cite is not None or args.judge_prompts or writer or answers):
+        if not (args.no_cache or cite is not None or args.questions or answers):
             directory = args.cache or args.sync_root / "results"
             cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
-        return cls(engine, args.task, cache, writer, answers, cite, tuple(args.cite_check))
+        return cls(engine, args.task, cache, answers, cite, tuple(args.cite_check))
 
     def item(self, source: Source, context: Context) -> Doc:
         item = self._item(source, context)
@@ -162,23 +159,12 @@ class Scanner:
             # Only trace-derived data: result.json / Hub facts are merged fresh.
             self.cache.put(key, {"input_id": source.label, "scan": scanned, "trace_facts": traced})
         item = assemble(scanned, run_facts(recorded, traced))
-        if self.writer is not None and trace is not None:
-            self.writer.add(trace, assessments, context, source.label, source.local)
         if self.answers is not None:
             item["answers"] = self.answers.annotate(source.label, trace, source.local)
         if self.cite is not None and trace is not None:
             # Opt-in trace text; the only report field that isn't allowlisted metadata.
             item["citations"] = citations(trace, assessments, self.cite, self.cite_checks)
         return item
-
-    def close(self) -> None:
-        if self.writer is not None:
-            self.writer.close()
-            print(
-                f"atif-scan: {self.writer.count} question(s) written (prompts contain masked "
-                "trace text; keep them out of Git)",
-                file=sys.stderr,
-            )
 
 
 def _scan_all(
@@ -227,16 +213,17 @@ def _document(output: list[Doc], args: argparse.Namespace, sync_failed: int, eng
 
 
 def _review(doc: Doc, args: argparse.Namespace, records: list[Record], engine: Engine) -> bool:
-    """Write the --judge-prompts bundle into the report; False when it failed."""
+    """Write the --questions bundle into the report; False when it failed."""
     try:
         doc["review"] = write_review(
-            args.judge_prompts,
+            args.questions,
             doc,
             records,
             engine,
             args.dq_on,
-            args.judge_scope or "dq-candidates",
+            args.question_scope or "dq-candidates",
             args.question,
+            blind=args.blind,
         )
     except (OSError, ValueError):
         print("atif-scan: review bundle failed (details withheld)", file=sys.stderr)
@@ -289,9 +276,8 @@ def scan(args: argparse.Namespace) -> int:
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     scanner = Scanner.for_args(args, engine)
     output, invalid, failed = _scan_all(scanner, records, threshold)
-    scanner.close()
     doc = _document(output, args, sync_failed, engine)
-    if args.judge_prompts and not _review(doc, args, records, engine):
+    if args.questions and not _review(doc, args, records, engine):
         return 2
     emit(doc, args)
     return 2 if invalid or sync_failed else 1 if failed else 0

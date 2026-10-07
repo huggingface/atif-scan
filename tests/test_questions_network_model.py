@@ -278,7 +278,12 @@ def test_cli_schema_answers_masking_and_injection(tmp_path, capsys, qid):
     (folder / "trajectory.json").write_text(json.dumps(raw))
     qdir = tmp_path / "questions"
     args = [str(tmp_path / "job"), "--task-from", "trial-dir", "--format", "json"]
-    assert main([*args, "--questions", str(qdir), "--question", qid]) in (0, 1)
+    assert main(
+        [*args, "--questions", str(qdir), "--question-scope", "all", "--question", qid]
+    ) in (
+        0,
+        1,
+    )
     capsys.readouterr()
     rows = [json.loads(line) for line in (qdir / "index.jsonl").read_text().splitlines()]
     assert len(rows) == 1 and rows[0]["question"] == qid and rows[0]["version"] == "1"

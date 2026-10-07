@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..checks import Severity, check_pattern
 from ..output.bundle import SCOPES
-from ..review.catalogue import BY_ID
+from ..review.catalogue import BY_ID, OPEN, QUESTIONS, RETIRED
 from ..sources.inputs import (
     DEFAULT_PATTERN,
 )
@@ -88,7 +88,7 @@ def _input_arguments(parser: argparse.ArgumentParser) -> None:
         "*.json): scan its source_jobs from the Harbor Hub as one run, and check every trial "
         "against its source_filter",
     )
-    harbor = parser.add_argument_group("Harbor Hub jobs (harbor://jobs/<id> or a hub URL)")
+    harbor = parser.add_argument_group("remote inputs (hf://, harbor://jobs/<id> or a hub URL)")
     harbor.add_argument(
         "--sync",
         action=argparse.BooleanOptionalAction,
@@ -196,38 +196,51 @@ def _output_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _question_id(value: str) -> str:
+    if value in BY_ID:
+        return value
+    if value in RETIRED:
+        message = f"{value} was retired: ask {RETIRED[value]} (with --blind for a blind review)"
+        raise argparse.ArgumentTypeError(message)
+    raise argparse.ArgumentTypeError(f"unknown question; choose from {', '.join(BY_ID)}")
+
+
 def _review_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--judge-prompts",
-        "--judge",
-        dest="judge_prompts",
-        type=Path,
-        metavar="DIR",
-        help="write a private, MCP-ready review bundle to a new/empty DIR; defaults to "
-        "DQ candidates, hack_hunt plus each finding-specific question that applies; "
-        "never calls a model",
-    )
-    parser.add_argument(
-        "--judge-scope",
-        choices=SCOPES,
-        help="review selection: dq-candidates (default, uses --dq-on), rewarded, or all "
-        "trials including failed and unknown-reward controls",
-    )
-    parser.add_argument(
-        "--questions",
-        type=Path,
-        metavar="DIR",
-        help="write follow-up review prompts (one per trace and question) to DIR for a human "
-        "or any LLM to answer; prompts contain masked trace text",
-    )
+    for flags, help_ in (
+        (
+            ("--questions",),
+            "write a private, MCP-ready review bundle (prompts with masked trace text) to a "
+            "new/empty DIR, for a person, `atif-scan hunt` or any LLM to answer; never calls "
+            "a model. Default: the DQ candidates, asked hack_hunt plus each finding-specific "
+            "question that applies",
+        ),
+        (("--judge-prompts", "--judge"), argparse.SUPPRESS),  # the former names
+    ):
+        parser.add_argument(*flags, dest="questions", type=Path, metavar="DIR", help=help_)
+    for flags, help_ in (
+        (
+            ("--question-scope",),
+            "trials the bundle covers: dq-candidates (default, uses --dq-on), rewarded, or all "
+            "trials including failed and unknown-reward controls",
+        ),
+        (("--judge-scope",), argparse.SUPPRESS),  # the former name
+    ):
+        parser.add_argument(*flags, dest="question_scope", choices=SCOPES, help=help_)
     parser.add_argument(
         "--question",
         action="append",
         default=[],
-        choices=list(BY_ID),
-        help="only these questions (repeatable; default with --judge-prompts: hack_hunt "
-        "plus the finding-specific ones that apply, except network_outcome; otherwise all "
-        "except opt-in hack_hunt, benchmark_awareness and web_provenance)",
+        type=_question_id,
+        metavar="ID",
+        help="only these questions (repeatable): the finding-specific "
+        f"{', '.join(q.id for q in QUESTIONS)}; the open {', '.join(q.id for q in OPEN)}; "
+        "or web_provenance",
+    )
+    parser.add_argument(
+        "--blind",
+        action="store_true",
+        help="ask the open questions without showing scanner findings, so the answers can "
+        "measure the scanner (default question: hack_hunt)",
     )
     parser.add_argument(
         "--answers",
@@ -272,7 +285,8 @@ def _check_glob(value: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=__doc__,
+        description="Scan ATIF trajectories with evidence-scoped behavioural checks. Never "
+        "runs trace commands or calls a model; reports carry no trace text unless you ask.",
         epilog="commands: `atif-scan labels …` (the label store) and `atif-scan hunt …` "
         "(answer a question bundle with fast-agent); see their --help. To scan an input "
         "named labels or hunt, write ./labels or ./hunt.",
@@ -286,27 +300,35 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _check_review_dir(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    """--judge-prompts needs durable local traces and a new or empty directory."""
-    if args.questions or args.answers or args.inspect:
-        parser.error("--judge-prompts cannot be combined with --questions, --answers or --inspect")
+    """--questions needs durable local traces and a new or empty directory."""
+    if args.answers or args.inspect:
+        parser.error("--questions cannot be combined with --answers or --inspect")
     if not args.sync:
-        parser.error("--judge-prompts requires durable local traces; omit --no-sync")
-    directory = Path(args.judge_prompts)
+        parser.error("--questions requires durable local traces; omit --no-sync")
+    directory = Path(args.questions)
     try:
         if directory.is_symlink() or (
             directory.exists() and (not directory.is_dir() or any(directory.iterdir()))
         ):
-            parser.error("--judge-prompts requires a new or empty directory")
+            parser.error("--questions requires a new or empty directory")
     except OSError:
         parser.error("review directory unavailable (details withheld)")
 
 
+def _check_questions(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if not args.questions:
+        if args.question_scope or args.blind or args.question:
+            parser.error("--question, --question-scope and --blind require --questions DIR")
+        return
+    _check_review_dir(parser, args)
+    open_ids = {q.id for q in OPEN}
+    if args.blind and (closed := [q for q in args.question if q not in open_ids]):
+        parser.error(f"--blind asks open questions only, not {', '.join(closed)}")
+
+
 def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     _check_browse(parser, args)
-    if args.judge_scope and not args.judge_prompts:
-        parser.error("--judge-scope requires --judge-prompts DIR")
-    if args.judge_prompts:
-        _check_review_dir(parser, args)
+    _check_questions(parser, args)
     if args.cite_check and not args.cite:
         args.cite = "info"  # checks picked by name: severity shouldn't hide them
     if args.cite and (args.view in ("brief", "overview") or args.inspect):
@@ -377,13 +399,13 @@ def _check_browse(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.cite_check,
         args.questions,
         args.answers,
-        args.judge_prompts,
         args.question,
-        args.judge_scope,
+        args.question_scope,
+        args.blind,
     )
     if any(incompatible):
         flag = "--browse" if args.browse else "--viewer"
         parser.error(
             f"{flag} cannot be combined with --inspect, --no-sync, --cite/--cite-check, "
-            "--questions, --answers, --judge-prompts, --question or --judge-scope"
+            "--questions, --answers, --question, --question-scope or --blind"
         )

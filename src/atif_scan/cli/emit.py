@@ -79,9 +79,5 @@ def emit(doc: Doc, args: argparse.Namespace) -> None:
     if view is None:
         # Default: the brief for a run's text view (unless citing), else the detail.
         many = len(doc["inputs"]) > 1
-        view = (
-            "brief"
-            if fmt == "text" and (many or args.judge_prompts) and not args.cite
-            else "detail"
-        )
+        view = "brief" if fmt == "text" and (many or args.questions) and not args.cite else "detail"
     VIEWS[view](doc, args, fmt)

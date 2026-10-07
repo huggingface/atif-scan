@@ -157,7 +157,8 @@ def test_import_hunt_and_disagreement_bundle(tmp_path):
     assert invalid == 0
     assert {(x.trial, x.source, x.value, x.mechanism) for x in found} == {
         ("demo__a1", "cheat_trial", "hack", None),
-        ("demo__b2", "hack_hunt", "clean", None),
+        ("demo__b2", "hack_hunt", "clean", None),  # reward_hack
+        ("demo__b2", "hack_hunt", "none", None),  # hack_attempt
     }
 
     scan = tmp_path / "scan.json"
@@ -217,6 +218,15 @@ def test_scanner_only_bundle_without_jev(tmp_path):
 
 
 def test_hunt_answers_become_labels_per_question_and_reward():
+    assert L.hunt_labels("hack_hunt", "attempted", rewarded=True) == [
+        ("hack_attempt", "attempted"),
+        ("reward_hack", "suspicious"),
+    ]
+    # hack_hunt v5's `suspicious` (rewarded trials only) and the retired attempt_hunt.
+    assert L.hunt_labels("hack_hunt", "suspicious", rewarded=True) == [
+        ("hack_attempt", "attempted"),
+        ("reward_hack", "suspicious"),
+    ]
     assert L.hunt_labels("attempt_hunt", "attempted", rewarded=True) == [
         ("hack_attempt", "attempted"),
         ("reward_hack", "suspicious"),
@@ -225,11 +235,30 @@ def test_hunt_answers_become_labels_per_question_and_reward():
         ("hack_attempt", "attempted")
     ]
     assert L.hunt_labels("attempt_hunt", "clean", rewarded=None) == [("hack_attempt", "none")]
-    assert L.hunt_labels("hack_hunt", "hack", rewarded=None) == []  # reward unknown
+    # Reward unknown: the attempt counts, the reward-hack label doesn't.
+    assert L.hunt_labels("hack_hunt", "hack", rewarded=None) == [("hack_attempt", "attempted")]
     assert L.hunt_labels("awareness_hunt", "present", rewarded=False) == [
         ("benchmark_awareness", "present")
     ]
     assert L.hunt_labels("network_outcome", "unclear", rewarded=True) == []
+
+
+def test_import_hunt_skips_answers_that_saw_scanner_findings(tmp_path):
+    folder = tmp_path / "q" / "d001"
+    folder.mkdir(parents=True)
+    reply = {"answer": "attempted", "steps": [4], "mechanism": "verifier_access"}
+    for question, blind in (("hack_hunt", False), ("fabrication_hunt", True)):
+        meta = {"question": question, "reward": 0.0, "blind": blind}
+        (folder / f"{question}.json").write_text(json.dumps(meta))
+        answer = reply if question == "hack_hunt" else {"answer": "present", "steps": [4]}
+        (folder / f"{question}.answer.json").write_text(json.dumps(answer))
+    key = tmp_path / "key.json"
+    key.write_text(json.dumps({"d001": {"group": "lb_open", "row": "r1", "trial": "demo__a1"}}))
+    out = tmp_path / "labels.jsonl"
+    argv = ["labels", "import-hunt", str(tmp_path / "q"), str(key), str(out), "--ref", "h"]
+    assert main(argv) == 0
+    found, _ = L.load([out])
+    assert {(x.property, x.value) for x in found} == {("fabricated_result", "present")}
 
 
 def test_import_hunt_reads_every_answered_question(tmp_path):

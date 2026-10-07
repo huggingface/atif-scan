@@ -38,10 +38,7 @@ def _scanned(
     sync_failed = sum(getattr(args, "sync_failures", []))
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     scanner = Scanner.for_args(args, engine)
-    try:
-        items, invalid, failed = _scan_all(scanner, records, threshold)
-    finally:
-        scanner.close()
+    items, invalid, failed = _scan_all(scanner, records, threshold)
     if sync_failed:
         print(
             f"atif-scan: {sync_failed} sync file(s) unavailable; export incomplete", file=sys.stderr

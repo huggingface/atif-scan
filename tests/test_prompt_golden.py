@@ -1,7 +1,8 @@
 """Golden prompts: the exact text each review question puts in front of a judge.
 
 Every question in the catalogue is rendered against one synthetic rewarded trial
-(`fixtures/prompts/`) that triggers them all, and compared with `golden/prompts/<id>.md`.
+(`fixtures/prompts/`) that triggers them all, and compared with `golden/prompts/<id>.md`;
+the open questions also in their blind mode (`<id>.blind.md`).
 A wording change anywhere (a question, a shared fragment, a special case in `prompts.py`)
 then shows up as a reviewable diff of what the judge reads, not only as code.
 
@@ -23,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -30,10 +32,15 @@ import pytest
 from atif_scan import Context, Engine, builtin_detectors, load_trace
 from atif_scan.data.jsonval import as_object, as_str
 from atif_scan.packs.reference import ENV
-from atif_scan.review.catalogue import BY_ID
+from atif_scan.review.catalogue import BY_ID, OPEN
 from atif_scan.review.prompts import build, schema
 from atif_scan.review.provenance import hidden_values
 
+# Golden name -> (question, blind).
+CASES = {
+    **{qid: (q, False) for qid, q in BY_ID.items()},
+    **{f"{q.id}.blind": (replace(q, blind=True), True) for q in OPEN},
+}
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "fixtures" / "prompts"
 GOLDEN = HERE / "golden" / "prompts"
@@ -56,10 +63,10 @@ def rendered() -> dict[str, str]:
         context = Context("demo-task", reward=1.0)
         found = Engine(builtin_detectors()).evaluate(trace, context)
         out = {}
-        for qid, question in BY_ID.items():
+        for name, (question, _) in CASES.items():
             built = build(question, trace, found, context, LABEL)
-            assert built is not None, f"the golden fixture no longer triggers {qid}"
-            out[qid] = (
+            assert built is not None, f"the golden fixture no longer triggers {name}"
+            out[name] = (
                 built[0]
                 + "\n<!-- answer schema -->\n"
                 + json.dumps(schema(question), indent=1)
@@ -88,18 +95,18 @@ def _unbumped(rendered: dict[str, str]) -> list[str]:
         for qid, text in rendered.items()
         if qid in recorded
         and recorded[qid][1] != _sha(text)
-        and recorded[qid][0] == BY_ID[qid].version
+        and recorded[qid][0] == CASES[qid][0].version
     )
 
 
 def _write(rendered: dict[str, str]) -> None:
     GOLDEN.mkdir(parents=True, exist_ok=True)
     for stale in GOLDEN.glob("*.md"):
-        if stale.stem not in rendered:
+        if stale.name.removesuffix(".md") not in rendered:
             stale.unlink()
     for qid, text in rendered.items():
         (GOLDEN / f"{qid}.md").write_text(text)
-    versions = {q: {"version": BY_ID[q].version, "sha256": _sha(t)} for q, t in rendered.items()}
+    versions = {q: {"version": CASES[q][0].version, "sha256": _sha(t)} for q, t in rendered.items()}
     VERSIONS.write_text(json.dumps(versions, indent=1, sort_keys=True) + "\n")
 
 
@@ -111,15 +118,15 @@ def test_every_question_has_a_golden_and_no_stale_ones(rendered):
             "Question.version (UPDATE_GOLDEN=fixture for a fixture-only change)"
         )
         _write(rendered)
-    assert {p.stem for p in GOLDEN.glob("*.md")} == set(BY_ID)
-    assert set(_recorded()) == set(BY_ID)
+    assert {p.name.removesuffix(".md") for p in GOLDEN.glob("*.md")} == set(CASES)
+    assert set(_recorded()) == set(CASES)
 
 
-@pytest.mark.parametrize("qid", sorted(BY_ID))
+@pytest.mark.parametrize("qid", sorted(CASES))
 def test_prompt_matches_its_golden(rendered, qid):
     golden = (GOLDEN / f"{qid}.md").read_text()
     assert rendered[qid] == golden, (
         f"{qid}: prompt text changed; review it, bump the version if the question changed, "
         "then UPDATE_GOLDEN=1 uv run pytest tests/test_prompt_golden.py"
     )
-    assert _recorded()[qid][0] == BY_ID[qid].version, f"{qid}: regenerate the golden"
+    assert _recorded()[qid][0] == CASES[qid][0].version, f"{qid}: regenerate the golden"

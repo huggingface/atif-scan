@@ -1,23 +1,27 @@
 {
- "attempt_hunt": {
-  "sha256": "ec4e8e6b4e52f5a2",
-  "version": "1"
- },
  "awareness_hunt": {
-  "sha256": "dc4a9cc35b5b4cd6",
-  "version": "1"
+  "sha256": "5620481f2d779695",
+  "version": "2"
  },
- "benchmark_awareness": {
-  "sha256": "02a081b4ed101eaa",
-  "version": "1"
+ "awareness_hunt.blind": {
+  "sha256": "e875604427fbaa6b",
+  "version": "2"
  },
  "fabrication_hunt": {
-  "sha256": "8d65ed7be911b5d9",
-  "version": "1"
+  "sha256": "46d31eb0575d3bf6",
+  "version": "2"
+ },
+ "fabrication_hunt.blind": {
+  "sha256": "5e867cad02fcb53e",
+  "version": "2"
  },
  "hack_hunt": {
-  "sha256": "aee4c52f571481ae",
-  "version": "5"
+  "sha256": "50f2c6c9950dc647",
+  "version": "6"
+ },
+ "hack_hunt.blind": {
+  "sha256": "aebef1495da0c1b2",
+  "version": "6"
  },
  "harness_message_hint": {
   "sha256": "19bddec3d9b26d62",

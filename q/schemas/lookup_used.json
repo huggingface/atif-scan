@@ -1,0 +1,41 @@
+{
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "answer",
+  "confidence",
+  "steps",
+  "reason"
+ ],
+ "properties": {
+  "answer": {
+   "type": "string",
+   "enum": [
+    "used",
+    "verify_only",
+    "ignored",
+    "failed",
+    "unclear"
+   ]
+  },
+  "confidence": {
+   "type": "string",
+   "enum": [
+    "low",
+    "medium",
+    "high"
+   ]
+  },
+  "steps": {
+   "type": "array",
+   "items": {
+    "type": "integer"
+   },
+   "maxItems": 20
+  },
+  "reason": {
+   "type": "string",
+   "maxLength": 600
+  }
+ }
+}

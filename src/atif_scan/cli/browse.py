@@ -54,10 +54,7 @@ def browse(args: argparse.Namespace) -> int:
         )
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     scanner = Scanner.for_args(args, engine)
-    try:
-        items, invalid, failed = _scan_all(scanner, records, threshold)
-    finally:
-        scanner.close()
+    items, invalid, failed = _scan_all(scanner, records, threshold)
     doc = _document(items, args, sync_failed, engine)
     print(f"atif-scan: {len(items)} input(s) scanned", file=sys.stderr)
     try:
