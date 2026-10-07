@@ -6,7 +6,7 @@ import pytest
 from test_scan import results, trajectory
 
 from atif_scan import Status
-from atif_scan.detectors.builtin import benchmark_remark
+from atif_scan.detectors.awareness import benchmark_remark
 from atif_scan.detectors.proximity import Chain, near, slot, words
 
 

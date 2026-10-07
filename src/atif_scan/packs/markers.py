@@ -14,8 +14,9 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
-from ..detectors.builtin import CANARY, PROSE, benchmark_remark
+from ..detectors.awareness import benchmark_remark
 from ..detectors.recall import walk
+from ..detectors.vocabulary import CANARY, PROSE
 from .reference import call_for, remote_result
 
 if TYPE_CHECKING:

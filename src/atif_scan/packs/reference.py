@@ -51,9 +51,10 @@ from urllib.parse import urlsplit
 from ..checks import CheckSpec, Context, Detection, Severity, Status
 from ..data import credentials
 from ..data.model import Channel, Locator, Surface, Trace
-from ..detectors.builtin import CANARY, NETWORK, TASK_FILES, URL, looks_up_benchmark
 from ..detectors.installs import _task_name
+from ..detectors.lookup import looks_up_benchmark
 from ..detectors.recall import PROSE_AND_INPUT, UnprimedDetector, unrecorded_web_result, walk
+from ..detectors.vocabulary import CANARY, NETWORK, TASK_FILES, URL
 from ..rules import Allowance, Ref
 
 if TYPE_CHECKING:

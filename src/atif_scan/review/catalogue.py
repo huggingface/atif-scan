@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ..data.model import Channel, Locator, Trace
-from ..detectors.builtin import OTHER_BENCHMARKS
+from ..detectors.awareness import OTHER_BENCHMARKS
 from .provenance import provenance_table
 
 if TYPE_CHECKING:

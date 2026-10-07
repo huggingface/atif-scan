@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status
-from .builtin import BENCHMARK_NAME, looks_up_benchmark
+from .awareness import BENCHMARK_NAME
+from .lookup import looks_up_benchmark
 from .recall import PROSE_AND_INPUT, UnprimedDetector
 
 if TYPE_CHECKING:

@@ -576,7 +576,7 @@ def test_solution_file_discovered_in_environment_not_created():
     ],
 )
 def test_tb_derived_skill_and_task_pages_are_benchmark_sources(url):
-    from atif_scan.detectors.builtin import BENCHMARK_SOURCE
+    from atif_scan.detectors.vocabulary import BENCHMARK_SOURCE
 
     assert BENCHMARK_SOURCE.search(url)
     assert not BENCHMARK_SOURCE.search("https://github.com/letta-ai/letta")
