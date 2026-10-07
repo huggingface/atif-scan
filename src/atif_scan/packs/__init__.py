@@ -66,6 +66,12 @@ def _tb21_tasks() -> frozenset[str]:
     return frozenset(TASK_NAMES)
 
 
+def _deepswe_tasks() -> frozenset[str]:
+    from .deepswe import TASK_NAMES  # noqa: PLC0415 - lazy: only when tasks are compared
+
+    return TASK_NAMES
+
+
 def _tb4_tasks() -> frozenset[str]:
     from .tb4 import TASK_NAMES  # noqa: PLC0415 - lazy: only when tasks are compared
 
@@ -85,6 +91,12 @@ BUNDLED = (
         datasets=re.compile(r"(?<![\w-])terminal-bench/terminal-bench(?![\w-])", re.I),
         tasks=_tb4_tasks,
         dataset_needs_tasks=True,
+    ),
+    Pack(
+        "deepswe",
+        "atif_scan.packs.deepswe:checks",
+        datasets=re.compile(r"deep[-_ ]?swe", re.I),
+        tasks=_deepswe_tasks,
     ),
     Pack("reference", "atif_scan.packs.reference:checks", env="ATIF_SCAN_REFERENCE"),
 )

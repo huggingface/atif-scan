@@ -21,6 +21,7 @@ from ..evidence.history import history_counts
 from ..output.bundle import write_review
 from ..output.document import assemble, document, report
 from ..review.answers import Answers
+from ..sources.harbor.runs import submission_near
 from ..sources.inputs import (
     Source,
     SourceError,
@@ -137,6 +138,7 @@ class Scanner:
             trial_task(self.task, recorded, context.task),
             context.partial,
             trial_reward(source.reward(), listed, result),
+            submission_near(source.local),
         )
         fingerprint = source.fingerprint() if self.cache is not None else None
         key = self.cache.key(fingerprint, context) if self.cache and fingerprint else None

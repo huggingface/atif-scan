@@ -90,7 +90,14 @@ class ResultCache:
 
     def key(self, fingerprint: str, context: Context) -> str:
         material = json.dumps(
-            [self.base, fingerprint, context.task, context.partial, context.reward],
+            [
+                self.base,
+                fingerprint,
+                context.task,
+                context.partial,
+                context.reward,
+                context.submission.digest if context.submission else None,
+            ],
             sort_keys=True,
         )
         return hashlib.sha256(material.encode()).hexdigest()

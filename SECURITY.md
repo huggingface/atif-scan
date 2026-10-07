@@ -55,6 +55,13 @@
   `trials.jsonl`, and harbor-hf's `run.json` (declared prices) and
   `attempt-costs/*.json` (at most 4 KiB). Only allowlisted numbers, codes and labels are
   extracted from them. `--inspect` reads no file contents.
+- A trial's submitted patch (`<trial>/artifacts/model.patch` beside
+  `<trial>/agent/trajectory.json`, as DeepSWE/Pier record it; at most 8 MiB, symlinks
+  refused) is read for its `diff --git` file paths, change kinds and added lines. They
+  stay in memory for fixed predicates (the DeepSWE pack); reports carry only check IDs,
+  counts and trace step locators, never paths, patch lines or patch text. A missing patch
+  is unknown, never an empty submission. Patch text is the agent's code: treat it like
+  the trace.
 - Harbor Hub jobs are read through the user's own `harbor` CLI: no shell, fixed
   arguments, a validated UUID, stderr withheld. Downloaded trajectories are real traces;
   `--sync-to` puts them where you choose, otherwise they go to a temporary folder that's

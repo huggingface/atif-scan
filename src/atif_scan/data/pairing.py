@@ -13,10 +13,14 @@ if TYPE_CHECKING:
     from .model import Observation, ToolCall
 
 # The harness refused the call's input before running it (arguments that weren't valid
-# JSON, required parameters missing), so nothing ran: Claude Code, WorkHarness, OrcaTerm.
+# JSON, required parameters missing), so nothing ran: Claude Code, WorkHarness, OrcaTerm,
+# fast-agent's filesystem tools ("Error: 'path' and 'new_string' are required strings",
+# "Error: 'input' argument is required and must be a string").
 INPUT_REJECTED = re.compile(
     r"^\s*(?:<tool_use_error>\s*InputValidationError\b|Invalid input for [\w.-]+:|"
-    r"Validation failed for tool \"?[\w.-]+\"?:)"
+    r"Validation failed for tool \"?[\w.-]+\"?:|"
+    r"Error: '[\w.-]+'(?: and '[\w.-]+')* (?:argument is required and must be|"
+    r"are required strings)\b)"
 )
 
 

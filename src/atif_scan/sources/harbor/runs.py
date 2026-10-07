@@ -13,11 +13,14 @@ a zero or a negative result.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path, PurePath, PurePosixPath
 from typing import TYPE_CHECKING, TypeVar
 
 from ...data.jsonval import Doc, as_object, number
+from ...data.submission import MAX_BYTES as PATCH_BYTES
+from ...data.submission import Submission, parse_patch
 from .files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,
@@ -87,6 +90,32 @@ def _near(path: P, names: Iterable[str]) -> list[P]:
 def reward_candidates(path: str) -> list[str]:
     """Relative reward-file paths for a listed trajectory, in lookup order."""
     return [p.as_posix() for p in _near(PurePosixPath(path), REWARD_NAMES)]
+
+
+def _patch_path(trajectory: Path | None) -> Path | None:
+    """`<trial>/artifacts/model.patch` for `<trial>/agent/trajectory.json`, if a plain
+    file (not a symlink) is there."""
+    if trajectory is None or trajectory.parent.name != "agent":
+        return None
+    path = trajectory.parent.parent / "artifacts" / "model.patch"
+    try:
+        return None if path.is_symlink() or not path.is_file() else path
+    except OSError:
+        return None
+
+
+def submission_near(trajectory: Path | None) -> Submission | None:
+    """The trial's submitted patch beside its trajectory (DeepSWE/Pier); None when
+    there is none to read (no local trajectory, another layout, missing, a symlink or
+    unreadable): unknown, never an empty submission. A patch over the size cap is kept
+    as not understood."""
+    path = _patch_path(trajectory)
+    data = _read_local(path, PATCH_BYTES + 1) if path is not None else None
+    if data is None:
+        return None
+    if len(data) > PATCH_BYTES:
+        return Submission((), hashlib.sha256(data).hexdigest(), understood=False)
+    return parse_patch(data)
 
 
 def _read_local(path: Path, limit: int) -> bytes | None:

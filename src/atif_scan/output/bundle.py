@@ -14,6 +14,7 @@ from ..data.loader import TraceError
 from ..engine import Engine, effective_context
 from ..review.catalogue import QUESTIONS, SHARED_SAMPLES
 from ..review.prompts import Writer, instruction_text, shared_suffix
+from ..sources.harbor.runs import submission_near
 from .overview import overview
 
 if TYPE_CHECKING:
@@ -164,7 +165,13 @@ def _write_input(
     except TraceError:
         return None
     context = effective_context(
-        trace, Context(item.get("task"), item.get("partial", False), item.get("reward"))
+        trace,
+        Context(
+            item.get("task"),
+            item.get("partial", False),
+            item.get("reward"),
+            submission_near(source.local),
+        ),
     )
     run_context = (
         {

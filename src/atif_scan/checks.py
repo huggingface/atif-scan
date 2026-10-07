@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from .data.jsonval import identifier
 from .data.model import Locator, Trace
+from .data.submission import Submission
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -66,6 +67,9 @@ class Context:
     partial: bool = False
     # Verifier reward, when known (Harbor `verifier/reward.{json,txt}` or a manifest).
     reward: float | None = None
+    # The submitted patch, when the run records one beside the trajectory (DeepSWE's
+    # `artifacts/model.patch`); None when unknown. Paths and lines are never exported.
+    submission: Submission | None = None
 
     def __post_init__(self) -> None:
         if self.task is not None:
@@ -76,6 +80,8 @@ class Context:
             type(self.reward) not in (int, float) or not math.isfinite(self.reward)
         ):
             raise ValueError("invalid_reward")
+        if self.submission is not None and not isinstance(self.submission, Submission):
+            raise ValueError("invalid_submission")
 
 
 @dataclass(frozen=True)
@@ -120,6 +126,8 @@ UNREAD_REASONS = frozenset(
         "reasoning_tokens_not_split",  # only the upper bound of a ratio can be checked
         "calls_without_usage",  # some model calls report no tokens: a subset can't clear them
         "step_metrics_may_be_cumulative",  # per-step usage only rises: may be running totals
+        "submission_not_recorded",  # no submitted patch beside the trajectory to inspect
+        "submission_unreadable",  # the patch was too large or partly not a git diff
     }
 )
 # Places listed per assessment; the first few say where, all of them only add volume.
