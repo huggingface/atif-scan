@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import Counter, defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -22,7 +23,7 @@ from ...data.jsonval import (
     is_object,
     number,
 )
-from .files import configured_agents, duration, late_trials, overrides, text_label
+from .files import configured_agents, duration, late_trials, overrides, started, text_label
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -50,8 +51,9 @@ def _checked(value: str | None) -> str | None:
     return value
 
 
-def trial_meta(row: Mapping[str, object]) -> Doc:
-    """Allowlisted per-trial facts from the Hub listing (numbers, codes, identifiers)."""
+def trial_meta(row: Mapping[str, object], retry: Mapping[str, object] | None = None) -> Doc:
+    """Allowlisted per-trial facts from the Hub listing (numbers, codes, identifiers),
+    with its place in a retry chain (`retry_chains`) when it has one."""
     task = str(row.get("task_name") or "").rsplit("/", 1)[-1] or None
     error = row.get("error_type")
     return {
@@ -67,6 +69,78 @@ def trial_meta(row: Mapping[str, object]) -> Doc:
         "output_tokens": count(row.get("output_tokens")),
         "duration_sec": duration(row),
         "overrides": overrides(row.get("config_values") or {}),
+        **(retry or {}),
+    }
+
+
+# Harbor re-runs an errored trial as `<trial>__retry_<id>`; every attempt stays in the job,
+# and the suffix-free name may belong to any attempt (not necessarily the first).
+RETRY_SUFFIX = re.compile(r"__retry_[0-9a-fA-F]{4,}$")
+
+
+def retry_base(name: str) -> str:
+    return RETRY_SUFFIX.sub("", name)
+
+
+def _chains(rows: Sequence[Mapping[str, object]]) -> list[list[Mapping[str, object]]]:
+    """Each retry chain (two or more attempts of one trial) as listed."""
+    by_base: dict[str, list[Mapping[str, object]]] = defaultdict(list)
+    for row in rows:
+        by_base[retry_base(str(row.get("name") or ""))].append(row)
+    named = any(RETRY_SUFFIX.search(str(r.get("name") or "")) for r in rows)
+    return [chain for base, chain in by_base.items() if base and len(chain) > 1] if named else []
+
+
+def _ordered(chain: list[Mapping[str, object]]) -> list[Mapping[str, object]] | None:
+    """The chain by start time, or None when that order isn't known (a missing or
+    tied start time): then no attempt can be called the last one."""
+    times = [started(r) for r in chain]
+    known = [t for t in times if t is not None]
+    if len(known) < len(chain) or len(set(known)) < len(known):
+        return None
+    if len({t.tzinfo is None for t in known}) > 1:
+        return None
+    return [r for _, r in sorted(zip(known, chain, strict=True), key=lambda tr: tr[0])]
+
+
+def retry_chains(rows: Sequence[Mapping[str, object]]) -> dict[str, Doc]:
+    """{trial id: retry facts} for every attempt in a retry chain: `retry_attempts` (the
+    chain's length) and `retry_superseded` (True for all but the last attempt; None when
+    the chain's order is unknown, so every attempt stays scored)."""
+    facts: dict[str, Doc] = {}
+    for chain in _chains(rows):
+        ordered = _ordered(chain)
+        last = ordered[-1] if ordered else None
+        for row in chain:
+            superseded = None if last is None else row is not last
+            facts[str(row.get("id"))] = {
+                "retry_attempts": len(chain),
+                "retry_superseded": superseded,
+            }
+    return facts
+
+
+def retry_summary(rows: Sequence[Mapping[str, object]]) -> Doc | None:
+    """What the job's retry chains replaced, so the assumption behind scoring only each
+    chain's last attempt can be checked: superseded attempts should be infrastructure
+    failures (an error, no usage). None when the job has no retry chains."""
+    chains = _chains(rows)
+    if not chains:
+        return None
+    facts = retry_chains(rows)
+    superseded = [
+        trial_meta(r) for r in rows if facts.get(str(r.get("id")), {}).get("retry_superseded")
+    ]
+    used = ("cost_usd", "input_tokens", "output_tokens")
+    return {
+        "chains": len(chains),
+        "attempts": sum(len(c) for c in chains),
+        "superseded": len(superseded),
+        "unordered_chains": sum(1 for c in chains if _ordered(c) is None),
+        "superseded_errors": dict(Counter(m["error_type"] or "none" for m in superseded)),
+        # Against the assumption: an attempt that ended without an error, or did paid work.
+        "superseded_without_error": sum(1 for m in superseded if not m["error_type"]),
+        "superseded_with_usage": sum(1 for m in superseded if any(m.get(k) for k in used)),
     }
 
 
@@ -110,6 +184,7 @@ def run_meta(job: str, show: Mapping[str, object], rows: Sequence[Mapping[str, o
         # The job's tasks, to check that jobs scanned together don't share a task.
         "tasks": sorted({t for r in rows if (t := trial_meta(r).get("task"))}),
         "late_trials": late_trials(rows),
+        "retries": retry_summary(rows),
     }
 
 
@@ -130,7 +205,9 @@ def saved_listing(data: bytes) -> tuple[Doc | None, dict[str, Doc]]:
     except (KeyError, TypeError, ValueError, RecursionError):
         return None, {}
     rows = [r for r in rows if valid_row(r)]
-    return run_meta(job, show, rows), {trial_label(r): trial_meta(r) for r in rows}
+    chains = retry_chains(rows)
+    facts = {trial_label(r): trial_meta(r, chains.get(str(r["id"]))) for r in rows}
+    return run_meta(job, show, rows), facts
 
 
 def trial_label(row: Mapping[str, object]) -> str:

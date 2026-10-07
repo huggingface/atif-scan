@@ -112,6 +112,40 @@ def _rerun_texts(rr: Doc | None) -> Lines:
     ]
 
 
+RETRY_IDS_SHOWN = 3
+
+
+def _retry_texts(rt: Doc | None) -> Lines:
+    """Harbor retry chains: which attempts aren't scored, the assumption that makes
+    that fair, and any attempt that argues against it."""
+    if not rt or not (rt["superseded"] or rt["unordered_chains"]):
+        return []
+    texts: Lines = []
+    if rt["superseded"]:
+        texts.append(
+            f"{INFO} {plural(rt['superseded'], 'retried attempt')} not scored: Harbor re-ran"
+            f" {plural(rt['chains'], 'trial')} (`__retry_` names) and only each one's last"
+            " attempt counts. Assumed: the attempts it replaced were infrastructure"
+            f" failures ({counts(list(rt['superseded_errors'].items())[:ERROR_KINDS_SHOWN])})"
+        )
+        if rt["every_attempt_accuracy"] is not None:
+            texts.append(f"{INFO} scoring every attempt instead: {rt['every_attempt_accuracy']}%")
+    for key, what in (
+        ("superseded_without_error", "ended without an error (a result, not a crash)"),
+        ("superseded_with_work", "did agent work before it was replaced"),
+    ):
+        if ids := rt[key]:
+            shown = ", ".join(str(i) for i in ids[:RETRY_IDS_SHOWN])
+            more = f" +{len(ids) - RETRY_IDS_SHOWN}" if len(ids) > RETRY_IDS_SHOWN else ""
+            texts.append(f"{WARN} {plural(len(ids), 'replaced attempt')} {what}: {shown}{more}")
+    if rt["unordered_chains"]:
+        texts.append(
+            f"{WARN} {plural(rt['unordered_chains'], 'retry chain')} can't be ordered (start"
+            " times missing or tied): all their attempts are scored"
+        )
+    return texts
+
+
 def _compacted_text(ma: Doc, n: int) -> str | None:
     if not ma["compacted"]:
         return None
@@ -269,6 +303,7 @@ def evidence_section(b: Doc) -> Lines:
         [
             *_trial_texts(b),
             *_job_texts(b),
+            *_retry_texts(b["overview"].get("retries")),
             *_rerun_texts(b["overview"].get("reruns")),
             *_recording_texts(b),
         ],

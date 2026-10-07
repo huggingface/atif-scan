@@ -74,6 +74,46 @@ def reruns(items: list[Doc], runs: list[Doc]) -> Doc | None:
     }
 
 
+# A superseded attempt whose agent ran this long did more than fail to start.
+RETRY_WORK_SEC = 60
+
+
+def retries(items: list[Doc], runs: list[Doc]) -> Doc | None:
+    """Harbor retry chains: only each chain's last attempt is scored, on the assumption
+    that the attempts before it were infrastructure failures (a crash or start-up error,
+    not a result). The evidence for and against that assumption, from the listing and,
+    when scanned, the superseded attempts' own trajectories. None without retry chains."""
+    listed = [r["retries"] for r in runs if r.get("retries")]
+    superseded = [i for i in items if i.get("retry_superseded") is True]
+    if not listed and not superseded:
+        return None
+    every = [o for i in items if (o := _outcome(i)) is not None]
+    worked = [
+        i
+        for i in superseded
+        if (i.get("agent_steps") or 0) > 0
+        or (i.get("agent_duration_sec") or 0) >= RETRY_WORK_SEC
+        or (i.get("cost_usd") or 0) > 0
+        or (i.get("output_tokens") or 0) > 0
+    ]
+    return {
+        "assumption": "superseded_attempts_were_infrastructure_failures",
+        "chains": sum(r["chains"] for r in listed),
+        "superseded": len(superseded),
+        "unordered_chains": sum(r["unordered_chains"] for r in listed),
+        "superseded_errors": ranked(Counter(i.get("error_type") or "none" for i in superseded)),
+        # Against the assumption (each is a trial ID to look at, not a verdict):
+        "superseded_without_error": [i["input_id"] for i in superseded if not i.get("error_type")],
+        "superseded_with_work": [i["input_id"] for i in worked],
+        # The score if every attempt counted, as the job's raw listing does.
+        "every_attempt_accuracy": round(100.0 * sum(every) / len(every), 2) if every else None,
+    }
+
+
+def _scored_superseded(items: Sequence[Doc]) -> int:
+    return sum(1 for i in items if i.get("retry_superseded") is True and _outcome(i) is not None)
+
+
 def _outcome(item: Doc) -> bool | None:
     """True/False for a scored trial (errored = False); None when the reward is unknown."""
     if item.get("reward") is not None:
@@ -407,9 +447,13 @@ def overview(
     scanned: bool = True,
     expect_tasks: int | None = None,
 ) -> Doc:
-    """Run scorecard. `scanned=False` (listing only, e.g. --inspect) omits DQ figures."""
-    items = doc["inputs"]
+    """Run scorecard. `scanned=False` (listing only, e.g. --inspect) omits DQ figures.
+
+    Attempts a later retry superseded (`retry_superseded`) ran and cost money, so they
+    count as present, errored and spent; they aren't scored (see `retries`)."""
+    every = doc["inputs"]
     runs = doc.get("runs") or []
+    items = [i for i in every if i.get("retry_superseded") is not True]
     scored = [i for i in items if _outcome(i) is not None]
     dq_ids, uncleared = _dq_split(items, RANK[dq])
     # Models the scan expects: a comparison job plans several agents in one run; shards
@@ -430,8 +474,9 @@ def overview(
     sync_failed = doc.get("coverage", {}).get("sync_failed_files")
     return {
         "runs": runs,
-        "trials": _trial_counts(items, planned, len(scored)),
-        "reruns": reruns(items, runs),
+        "trials": _trial_counts(every, planned, len(scored) + _scored_superseded(every)),
+        "retries": retries(every, runs),
+        "reruns": reruns(every, runs),
         "tasks": _task_counts(by_task, k, expect_tasks, len(no_task)),
         **({"sync_failed_files": sync_failed} if sync_failed else {}),
         "accuracy": accuracy(by_task, no_task),
@@ -445,12 +490,12 @@ def overview(
         else None,
         "finding_index": finding_index(items) if scanned else None,
         "model_mismatch": models,
-        "cost": _cost_totals(items, runs),
-        "tokens": _token_totals(items),
-        "walltime": walltime_totals(items),
+        "cost": _cost_totals(every, runs),
+        "tokens": _token_totals(every),
+        "walltime": walltime_totals(every),
         "overrides": sorted(
             {o for r in runs for o in r.get("overrides") or []}
-            | {o for i in items for o in i.get("overrides") or []}
+            | {o for i in every for o in i.get("overrides") or []}
         ),
     }
 
@@ -535,6 +580,13 @@ def _overview_accuracy_lines(ov: Doc) -> list[str]:
     lines = [
         f"  accuracy   {acc:.1f}%{spread} (successes / all trials; errored without a reward = 0)"
     ]
+    rt = ov.get("retries")
+    if rt and rt["superseded"]:
+        lines.append(
+            f"             last attempt of each retried trial only: {rt['superseded']} earlier"
+            f" attempts not scored (assumed infrastructure failures); every attempt:"
+            f" {rt['every_attempt_accuracy']}%"
+        )
     no_task = ov["tasks"].get("scored_without_task") or 0
     if no_task and se is not None:
         lines.append(

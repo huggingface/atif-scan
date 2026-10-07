@@ -202,6 +202,17 @@ atif-scan --inspect harbor://jobs/<id>      # listing only: nothing downloaded
 - Harbor is run without a shell, with a validated job ID. Its stderr is never echoed.
 - A trial without a trajectory (e.g. it errored first) is reported, not treated as bad
   input.
+- **Retries.** Harbor re-runs an errored trial as `<trial>__retry_<id>` and keeps every
+  attempt in the job (the suffix-free name may be any attempt, not the first). atif-scan
+  groups each chain by name, orders it by start time, and scores only its last attempt:
+  the attempts before it count as present, errored and spent, but not scored
+  (`retry_superseded` on each item). That rests on an **assumption**, stated in the
+  brief: the replaced attempts were infrastructure failures (a crash or start-up error),
+  not results. The brief and `overview.retries` show the evidence: the replaced
+  attempts' error types, any that ended without an error (a retried result), any that
+  did agent work first (steps, tokens, cost, or a minute or more of agent time), and the
+  accuracy if every attempt were scored. A chain whose start times are missing or tied
+  can't be ordered, so all of its attempts stay scored.
 
 ### Recoverable Grok Build history
 

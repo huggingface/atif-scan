@@ -61,6 +61,7 @@ from .listing import (
     TRIAL_NAME,
     UUID,
     job_datasets,
+    retry_chains,
     run_meta,
     trial_label,
     trial_meta,
@@ -623,11 +624,12 @@ def _trial_sources(
     rows = [r for r in rows if valid_row(r)]
     paths = fetch(cli, job, rows, dest / job, full, workers, refresh, progress)
     save_listing(dest / job, job, show, rows)
+    chains = retry_chains(rows)
     return [
         Source(
             trial_label(row),
             _loader(paths[str(row["id"])]),
-            meta=trial_meta(row),
+            meta=trial_meta(row, chains.get(str(row["id"]))),
             fingerprint=local_fingerprint(paths[str(row["id"])]),
             details=_details(paths[str(row["id"])]),
             local=paths[str(row["id"])],
@@ -672,5 +674,7 @@ def inspect_job(value: str, cli: Harbor | None = None) -> Doc:
         rows = [r for _, job_rows in jobs for r in job_rows]
     else:
         run, rows = listing(cli, ref)
-    trials = [dict(trial_meta(r), input_id=trial_label(r)) for r in rows if valid_row(r)]
+    rows = [r for r in rows if valid_row(r)]
+    chains = retry_chains(rows)
+    trials = [dict(trial_meta(r, chains.get(str(r["id"]))), input_id=trial_label(r)) for r in rows]
     return {"run": run, "trials": trials}
