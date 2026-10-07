@@ -1,5 +1,4 @@
-/* atif-scan static trajectory viewer. Forward palette and dossier styling from the
-   synthetic evidence-desk prototype (examples/trajectory-browser). No external fonts,
+/* atif-scan static trajectory viewer: forward palette and dossier styling. No external fonts,
    images or network assets; everything is served from this directory. */
 :root {
   --ivory:#fff7e8; --paper:#fffcf4; --ivory-deep:#f4ead5; --petrol:#082c34;

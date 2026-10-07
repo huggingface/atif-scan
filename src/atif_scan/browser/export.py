@@ -62,7 +62,6 @@ FACT_KEYS = (
     "safety_provider",
     "safety_reason",
     "safety_category",
-    "duration_sec",
 )
 COVERAGE_KEYS = ("incomplete", "coverage_gaps", "recording_gaps", "input_error")
 # --run/--release lineage: whether the trial counts, and what it replaced (codes, names).

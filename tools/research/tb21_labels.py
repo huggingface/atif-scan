@@ -1,6 +1,6 @@
 """Turn the TB2.1 judge's rulings into labels on public trials (the atif-scan eval set).
 
-    uv run python tools/tb21_labels.py INVENTORY_DIR      # after tools/tb21_inventory.py
+    uv run python tools/research/tb21_labels.py INVENTORY_DIR   # after tb21_inventory.py
 
 The judge (CI) reviews every rewarded trial of a submission and lists the suspicious ones
 in a PR comment; maintainers tick those they disqualify. Those rows point at CI-owned

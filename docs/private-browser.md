@@ -110,7 +110,7 @@ POSIX file descriptors and `flock` (Linux/WSL); Windows-native support is not pr
   shared with the static viewer export.
 - `browser/export.py`, `browser/viewer/`, `cli/viewer.py`: `--viewer DIR`, a static,
   feedback-free export of masked fields with precomputed proven highlights (see reports.md).
-- `browser/static/`: plain HTML/CSS/JavaScript adapted from the synthetic prototype.
+- `browser/static/`: plain HTML/CSS/JavaScript.
   No build system, external assets, telemetry, or frontend dependencies.
 
 POST API routes are `/api/overview`, `/api/trial`, `/api/segment`, `/api/focus`,
@@ -125,9 +125,19 @@ the loader size cap. This is not a sandbox for hostile local users or resource e
 
 Useful next additions: navigation among multiple triggers in the same field, stable
 deep-link navigation, an explicit feedback-to-label adjudication/export step, and
-carefully freshness-bound judge answers
-and companion-history views. Judge answers/media reconstruction are not implemented here.
-The original `examples/trajectory-browser` remains a synthetic-only standalone demo.
+companion-history views. Media reconstruction is not implemented.
+
+Three designs from the retired synthetic prototype (`examples/trajectory-browser`, in Git
+history before its removal) that neither the desk nor the viewer has yet:
+
+- **Judge answers beside findings**, bound to freshness: each finding shows the review
+  answer and confidence, a stale answer (trace or question version changed) is labelled
+  "Stale answer — not current evidence clearance", and an "Unreviewed" filter lists
+  findings with no current answer. Answers stay annotations, never clearance.
+- **Anchor chains**: a finding's evidence as labelled steps (baseline → request → reference
+  → later mention) with a primary anchor, instead of a flat list of locations.
+- **Deep-field fixtures**: evidence more than 6,000 characters into a field and
+  non-consecutive step IDs, to exercise paging and step-number mapping.
 
 ## Tests
 

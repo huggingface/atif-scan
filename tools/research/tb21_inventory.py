@@ -1,6 +1,7 @@
 """Inventory of public Terminal-Bench 2.1 runs: leaderboard PRs, Hub rows, and their jobs.
 
-    uv run python tools/tb21_inventory.py OUT_DIR [--repo harbor-framework/terminal-bench-2-1]
+    uv run python tools/research/tb21_inventory.py OUT_DIR
+        [--repo harbor-framework/terminal-bench-2-1]
         [--leaderboard terminal-bench/terminal-bench-2-1/main] [--workers 8]
 
 Reads (never writes) GitHub through the `gh` CLI and the Harbor Hub through the `harbor`

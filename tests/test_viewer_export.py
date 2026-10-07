@@ -305,3 +305,26 @@ def test_findings_are_categorised_for_the_viewer():
         "access.test_path": "behaviour",
         "tb4.canary.task_files": "explanation",
     }
+
+
+VIEWER = Path(export.__file__).with_name("viewer")
+
+
+def test_viewer_assets_have_no_network_or_html_interpretation():
+    # Source-level guard for the published page (ported from the retired prototype): the
+    # export ships these files as-is, so the policy and the scripts must hold on their own.
+    html = (VIEWER / "index.html").read_text()
+    for directive in ("connect-src 'none'", "img-src 'none'", "script-src 'self'"):
+        assert directive in html
+    assert "unsafe-inline" not in html and 'content="no-referrer"' in html
+    assert "http://" not in html and "https://" not in html and 'type="file"' not in html
+    for script in sorted(VIEWER.glob("*.js")):
+        text = script.read_text()
+        assert "innerHTML" not in text and "insertAdjacentHTML" not in text, script.name
+        assert "fetch(" not in text and "eval(" not in text, script.name
+        assert "http://" not in text and "https://" not in text, script.name
+
+
+def test_exported_key_lists_have_no_duplicates():
+    for keys in (export.FACT_KEYS, export.TRIAL_KEYS, export.COVERAGE_KEYS, export.SELECTION_KEYS):
+        assert len(keys) == len(set(keys))

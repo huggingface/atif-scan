@@ -1,6 +1,6 @@
 """Inventory of Terminal-Bench 4 evidence: leaderboard rows, judge reports, cheat trials.
 
-    uv run python tools/tb4_inventory.py OUT_DIR [--repo harbor-framework/terminal-bench]
+    uv run python tools/research/tb4_inventory.py OUT_DIR [--repo harbor-framework/terminal-bench]
         [--leaderboard terminal-bench/terminal-bench/4-0-0] [--workers 8]
 
 TB4 has almost no judge rulings (no submission disqualifies a trial), but task PRs run
@@ -12,7 +12,7 @@ working hack on that task version: the positive set for atif-scan recall. Reads 
 
 - `rows`: the leaderboard's rows (rank, labels, reported metrics);
 - `prs`: leaderboard-submission PRs with their latest judge report (flag and tick per
-  trial, as in tools/tb21_inventory.py);
+  trial, as in tools/research/tb21_inventory.py);
 - `hosted`: every hosted-job marker on PRs whose comments ran `/cheat` (kind, job, task,
   PR, head commit), plus jobs linked from older cheat reports (`cheat`) and from
   reviewers' "Successful Cheat" comments (`cheat_confirmed`), and the Actions runs older

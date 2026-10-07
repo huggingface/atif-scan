@@ -416,11 +416,3 @@ linkable `#trial=…&step=…` fragments work offline. The export **contains mas
 text** (best effort): read it before publishing. It holds no feedback or notes, no source
 paths and no citations; unknown evidence and recording gaps stay explicit. `DIR` must be
 new or empty. See [SECURITY.md](../SECURITY.md).
-
-## Synthetic evidence-browser prototype
-
-An offline, synthetic-only [evidence desk](../examples/trajectory-browser/README.md)
-adapts fast-agent's docs styling to trajectory inspection: finding-to-field jumps,
-surrounding chronology, deep result paging, literal search and judge citations.
-Missing outcomes, unavailable media, inferred links and stale answers remain explicit.
-It is a visual prototype; `--viewer` is the real export built from its design.

@@ -80,7 +80,7 @@ line-ending = "lf"
 python-version = "3.11"
 # tests import shared fixtures from sibling test modules, tools from sibling tools
 # (pytest rootdir and script-directory imports).
-root = ["./src", "./tests", "./tools"]
+root = ["./src", "./tests", "./tools", "./tools/research"]
 
 [tool.ty.src]
 include = ["src", "tests", "tools"]

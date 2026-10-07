@@ -1,10 +1,10 @@
 """Evaluate atif-scan against the TB2.1 judge's rulings, and pick hack-hunt pilots.
 
-    uv run python tools/tb21_inventory.py INV          # PRs, Hub rows, jobs, rulings
-    uv run python tools/tb21_labels.py INV             # rulings mapped onto public trials
-    uv run python tools/tb21_eval.py scan INV          # sync + scan every labelled job
-    uv run python tools/tb21_eval.py recall INV        # counts vs rulings
-    uv run python tools/tb21_eval.py pilot INV OUT [--own DIR ...] [--per-group N]
+    uv run python tools/research/tb21_inventory.py INV          # PRs, Hub rows, jobs, rulings
+    uv run python tools/research/tb21_labels.py INV             # rulings mapped onto public trials
+    uv run python tools/research/tb21_eval.py scan INV          # sync + scan every labelled job
+    uv run python tools/research/tb21_eval.py recall INV        # counts vs rulings
+    uv run python tools/research/tb21_eval.py pilot INV OUT [--own DIR ...] [--per-group N]
 
 No job ids live here: `scan` takes them from INV/labels.json (which the two tools above
 derive from GitHub and the Hub), `--own` takes a local job folder. Reports go to

@@ -1,7 +1,7 @@
 """The TB2.1 judge's per-trial verdicts, mapped onto public trials: clues for rules.
 
-    uv run python tools/tb21_judge.py INVENTORY_DIR [--sync-dir DIR] [--workers 8]
-        # after tools/tb21_inventory.py and tools/tb21_labels.py
+    uv run python tools/research/tb21_judge.py INVENTORY_DIR [--sync-dir DIR] [--workers 8]
+        # after tools/research/tb21_inventory.py and tools/research/tb21_labels.py
 
 Each judged PR's comments link a "judge verdict" job on the Hub: one judge trial per
 rewarded trial of the submission, whether flagged or not. Its trajectory records the
