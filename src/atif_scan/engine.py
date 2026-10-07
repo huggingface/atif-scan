@@ -1,4 +1,7 @@
-"""Dependency-ordered evaluation with isolated failures. Serialization lives in `report`."""
+"""Dependency-ordered evaluation with isolated failures.
+
+Serialization lives in `output.document`.
+"""
 
 from __future__ import annotations
 

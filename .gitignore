@@ -8,6 +8,8 @@ dist/
 *.auth.json
 traces/
 reports/
+# Harbor writes job output to ./jobs when run from here: real traces.
+/jobs/
 .fast-agent/
 
 # Private review output belongs outside Git; these patterns are only a backstop.

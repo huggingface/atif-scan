@@ -1,8 +1,8 @@
-"""Optional rich renderers, imported only when used: rich is an optional dependency.
+"""Rich renderers, imported only when used so the core never loads rich.
 
-`report` builds documents and plain-text views; `rich_view` renders them with rich and
-reads `report`'s helpers. These entry points keep that one-way: nothing below imports the
-rich view, and without rich installed callers fall back to text.
+`document` and `text` build documents and plain-text views; `rich` renders them with rich
+and reads their helpers. These entry points keep that one-way: nothing below imports the
+rich view, and if rich can't be imported callers fall back to text.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 def render_rich(doc: Doc, file: IO[str] | None = None) -> None:
-    """Rich view; requires the optional `pretty` extra (ImportError without it)."""
+    """Rich view; ImportError if rich is unavailable."""
     from .rich import render  # noqa: PLC0415 - rich is optional: import it only here
 
     render(doc, file)

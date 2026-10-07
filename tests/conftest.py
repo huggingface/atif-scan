@@ -70,3 +70,7 @@ def forbid_trace_loads(monkeypatch):
         monkeypatch.setattr(LOAD_TRACE, boom)
 
     return install
+
+
+# Synthetic task sources (their hidden tests) are data for the golden prompts, not tests.
+collect_ignore_glob = ["fixtures/*"]
