@@ -8,7 +8,7 @@
       feedback/  finding-level browser annotations and private notes     (--browse)
       gold/      gold snapshots of scan results                          (tools/gold.py, e2e)
       bundles/   question and hunt bundles                               (--questions, hunt)
-      images/    image-model answers by image hash and model             (--image-model)
+      images/    image-model transcripts by image hash and model         (--image-model)
 
 Everything under it names real runs or holds trace text: it is private (folders 0700,
 files 0600 where atif-scan writes them), never committed. Mirrors/results are expendable;

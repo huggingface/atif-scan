@@ -515,6 +515,8 @@ def brief(
             "trials": sum(bool(i.get("context_compactions")) for i in items),
             "total": sum(i.get("context_compactions") or 0 for i in items),
         },
+        # --image-model: images transcribed for checks they blocked (counts only).
+        "image_checks": image_check_totals(items),
         # --run/--release: replacements and the as-run score (None without a selection).
         "selection": _selection(doc, dq, min_trials, expect_tasks),
         "compacted_token_hits": sum(
@@ -630,3 +632,17 @@ from .brief_view import brief_text  # noqa: E402
 from .brief_view.colour import colourise, print_brief  # noqa: E402
 
 __all__ = ["brief", "brief_text", "colourise", "print_brief"]
+
+
+def image_check_totals(items: list[Doc]) -> Doc | None:
+    """Summed `image_checks` counts and the trials that had any; None without
+    --image-model (or when no image blocked a check)."""
+    checked = [i["image_checks"] for i in items if i.get("image_checks")]
+    if not checked:
+        return None
+    totals: Doc = {"trials": len(checked)}
+    for counts in checked:
+        for key, value in counts.items():
+            if type(value) is int:
+                totals[key] = totals.get(key, 0) + value
+    return totals

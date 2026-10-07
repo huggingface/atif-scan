@@ -5,14 +5,14 @@
   solutions into this repository.
 - Built-ins never execute commands, visit URLs, run models or fetch files.
 - **`--image-model MODEL`** is the scan's one model call, and it is opt-in. It sends
-  only the images that leave a check unknown (decoded from the trajectory, written to a
-  `0700` temporary folder and deleted afterwards), plus the words in question, to MODEL
-  through `fast-agent go --no-shell --no-subagents`, with fixed arguments and no shell.
-  Images may show anything on the agent's screen, credentials included, so only use a
-  provider you may send the traces to. Answers (words, `present`/`absent`/`unclear`, a
-  sensitivity code) are stored in the atif-scan home's `images/` folder (`0700`/`0600`).
-  Reports carry counts only. The loader keeps an inline payload's sha256, never the
-  payload.
+  only the images in trials where an image leaves a check unknown (decoded from the
+  trajectory, written to a `0700` temporary folder and deleted afterwards) to MODEL for
+  transcription, through `fast-agent go --no-shell --no-subagents` with fixed
+  arguments, no shell and fast-agent's session history off. Images may show anything
+  on the agent's screen, credentials included, so only use a provider you may send the
+  traces to. Transcripts are trace content: they are stored in the atif-scan home's
+  `images/` folder (`0700`/`0600`) and never reported (reports carry counts). The loader
+  keeps an inline payload's sha256, never the payload.
 - Reports are an explicit field allowlist: no raw text, paths, URLs, argument values or
   exception messages. The one report field with trace text is opt-in `--cite`: bounded,
   secret-masked excerpts of the trace. Masking is best-effort, so treat cited output
@@ -32,6 +32,8 @@
   shell and subagents; the optional `--inspect-tool` grants read-only MCP tools bound to
   one local trajectory, never arbitrary paths or execution. `--answers` keeps only the
   validated answer, confidence, mechanism and steps, never the free-text reason.
+  fast-agent's own session history is off for `hunt`, so prompts aren't also copied
+  into its home's `sessions/`.
 - **Companion history.** Full Harbor archives (`--full`) may include Grok compaction
   segments and task artifacts. Companion-history tools inventory only fixed local
   session locations beside the bound trajectory and never follow paths supplied by a

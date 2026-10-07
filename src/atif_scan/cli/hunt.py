@@ -10,7 +10,8 @@ read-only tools over that one trace and its local companion archives
 (atif_scan.review.inspect_server): they mask secrets and run nothing. The reply goes to
 <input>/<question>.answer.json and the answering run's own ATIF trajectory to
 <input>/<question>.review.atif.json. Existing answers are kept unless --force; atif-scan
-validates replies when it reads them (--answers).
+validates replies when it reads them (--answers). fast-agent's own session history is
+off, so prompts aren't also copied into its home's sessions/ folder.
 
 Prompts contain masked trace text and are sent to the model's provider: only run this
 with a provider you're allowed to send the traces to. Keep the bundle out of Git.
@@ -32,6 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..data.jsonval import as_object, as_str
+from .images import no_session_history
 
 MCP = "mcp>=1.2,<2"
 SERVER = "atif_scan.review.inspect_server"
@@ -130,7 +132,9 @@ def answer(args: argparse.Namespace, meta: Path) -> bool:
     command = _command(args, meta)
     if isinstance(command, str):
         return _failed(args.questions, meta, command)
-    run = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
+    run = subprocess.run(  # noqa: S603 - fixed arguments, no shell
+        command, capture_output=True, text=True, check=False, env=no_session_history()
+    )
     failed = any(line.startswith("Error:") for line in run.stdout.splitlines())
     if run.returncode != 0 or not run.stdout.strip() or failed:
         return _failed(args.questions, meta, _reason(run.stdout + "\n" + run.stderr))

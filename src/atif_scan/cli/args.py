@@ -252,10 +252,9 @@ def _review_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--image-model",
         metavar="MODEL",
-        help="ask this fast-agent model (via `fast-agent go --attach`) whether the images "
-        "that leave a check unknown show the words in question, and re-check with its "
-        "answers. Sends those images and words to the model's provider; answers are kept "
-        "in <atif-scan home>/images/",
+        help="have this fast-agent model transcribe the images that leave a check unknown "
+        "(via `fast-agent go --attach`), and re-check with the transcripts. Sends those "
+        "images to the model's provider; transcripts are kept in <atif-scan home>/images/",
     )
     parser.add_argument(
         "--cite",

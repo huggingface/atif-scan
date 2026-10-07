@@ -40,7 +40,7 @@ atif-scan JOB --questions DIR                # review bundle for the flagged suc
 atif-scan hunt --model MODEL --questions DIR # answer it with fast-agent (a provider call)
 atif-scan JOB --answers DIR --brief          # answers as annotations, never rescoring
 atif-inspect TRIAL_DIR --step 12             # read one step without parsing ATIF
-atif-scan JOB --image-model MODEL            # let an image model read images that block a check
+atif-scan JOB --image-model MODEL            # transcribe images that block a check
 ```
 
 `atif-scan labels` manages the label store that measures checks and judges. To scan an

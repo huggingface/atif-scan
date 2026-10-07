@@ -62,22 +62,28 @@ class Severity(IntEnum):
     CRITICAL = 100
 
 
-Shown = Literal["present", "absent", "unclear"]
-SHOWN: frozenset[str] = frozenset({"present", "absent", "unclear"})
+Legible = Literal["complete", "partial", "none"]
+LEGIBLE: frozenset[str] = frozenset({"complete", "partial", "none"})
+MAX_IMAGE_TEXT = 20_000
 
 
 @dataclass(frozen=True)
 class ImageReading:
-    """What an image model said one inline image (by sha256) shows: for each word it was
-    asked about (as the agent wrote it), whether the image shows it. A word it wasn't
-    asked about is unknown, like `unclear`. Produced only by the opt-in `--image-model`."""
+    """What an image model transcribed from one inline image (by sha256): its readable
+    text, instructions included, and whether it could read all of it. Only a `complete`
+    reading stands in for the image; otherwise the image stays unread. Produced only by
+    the opt-in `--image-model`."""
 
-    words: Mapping[str, Shown]
+    text: str
+    legible: Legible
 
     def __post_init__(self) -> None:
-        if not all(isinstance(k, str) and v in SHOWN for k, v in self.words.items()):
+        if (
+            not isinstance(self.text, str)
+            or len(self.text) > MAX_IMAGE_TEXT
+            or self.legible not in LEGIBLE
+        ):
             raise ValueError("invalid_image_reading")
-        object.__setattr__(self, "words", MappingProxyType(dict(self.words)))
 
 
 def _no_images() -> Mapping[str, ImageReading]:

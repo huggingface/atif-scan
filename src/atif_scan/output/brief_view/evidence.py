@@ -211,6 +211,17 @@ def _recording_texts(b: Doc) -> Lines:
             f" ({plural(cc['total'], 'compaction')}); earlier steps stay in the recording, the"
             " agent continued from a summary"
         )
+    if ic := b.get("image_checks"):
+        # What --image-model resolved; images it couldn't read keep their checks unknown.
+        read = ic.get("all", 0) + ic.get("no_text", 0)
+        unread = ic["images"] - read
+        texts.append(
+            f"{INFO} images transcribed for blocked checks in {plural(ic['trials'], 'trial')}:"
+            f" {read} of {ic['images']} read"
+            + (f", {unread} still unread" if unread else "")
+            + (f" · {ic['sensitive']} flagged sensitive" if ic.get("sensitive") else "")
+            + (f" · {ic['instructions']} with instructions" if ic.get("instructions") else "")
+        )
     if exposure := b.get("reasoning"):
         # A property of the model and its API, not a recording defect: never a warning.
         shown = " · ".join(f"{REASONING[k]} {v:,}" for k, v in exposure.items())

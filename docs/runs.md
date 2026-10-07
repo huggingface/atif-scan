@@ -108,7 +108,7 @@ Everything atif-scan keeps locally lives under one private root: `$ATIF_SCAN_HOM
 | `feedback/` | private finding-level browser feedback and notes | no |
 | `gold/` | gold snapshots (`tools/gold.py`, the e2e test) | no |
 | `bundles/` | review bundles (`--questions`) and their answers | no |
-| `images/` | `--image-model` answers, by image hash and model (no images) | yes, re-asked on demand |
+| `images/` | `--image-model` transcripts, by image hash and model (trace content; no images) | yes, re-asked on demand |
 
 All of it names real runs or holds trace text: keep it private and out of the
 repository. Two older variables still win for their part: `ATIF_SCAN_SYNC_DIR`

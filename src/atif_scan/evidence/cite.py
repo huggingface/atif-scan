@@ -172,14 +172,6 @@ def _window(
     )
 
 
-def located_text(trace: Trace, at: Locator) -> str | None:
-    """The text a locator's span points at (e.g. the token a check matched), or None."""
-    if at.span is None or not 0 <= at.step < len(trace.steps):
-        return None
-    content, _ = _surface(trace.steps[at.step], at)
-    return content.text[at.span[0] : at.span[1]] if content is not None else None
-
-
 def _surface(step: Step, at: Locator) -> tuple[Content | None, str | None]:
     """The cited surface text and, for tool arguments, the recorded tool name."""
     if at.channel == Channel.MESSAGE:
