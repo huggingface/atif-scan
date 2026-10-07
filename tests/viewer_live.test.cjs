@@ -119,6 +119,12 @@ test("review mode: blind panel, verdicts saved across reloads and exported as a 
     assert.doesNotMatch(await page.locator("#findings-panel").textContent(), /priority/);
     await page.locator("[data-tab=review]").click();
 
+    // A non-positive answer takes mechanism "none", locked; a positive one unlocks it.
+    await page.locator("#review-panel input[value=absent]").check();
+    assert.equal(await page.locator("#review-panel input[value=none]").isChecked(), true);
+    assert.equal(await page.locator("#review-panel input[value=overstated]").isDisabled(), true);
+    await page.locator("#review-panel button", { hasText: "Jump to final report" }).click();
+    assert.match(await page.locator("#locator-label").textContent(), /^step 3 · message/);
     await page.locator("#review-panel input[value=present]").check();
     await page.locator("#review-panel input[value=contradicted]").check();
     await page.locator("#review-panel textarea").fill("last run failed");

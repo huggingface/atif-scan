@@ -268,3 +268,13 @@ test("review verdicts: only complete, valid answers are exported, notes capped",
     [["rv-001", "present", "overstated", 1], ["rv-003", "absent", "none", null]]);
   assert.equal(E.reviewKey(review), "atif-scan-review:abc");
 });
+
+test("review mechanisms describe positive answers only", () => {
+  const review = { answers: { present: "p", absent: "a", unclear: "u" }, positive: ["present"],
+    mechanisms: { none: "n", overstated: "o" } };
+  assert.equal(E.isPositive(review, "present"), true);
+  assert.equal(E.mechanismFor(review, "absent", "overstated"), "none");
+  assert.equal(E.mechanismFor(review, "unclear", undefined), "none");
+  assert.equal(E.mechanismFor(review, "present", "overstated"), "overstated");
+  assert.equal(E.mechanismFor({ ...review, mechanisms: {} }, "absent", undefined), undefined);
+});

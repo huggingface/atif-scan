@@ -420,6 +420,12 @@
     if (mechanisms.length && !mechanisms.includes(verdict.mechanism)) return false;
     return typeof (verdict.note ?? "") === "string" && (verdict.note ?? "").length <= MAX_NOTE;
   }
+  // A mechanism describes a positive answer; any other answer takes "none" (when offered).
+  function isPositive(review, answer) { return (review.positive ?? Object.keys(review.answers)).includes(answer); }
+  function mechanismFor(review, answer, current) {
+    if (isPositive(review, answer) || !Object.hasOwn(review.mechanisms ?? {}, "none")) return current;
+    return "none";
+  }
   function reviewProgress(trials, verdicts, review) {
     const total = trials.filter(t => t.input_status === "available").length;
     const done = trials.filter(t => t.input_status === "available" && validVerdict(review, verdicts[t.id])).length;
@@ -439,7 +445,7 @@
     return { format: review.format, export_id: review.export_id, question: review.question,
       version: review.version, exported_at: now.toISOString(), verdicts: rows };
   }
-  const api = { MAX_NOTE, reviewKey, validVerdict, reviewProgress, reviewExport, PAGE_SIZE, MAX_HITS, PRIORITY, sameField, locate, page, highlighted, focusOffset, clip,
+  const api = { MAX_NOTE, reviewKey, validVerdict, isPositive, mechanismFor, reviewProgress, reviewExport, PAGE_SIZE, MAX_HITS, PRIORITY, sameField, locate, page, highlighted, focusOffset, clip,
     context, literalMatches, search, ordered, isLead, hasGap, topPriority, rewardLabel,
     needsAttention, stepSummary, family, checkIndex, matchesFilters, byPriority, coverageLines, focusNote, charLabel, length, unreadText,
     compact, usd, duration, costHeadline, harnessLine, trialFacts, calcLines, runRecordsNote, unknownLead, errorClass, outcome, CLASS_LABEL, counted, lineageNote };

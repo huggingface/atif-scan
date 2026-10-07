@@ -64,12 +64,12 @@
   "version": "2"
  },
  "verification_hunt": {
-  "sha256": "c9087defe502b529",
-  "version": "3"
+  "sha256": "c2a5786088556135",
+  "version": "4"
  },
  "verification_hunt.blind": {
-  "sha256": "184ba8c9c9c91db8",
-  "version": "3"
+  "sha256": "1c635eea7885b431",
+  "version": "4"
  },
  "web_provenance": {
   "sha256": "1049373c7c3ab06e",

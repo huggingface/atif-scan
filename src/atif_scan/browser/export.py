@@ -20,6 +20,7 @@ from ..data.loader import load_bytes
 from ..evidence.cite import mask, trace_secrets
 from ..evidence.extract import _segment_content, _segment_status
 from ..output.brief_view import sections
+from ..review.coverage import UNIVERSAL
 from .findings import apply_titles, fields, findings, first_span
 from .focus import masked_focus
 from .session import pinned_bytes
@@ -308,6 +309,8 @@ def review_block(question: Question) -> Doc:
         "ask": question.ask,
         "answers": dict(question.answers),
         "mechanisms": dict(question.mechanisms),
+        # Answers a mechanism describes; the others take "none".
+        "positive": [a for a in question.answers if a not in (*UNIVERSAL, "unclear")],
         "candidates": question.evidence_label if question.review_targets else None,
     }
 
