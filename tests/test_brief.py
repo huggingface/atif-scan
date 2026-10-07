@@ -55,7 +55,7 @@ def test_recorded_result_and_unique_review_candidates():
     assert "1 of 2 rewarded trials (50.0%) has a high or critical finding" in review
     assert "1 more rewarded trial can't be cleared, as their evidence is incomplete" in review
     assert "Findings set review priority, not verdicts." in text and "overlap" not in text
-    assert "--judge-prompts DIR" in review
+    assert "--questions DIR" in review
     assert "✗" not in text
     assert "accuracy" not in review
     assert "COST       $1.00 recorded" in text
@@ -68,7 +68,7 @@ def test_unknown_is_not_clean_and_threshold_is_explicit():
     assert "REVIEW     ✓ no rewarded trial has a medium or higher finding" in review
     # Unknown evidence is not clean: the trial is still named as not cleared.
     assert "⚠ 1 rewarded trial can't be cleared, as their evidence is incomplete" in review
-    assert "--judge-scope rewarded" in review
+    assert "--question-scope rewarded" in review
     assert "had failed" not in text
     assert "no DQ candidates" not in text
 

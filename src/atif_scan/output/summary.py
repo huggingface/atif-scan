@@ -49,8 +49,8 @@ def review_text(ov: Doc, review: Doc | None = None, dq: str = "high") -> list[st
         )
         lines.append(f"{'':<10} review priority, not a verdict")
         if review is None:
-            scope = " --judge-scope rewarded" if gaps and not candidates else ""
-            lines.append(f"{'':<10} generate review prompts: --judge-prompts DIR{scope}")
+            scope = " --question-scope rewarded" if gaps and not candidates else ""
+            lines.append(f"{'':<10} generate review prompts: --questions DIR{scope}")
         else:
             lines.append(
                 f"{'':<10} {review['written']} prompt(s) written"

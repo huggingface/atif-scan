@@ -156,9 +156,9 @@ def test_judge_prompt_and_stale_answer_binding(local, tmp_path, capsys):
     bundle = tmp_path / "review"
     args = [
         str(local),
-        "--judge-prompts",
+        "--questions",
         str(bundle),
-        "--judge-scope",
+        "--question-scope",
         "rewarded",
         "--format",
         "json",
@@ -282,9 +282,9 @@ def test_fast_agent_archives_are_not_reported_as_uncollected(local, tmp_path, ca
         main(
             [
                 str(local),
-                "--judge-prompts",
+                "--questions",
                 str(bundle),
-                "--judge-scope",
+                "--question-scope",
                 "rewarded",
                 "--format",
                 "json",
@@ -317,9 +317,9 @@ def test_archive_file_boundaries_invalidate_answers(local, tmp_path, capsys):
         main(
             [
                 str(local),
-                "--judge-prompts",
+                "--questions",
                 str(bundle),
-                "--judge-scope",
+                "--question-scope",
                 "rewarded",
                 "--format",
                 "json",

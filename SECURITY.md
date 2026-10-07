@@ -5,32 +5,33 @@
   solutions into this repository.
 - Built-ins never execute commands, visit URLs, run models or fetch files.
 - Reports are an explicit field allowlist: no raw text, paths, URLs, argument values or
-  exception messages. The single exception is opt-in `--cite`, which adds bounded,
+  exception messages. The one report field with trace text is opt-in `--cite`: bounded,
   secret-masked excerpts of the trace. Masking is best-effort, so treat cited output
   like the trace itself and keep it out of Git and issues. OpenAI account identifiers
   (`observation.account_*`) are masked the same way; a finding is a scrub reminder, and
   its absence does not make a trace safe to publish. Text reports render only that allowlisted document. Manifest IDs,
   check IDs and check titles must be non-sensitive labels.
-- `--judge-prompts DIR` (alias `--judge DIR`), `--questions DIR` and `atif-inspect` also write trace text: bounded, masked excerpts in
-  prompt files, and masked step dumps. Treat both like the trace itself. atif-scan never
-  sends prompts anywhere. Whoever answers them (e.g. `atif-scan hunt`) sends them
-  to a model provider, and that's the user's decision. Prompts frame trace text as
-  untrusted data. `atif-scan hunt` disables shell/subagents; optional `--inspect-tool`
-  grants read-only MCP tools bound to one local trajectory, never arbitrary paths or execution.
-  Review bundles contain local paths as well as masked excerpts; keep them private and outside Git.
-  Use the atif-scan home's `bundles/` folder (`~/.cache/atif-scan/bundles/` by default), not
-  the source tree or the expendable result cache. Group by run, selection, judge model and timestamp; retain each bundle together.
-  Use `umask 077` when generating/answering (directories `0700`, files `0600`).
-  Full Harbor archives may include Grok compaction segments and task artifacts. Companion-history
-  tools inventory only fixed local session locations beside the bound trajectory; they never
-  follow paths supplied by a summary. Numeric file IDs, size limits, symlink rejection and
-  whole-file masking precede bounded reads/searches. Markdown remains untrusted data, not
-  executable instructions or validated ATIF reconstruction. Availability does not prove completeness.
-  The companion reader checks only Grok Markdown layouts; other formats, including
-  Fast-agent JSON snapshots, remain unchecked, not absent or uncollected.
-  Generating prompts never sends data to a provider. Fresh judge directories prevent mixing
-  stale questions into a new selection. `--answers` keeps
-  only the validated answer, confidence and steps, never the free-text reason.
+- **Review bundles** (`--questions DIR`, formerly `--judge-prompts`) contain trace text
+  (bounded, masked excerpts) and local paths. Treat them like the trace itself: keep them
+  private and outside Git, in the atif-scan home's `bundles/` folder
+  (`~/.cache/atif-scan/bundles/` by default), not the source tree or the expendable
+  result cache. Use `umask 077` when generating or answering (directories `0700`, files
+  `0600`), and a fresh directory per selection and judge model, so stale questions can't
+  mix into a new review. Generating a bundle never sends data anywhere.
+- **Answering** is the user's decision: whoever answers (e.g. `atif-scan hunt`) sends the
+  prompts to a model provider. Prompts frame trace text as untrusted data. `hunt` disables
+  shell and subagents; the optional `--inspect-tool` grants read-only MCP tools bound to
+  one local trajectory, never arbitrary paths or execution. `--answers` keeps only the
+  validated answer, confidence, mechanism and steps, never the free-text reason.
+- **Companion history.** Full Harbor archives (`--full`) may include Grok compaction
+  segments and task artifacts. Companion-history tools inventory only fixed local
+  session locations beside the bound trajectory and never follow paths supplied by a
+  summary. Numeric file IDs, size limits, symlink rejection and whole-file masking
+  precede bounded reads and searches. Markdown remains untrusted data, not instructions
+  or validated ATIF reconstruction. Availability does not prove completeness. Only Grok
+  Markdown layouts are checked; other formats, including fast-agent JSON snapshots, are
+  unchecked, not absent or uncollected.
+- `atif-inspect` prints masked trace text: treat its output like the trace.
 - When a directory or `hf://` prefix is expanded, each input is labelled by its path
   *relative to the root you passed* (e.g. `trial-1/agent/trajectory.json`). The root
   itself never appears. Don't scan roots whose sub-paths are sensitive; use a manifest.

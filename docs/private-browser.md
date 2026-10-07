@@ -109,7 +109,7 @@ POSIX file descriptors and `flock` (Linux/WSL); Windows-native support is not pr
 - `browser/findings.py`: the allowlisted finding/locator projection and field inventory,
   shared with the static viewer export.
 - `browser/export.py`, `browser/viewer/`, `cli/viewer.py`: `--viewer DIR`, a static,
-  feedback-free export of masked fields with precomputed proven highlights (see README).
+  feedback-free export of masked fields with precomputed proven highlights (see reports.md).
 - `browser/static/`: plain HTML/CSS/JavaScript adapted from the synthetic prototype.
   No build system, external assets, telemetry, or frontend dependencies.
 

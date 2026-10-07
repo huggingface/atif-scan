@@ -52,10 +52,9 @@ def transport(monkeypatch):
         ["--cite-check", "synthetic.*"],
         ["--questions", "private"],
         ["--answers", "private"],
-        ["--judge-prompts", "private"],
-        ["--judge", "private"],
         ["--question", "hack_hunt"],
-        ["--judge-scope", "all"],
+        ["--question-scope", "all"],
+        ["--blind"],
     ],
 )
 def test_conflicts(flags, capsys):

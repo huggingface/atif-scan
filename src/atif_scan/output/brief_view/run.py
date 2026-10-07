@@ -304,8 +304,8 @@ def review_section(b: Doc) -> Lines:
     if review is not None:
         body += _review_bundle(review)
     elif d["candidates"] or d["rewarded_not_cleared"]:
-        scope = " --judge-scope rewarded" if not d["candidates"] else ""
-        body.append(f"→ write review prompts for them: --judge-prompts DIR{scope}")
+        scope = " --question-scope rewarded" if not d["candidates"] else ""
+        body.append(f"→ write review prompts for them: --questions DIR{scope}")
     return wrap("REVIEW", body + _answers(b))
 
 
