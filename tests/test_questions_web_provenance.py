@@ -103,7 +103,8 @@ def test_public_task_is_context_not_leakage_and_complete_web_does_not_trigger():
         "never change scores",
     ):
         assert text.lower() in prompt.lower()
-    assert "source_call_index=" in prompt and "pairing_method=" in prompt
+    # Recorded call/result links carry no pairing plumbing (only reconstructed ones do).
+    assert "source_call_index=" not in prompt and "pairing reconstructed" not in prompt
     assert "upstream exposure/receipt unknown" in prompt
 
 
@@ -199,7 +200,7 @@ def test_new_indexed_associations_stale_saved_answers(tmp_path):
         trace, steps=(*trace.steps[:3], replace(step, observations=(changed,)), trace.steps[4])
     )
     assert answers.annotate("synthetic", linked) == [
-        {"question": QID, "version": "1", "status": "stale"}
+        {"question": QID, "version": BY_ID[QID].version, "status": "stale"}
     ]
 
 

@@ -1,74 +1,74 @@
 {
  "awareness_hunt": {
-  "sha256": "5620481f2d779695",
-  "version": "2"
+  "sha256": "1abc8041b8980c8b",
+  "version": "3"
  },
  "awareness_hunt.blind": {
-  "sha256": "e875604427fbaa6b",
-  "version": "2"
+  "sha256": "9e52e4ac7df94ec2",
+  "version": "3"
  },
  "fabrication_hunt": {
-  "sha256": "450e3e5be8170158",
-  "version": "3"
+  "sha256": "ea22e4fd6e3490dc",
+  "version": "4"
  },
  "fabrication_hunt.blind": {
-  "sha256": "d105614b98faced3",
-  "version": "3"
+  "sha256": "7ebb58a69b4ef611",
+  "version": "4"
  },
  "hack_hunt": {
-  "sha256": "655b149beec802fe",
-  "version": "7"
+  "sha256": "fcaeb58e37872473",
+  "version": "8"
  },
  "hack_hunt.blind": {
-  "sha256": "61cb8c4b4997bc09",
-  "version": "7"
+  "sha256": "598bfc2cb57824f6",
+  "version": "8"
  },
  "harness_message_hint": {
-  "sha256": "19bddec3d9b26d62",
-  "version": "1"
- },
- "lookup_used": {
-  "sha256": "8733f0120f7f260b",
-  "version": "5"
- },
- "lure_response": {
-  "sha256": "7fe0c7492ab7798a",
-  "version": "1"
- },
- "model_call_legitimacy": {
-  "sha256": "a66085baf2ec8e22",
-  "version": "1"
- },
- "network_outcome": {
-  "sha256": "2b52b9906365625b",
-  "version": "1"
- },
- "recall_or_derivation": {
-  "sha256": "afd26122efaef9d1",
-  "version": "1"
- },
- "skill_task_specific": {
-  "sha256": "ac960d32b1038dd0",
-  "version": "1"
- },
- "test_access_intent": {
-  "sha256": "c851735e6e5b6483",
+  "sha256": "162d3a7620314475",
   "version": "2"
  },
+ "lookup_used": {
+  "sha256": "e18b69cfb0b96507",
+  "version": "6"
+ },
+ "lure_response": {
+  "sha256": "d93a71382d560f32",
+  "version": "2"
+ },
+ "model_call_legitimacy": {
+  "sha256": "05387bd41597dc2a",
+  "version": "2"
+ },
+ "network_outcome": {
+  "sha256": "1cd1eea34c63f24f",
+  "version": "2"
+ },
+ "recall_or_derivation": {
+  "sha256": "780a9020d7935de3",
+  "version": "2"
+ },
+ "skill_task_specific": {
+  "sha256": "21272e362b526b8c",
+  "version": "2"
+ },
+ "test_access_intent": {
+  "sha256": "434cea5a22fb7097",
+  "version": "3"
+ },
  "value_provenance": {
-  "sha256": "2847f45389ddeea7",
-  "version": "1"
+  "sha256": "80676542df402406",
+  "version": "2"
  },
  "verification_hunt": {
-  "sha256": "54a736452faa5a56",
-  "version": "1"
+  "sha256": "795a4efcb9516317",
+  "version": "2"
  },
  "verification_hunt.blind": {
-  "sha256": "8274802e2c927fce",
-  "version": "1"
+  "sha256": "aa8110f4b5f5b4c8",
+  "version": "2"
  },
  "web_provenance": {
-  "sha256": "6ab992180567bce7",
-  "version": "1"
+  "sha256": "1049373c7c3ab06e",
+  "version": "2"
  }
 }

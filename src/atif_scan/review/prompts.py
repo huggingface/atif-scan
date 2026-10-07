@@ -161,12 +161,14 @@ def _step_block(step: Step, sid: int, known: frozenset[str]) -> str:
         args = " | ".join(c.text for ch, c in call.fields if ch != Channel.PAYLOAD and c.text)
         parts.append(f"call {call.name}: " + _excerpt(args, known, CALL_FIELD))
     for o in step.observations:
-        parts.append(
-            f"result (source_call_index={o.source_call_index}, "
-            f"pairing_method={o.pairing_method}, "
-            f"pairing_reconstructed={o.pairing_reconstructed}): "
-            + _excerpt(o.content.text, known, CALL_FIELD)
+        # Pairing details only where the link is an assumption: a recorded link is just
+        # "result", and the judge isn't asked to read plumbing on every line.
+        pairing = (
+            f" (pairing reconstructed: {o.pairing_method}, source_call_index={o.source_call_index})"
+            if o.pairing_reconstructed
+            else ""
         )
+        parts.append(f"result{pairing}: " + _excerpt(o.content.text, known, CALL_FIELD))
     return "\n".join(parts)
 
 

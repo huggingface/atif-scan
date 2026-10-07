@@ -90,7 +90,7 @@ def test_exact_builtin_contract():
     }
     for qid in IDS:
         question = BY_ID[qid]
-        assert question in QUESTIONS and question.version == "1"
+        assert question in QUESTIONS
         assert not question.rewarded_only and question.select is None
         assert "unclear" in question.answers
 
@@ -286,7 +286,7 @@ def test_cli_schema_answers_masking_and_injection(tmp_path, capsys, qid):
     )
     capsys.readouterr()
     rows = [json.loads(line) for line in (qdir / "index.jsonl").read_text().splitlines()]
-    assert len(rows) == 1 and rows[0]["question"] == qid and rows[0]["version"] == "1"
+    assert len(rows) == 1 and (rows[0]["question"], rows[0]["version"]) == (qid, BY_ID[qid].version)
     assert rows[0]["reward"] == 0
     assert json.loads((qdir / "schemas" / f"{qid}.json").read_text()) == schema(BY_ID[qid])
     prompt = (qdir / "synthetic__a" / f"{qid}.md").read_text()
@@ -310,7 +310,7 @@ def test_cli_schema_answers_masking_and_injection(tmp_path, capsys, qid):
     row = after["inputs"][0]["answers"][0]
     assert row == {
         "question": qid,
-        "version": "1",
+        "version": BY_ID[qid].version,
         "status": "answered",
         "answer": "unclear",
         "confidence": "low",
