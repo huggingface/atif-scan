@@ -392,7 +392,7 @@ def test_review_verdicts_become_human_labels(tmp_path: Path, capsys):
                 "reward": 1.0,
                 "note": "PRIVATE-NOTE-SENTINEL",
             },
-            {"input_id": "rv-002", "answer": "absent", "mechanism": "none", "reward": 0.0},
+            {"input_id": "rv-002", "answer": "absent", "mechanism": "overstated", "reward": 0.0},
             {"input_id": "rv-999", "answer": "absent", "mechanism": "none", "reward": None},
         ],
     }
