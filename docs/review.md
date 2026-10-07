@@ -197,9 +197,11 @@ mix selections or judge models in one bundle, and keep directories `0700` and fi
 
 ## Answering with `atif-scan hunt`
 
-`hunt` sends each prompt once with `fast-agent go --model MODEL --no-shell
---no-subagents --json-schema …` (`--fast-agent CMD` picks another command), with
-fast-agent's session history off so prompts aren't also copied into its home. It skips
+`hunt` sends each prompt once with `fast-agent go --isolated --model MODEL --no-shell
+--no-subagents --json-schema …` (`--fast-agent CMD` picks another command). `--isolated`
+(fast-agent 0.10.43+) uses your fast-agent home's config and logins but saves nothing
+there and loads no skills, plugins or hooks; an older fast-agent gets a warning and a
+fallback (see [SECURITY.md](../SECURITY.md)). It skips
 answered questions unless `--force`, runs `--jobs N` in parallel, and logs the first
 error line per failure to `ask-errors.log`. `--dry-run` lists what would be asked, and
 `--model passthrough` checks the plumbing without a provider.
@@ -244,9 +246,9 @@ atif-scan JOB --image-model MODEL
 - Only trials with a check blocked by an image send anything, and only the images shown
   before the last word a check is waiting on (later ones can't have shown it): up to 100
   per trial, each unique image once, as the decoded file. They go through `fast-agent go
-  --model MODEL --no-shell --no-subagents --attach IMAGE --json-schema …` with fast-agent's
-  session history off (`SESSION_HISTORY=false`), so the image isn't also saved in its
-  home's `sessions/`. Your fast-agent home's config and logins are still used.
+  --isolated --model MODEL --no-shell --no-subagents --attach IMAGE --json-schema …`, like
+  `hunt`: your fast-agent home's config and logins are used, but the image isn't saved
+  there and no skills, plugins or hooks see it.
 - The model returns all readable text, verbatim (instructions included, never
   followed), and `text_read`: `all`, `no_text` (a photo, a chess board, a microscope
   image: nothing to read), `partial` or `unreadable`. `all` and `no_text` are complete

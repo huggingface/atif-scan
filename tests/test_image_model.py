@@ -22,7 +22,7 @@ import pytest
 
 from atif_scan import Engine, Status, builtin_detectors, parse_trace
 from atif_scan.checks import Context, ImageReading
-from atif_scan.cli.images import no_session_history, parse_answer
+from atif_scan.cli.images import parse_answer
 from atif_scan.data.content import content
 from atif_scan.data.jsonval import Doc, as_object, as_str
 from atif_scan.data.media import find_media
@@ -257,9 +257,9 @@ def test_image_model_transcribes_the_blocking_image(tmp_path, capsys, monkeypatc
     }
     [call] = fake_fast_agent()  # the same image twice is asked about once
     args = call["args"]
-    assert args[:3] == ["go", "--model", "vision-model"]
+    assert args[:4] == ["go", "--isolated", "--model", "vision-model"]
     assert {"--no-shell", "--no-subagents", "--json-schema"} <= set(args)
-    assert call["session_history"] == "false"  # the image isn't saved in fast-agent's home
+    assert call["session_history"] == "false"  # also off for a fast-agent without it
     assert bytes.fromhex(call["image"]) == frame  # the decoded image, not the data URI
     assert "tbench" not in call["prompt"]  # nothing from the trace but the image
     # Reports carry counts, never the transcript or the image.
@@ -345,13 +345,6 @@ def test_without_the_flag_nothing_is_sent(tmp_path, capsys, fake_fast_agent):
     item = scan(tmp_path, capsys, trace(png()))
     assert status(item) == "unknown"
     assert fake_fast_agent() == []
-
-
-def test_fast_agent_runs_without_session_history(monkeypatch):
-    # Both model calls (--image-model and hunt) would otherwise copy prompts and images
-    # into fast-agent's home sessions/ folder.
-    monkeypatch.setenv("SESSION_HISTORY", "true")
-    assert no_session_history()["SESSION_HISTORY"] == "false"
 
 
 def test_the_brief_totals_image_checks():

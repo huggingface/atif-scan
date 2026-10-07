@@ -7,8 +7,8 @@
 - **`--image-model MODEL`** is the scan's one model call, and it is opt-in. It sends
   only the images in trials where an image leaves a check unknown (decoded from the
   trajectory, written to a `0700` temporary folder and deleted afterwards) to MODEL for
-  transcription, through `fast-agent go --no-shell --no-subagents` with fixed
-  arguments, no shell and fast-agent's session history off. Images may show anything
+  transcription, through `fast-agent go --isolated --no-shell --no-subagents` with
+  fixed arguments and no shell (see *fast-agent calls* below). Images may show anything
   on the agent's screen, credentials included, so only use a provider you may send the
   traces to. Transcripts are trace content: they are stored in the atif-scan home's
   `images/` folder (`0700`/`0600`) and never reported (reports carry counts). The loader
@@ -32,8 +32,14 @@
   shell and subagents; the optional `--inspect-tool` grants read-only MCP tools bound to
   one local trajectory, never arbitrary paths or execution. `--answers` keeps only the
   validated answer, confidence, mechanism and steps, never the free-text reason.
-  fast-agent's own session history is off for `hunt`, so prompts aren't also copied
-  into its home's `sessions/`.
+- **fast-agent calls** (`--image-model`, `hunt`) run `fast-agent go --isolated`
+  (fast-agent 0.10.43+): config, secrets and model aliases are read from the fast-agent
+  home, but nothing is written there (no session history, file logs or telemetry) and no
+  skills, agent cards, plugins, hooks, or shell, filesystem or subagent tools load. Only
+  the MCP server `hunt --inspect-tool` passes is started. An older fast-agent rejects the
+  flag: atif-scan then warns once and runs without it (`--no-shell --no-subagents`,
+  session history off through the environment), where the home's plugins and hooks may
+  still load. Upgrade rather than rely on that.
 - **Companion history.** Full Harbor archives (`--full`) may include Grok compaction
   segments and task artifacts. Companion-history tools inventory only fixed local
   session locations beside the bound trajectory and never follow paths supplied by a

@@ -10,8 +10,8 @@ read-only tools over that one trace and its local companion archives
 (atif_scan.review.inspect_server): they mask secrets and run nothing. The reply goes to
 <input>/<question>.answer.json and the answering run's own ATIF trajectory to
 <input>/<question>.review.atif.json. Existing answers are kept unless --force; atif-scan
-validates replies when it reads them (--answers). fast-agent's own session history is
-off, so prompts aren't also copied into its home's sessions/ folder.
+validates replies when it reads them (--answers). fast-agent runs `--isolated`
+(atif_scan.cli.fast_agent): prompts aren't saved in its home and no plugins load.
 
 Prompts contain masked trace text and are sent to the model's provider: only run this
 with a provider you're allowed to send the traces to. Keep the bundle out of Git.
@@ -26,14 +26,13 @@ import json
 import os
 import shlex
 import shutil
-import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..data.jsonval import as_object, as_str
-from .images import no_session_history
+from .fast_agent import run_go
 
 MCP = "mcp>=1.2,<2"
 SERVER = "atif_scan.review.inspect_server"
@@ -95,7 +94,7 @@ def server_command(trace: str) -> str:
 
 
 def _command(args: argparse.Namespace, meta: Path) -> list[str] | str:
-    """fast-agent's arguments for one question, or why it can't be asked."""
+    """`fast-agent go`'s arguments for one question, or why it can't be asked."""
     extra: list[str] = []
     if args.inspect_tool:
         trace = as_str(as_object(json.loads(meta.read_text())).get("trace_path"))
@@ -104,8 +103,7 @@ def _command(args: argparse.Namespace, meta: Path) -> list[str] | str:
         # Keep the inspection tools available beyond the first tool round.
         extra = ["--structured-tool-policy", "always", "--stdio", server_command(trace)]
     return [
-        *shlex.split(args.fast_agent),
-        *("go", "--model", args.model, "--no-shell", "--no-subagents", "--quiet"),
+        *("--model", args.model, "--no-shell", "--no-subagents", "--quiet"),
         *extra,
         *("--trajectory-output", str(meta.with_suffix(".review.atif.json"))),
         *("--timeout", str(args.timeout)),
@@ -132,9 +130,7 @@ def answer(args: argparse.Namespace, meta: Path) -> bool:
     command = _command(args, meta)
     if isinstance(command, str):
         return _failed(args.questions, meta, command)
-    run = subprocess.run(  # noqa: S603 - fixed arguments, no shell
-        command, capture_output=True, text=True, check=False, env=no_session_history()
-    )
+    run = run_go(shlex.split(args.fast_agent), command)
     failed = any(line.startswith("Error:") for line in run.stdout.splitlines())
     if run.returncode != 0 or not run.stdout.strip() or failed:
         return _failed(args.questions, meta, _reason(run.stdout + "\n" + run.stderr))

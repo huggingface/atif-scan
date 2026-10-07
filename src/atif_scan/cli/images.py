@@ -15,8 +15,8 @@ or an image the model can't be sent stays unread (unknown): an incomplete transc
 would read as "the image didn't show it".
 
 Answers are stored privately under <atif-scan home>/images/ by image and model, so each
-image is asked about once. fast-agent runs with no shell, subagents or session history
-(the image would otherwise be saved in its home's sessions/). Images go to the model's
+image is asked about once. fast-agent runs `--isolated` (see `fast_agent`): nothing is
+saved in its home and no skills, plugins or tools load. Images go to the model's
 provider: only use a model you're allowed to send the traces to. Reports carry counts
 only, never transcripts or images.
 """
@@ -43,6 +43,7 @@ from ..data.loader import MAX_BYTES
 from ..data.media import Media, find_media
 from ..data.paths import home
 from ..detectors.recall import walk
+from .fast_agent import run_go
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -236,21 +237,13 @@ class ImageChecker:
         return answer
 
     def _run(self, image: Path, prompt: Path, schema: Path) -> str | None:
-        command = [
-            *self.command,
-            *("go", "--model", self.model, "--no-shell", "--no-subagents", "--quiet"),
+        go_args = [
+            *("--model", self.model, "--no-shell", "--no-subagents", "--quiet"),
             *("--timeout", str(self.timeout), "--attach", str(image)),
             *("--prompt-file", str(prompt), "--json-schema", str(schema)),
         ]
         try:
-            run = subprocess.run(  # noqa: S603 - fixed arguments, no shell
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=self.timeout + 60,
-                env=no_session_history(),
-            )
+            run = run_go(self.command, go_args, timeout=self.timeout + 60)
         except (OSError, subprocess.TimeoutExpired):
             return None
         failed = any(line.startswith("Error:") for line in run.stdout.splitlines())
@@ -258,13 +251,6 @@ class ImageChecker:
 
     def summary(self) -> str:
         return f"image checks with '{self.model}': asked {self.asked}, failed {self.failed}"
-
-
-def no_session_history() -> dict[str, str]:
-    """This environment, with fast-agent's session history off: it would otherwise save
-    the prompt and the attached image in its home's sessions/ folder. The home itself
-    (config, auth, model aliases) is still used, unlike `--no-home`."""
-    return {**os.environ, "SESSION_HISTORY": "false"}
 
 
 def available(command: tuple[str, ...] = (FAST_AGENT,)) -> bool:
