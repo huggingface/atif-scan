@@ -165,9 +165,16 @@ def primary_reward(rewards: object) -> float | None:
 PHASES = ("environment_setup", "agent_setup", "agent_execution", "verifier")
 
 
+def comparable(a: datetime, b: datetime) -> bool:
+    """Both carry a UTC offset, or neither: a naive time can't be placed among aware ones
+    (Harbor has written exception times as naive local time beside UTC phase times)."""
+    return (a.tzinfo is None) == (b.tzinfo is None)
+
+
 def failed_phase(d: Mapping[str, object], occurred_at: object) -> str | None:
     """The phase whose window holds the exception's timestamp: a fixed phase name, or
-    "after" a finished phase when it fell between or after them; None when unknown."""
+    "after" a finished phase when it fell between or after them; None when unknown,
+    including when the exception time and the phase times aren't comparable."""
     try:
         when = datetime.fromisoformat(str(occurred_at))
     except (TypeError, ValueError):
@@ -180,6 +187,8 @@ def failed_phase(d: Mapping[str, object], occurred_at: object) -> str | None:
             end = datetime.fromisoformat(str(record["finished_at"]))
         except (KeyError, TypeError, ValueError):
             continue
+        if not (comparable(when, start) and comparable(start, end)):
+            return None
         if start <= when <= end:
             return phase
         if end < when:
@@ -343,9 +352,12 @@ def late_trials(records: Sequence[Mapping[str, object]]) -> Doc | None:
     its others (at most LATE_SHARE of the job): added to the job after it had run, e.g.
     replacements of failed trials. {trials, rewarded, gap_hours}, or None when there are
     none (or start times are missing)."""
-    timed = sorted(((t, r) for r in records if (t := started(r)) is not None), key=lambda tr: tr[0])
+    timed = [(t, r) for r in records if (t := started(r)) is not None]
     if len(timed) < len(records) or len(timed) < MIN_STARTS:
         return None
+    if len({t.tzinfo is None for t, _ in timed}) > 1:
+        return None  # naive and aware start times can't be ordered
+    timed.sort(key=lambda tr: tr[0])
     gaps = [(b[0] - a[0]).total_seconds() for a, b in pairwise(timed)]
     cut = max(range(len(gaps)), key=gaps.__getitem__)
     tail = timed[cut + 1 :]

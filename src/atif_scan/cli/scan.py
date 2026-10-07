@@ -259,9 +259,12 @@ def _prepare(args: argparse.Namespace) -> tuple[list[Record], Engine] | None:
         # Fixed codes only (e.g. a missing optional extra); never paths or remote messages.
         print(f"atif-scan: {error}", file=sys.stderr)
         return None
-    except Exception:  # noqa: BLE001 - policies and plugins can raise anything; withheld
+    except Exception as error:  # noqa: BLE001 - policies and plugins can raise anything; withheld
+        # The exception's class name is a fixed code that says where to look; its message
+        # (which can carry paths or trace text) stays withheld.
         print(
-            "atif-scan: invalid input, policy or plugin configuration (details withheld)",
+            "atif-scan: invalid input, policy or plugin configuration"
+            f" ({type(error).__name__}; details withheld)",
             file=sys.stderr,
         )
         return None

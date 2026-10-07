@@ -45,6 +45,26 @@ def test_failed_phase_and_durations_come_from_result_json():
     assert after["failed_phase"] == "after_agent_execution"
 
 
+def test_a_naive_exception_time_is_an_unknown_phase_not_a_crash():
+    """Regression (first DeepSWE run): Harbor wrote occurred_at as naive local time
+    ("2026-10-06T17:21:42.276025", BST) beside UTC phase times. Comparing them raised
+    TypeError and the whole scan stopped with "details withheld". The phase is unknown;
+    every other fact is kept."""
+    facts = trial_result(json.dumps(phases("2026-10-03T02:31:05.123456")).encode())
+    assert facts["error_type"] == "AgentSafetyStopError"
+    assert "failed_phase" not in facts
+    assert facts["setup_duration_sec"] == 60.0 and facts["agent_duration_sec"] == 7.0
+
+
+def test_late_trials_skip_mixed_naive_and_aware_start_times():
+    from atif_scan.sources.harbor.files import late_trials
+
+    starts = ["2026-10-03T01:00:00Z", "2026-10-03T01:01:00Z", "2026-10-03T05:00:00"]
+    assert late_trials([{"started_at": t, "reward": 1} for t in starts]) is None
+    aware = [*starts[:2], "2026-10-03T05:00:00Z"]
+    assert late_trials([{"started_at": t, "reward": 1} for t in aware]) is not None
+
+
 SAFETY = {
     "messages": [
         {"role": "user", "content": [{"type": "text", "text": "Do the task."}]},
@@ -140,3 +160,32 @@ def test_final_stop_reason_is_a_code():
     )
     steps[1]["extra"]["stop_reason"] = "<b>weird</b>"
     assert parse_trace({"schema_version": "ATIF-v1.7", "steps": steps}).final_stop_reason is None
+
+
+def test_zero_token_records_beside_metered_steps_are_placeholders():
+    """Regression (first DeepSWE run): Harbor recorded 0/0/0 tokens with a cost for 10
+    finished fast-agent trials whose trajectories had no totals (a call without usage) but
+    metered every other step. The zeros hid ~90M tokens; the step sums are used instead,
+    as a lower bound. A record of zero with nothing metered stays zero."""
+    from atif_scan.data.facts import run_facts, trace_facts
+
+    def metered(p: int) -> Doc:
+        return {
+            "source": "agent",
+            "message": "x",
+            "metrics": {"prompt_tokens": p, "completion_tokens": 10, "cached_tokens": p // 2},
+        }
+
+    trace = parse_trace(
+        {
+            "steps": [metered(1000), metered(2000), {"source": "agent", "message": "y"}],
+            "final_metrics": {"extra": {"llm_usage_calls_complete": False}},
+        }
+    )
+    zeros = {"input_tokens": 0, "cache_tokens": 0, "output_tokens": 0, "cost_usd": 0.04}
+    facts = run_facts(zeros, trace_facts(trace))
+    assert facts["input_tokens"] == 3000 and facts["output_tokens"] == 20
+    assert facts["usage_basis"] == "steps_partial" and facts["cost_usd"] == 0.04
+    empty = parse_trace({"steps": [{"source": "agent", "message": "y"}]})
+    kept = run_facts(zeros, trace_facts(empty))
+    assert kept["input_tokens"] == 0 and kept["usage_basis"] == "run"

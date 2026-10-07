@@ -38,7 +38,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .accounting import apply_accounting
-from .jsonval import Doc, as_object, as_str
+from .jsonval import Doc, as_object, as_str, count
 from .model import step_reasoning_tokens
 from .web_gaps import web_gaps
 
@@ -348,13 +348,26 @@ def _costs_agree(cost: float, beside: float) -> bool:
     return abs(cost - beside) <= max(COST_TOLERANCE_USD, COST_TOLERANCE_RATIO * max(cost, beside))
 
 
+def placeholder_tokens(recorded: Mapping[str, object], usage: Mapping[str, object] | None) -> bool:
+    """The run's record has every token count at 0 while the trajectory metered real
+    usage: a placeholder written when the harness had no totals (fast-agent with a call
+    missing usage), not a count of nothing."""
+    counts = [recorded.get(k) for k in TOKENS]
+    if not usage or any(c != 0 for c in counts if c is not None) or counts[0] is None:
+        return False
+    return any((count(usage.get(k)) or 0) > 0 for k in TOKENS)
+
+
 def run_facts(recorded: Mapping[str, object], traced: Mapping[str, object]) -> Doc:
     """A trial's reported run facts, in report order (see the module docstring).
 
     `recorded` is read fresh on every scan (never cached); `traced` is `trace_facts`."""
-    has_tokens = recorded.get("input_tokens") is not None
     usage = traced.get("usage")
     usage = usage if isinstance(usage, dict) else None
+    if placeholder_tokens(recorded, usage):
+        # Zero counts beside real metered usage: use the trajectory's tokens instead.
+        recorded = {**recorded, **dict.fromkeys(TOKENS)}
+    has_tokens = recorded.get("input_tokens") is not None
     facts: Doc = {k: recorded.get(k) for k in RECORDED}
     # in_job_result False: the job's own result.json doesn't list this trial (rerun/resume).
     facts["overrides"] = recorded.get("overrides") or []
