@@ -8,20 +8,20 @@
   "version": "2"
  },
  "fabrication_hunt": {
-  "sha256": "46d31eb0575d3bf6",
-  "version": "2"
+  "sha256": "450e3e5be8170158",
+  "version": "3"
  },
  "fabrication_hunt.blind": {
-  "sha256": "5e867cad02fcb53e",
-  "version": "2"
+  "sha256": "d105614b98faced3",
+  "version": "3"
  },
  "hack_hunt": {
-  "sha256": "50f2c6c9950dc647",
-  "version": "6"
+  "sha256": "655b149beec802fe",
+  "version": "7"
  },
  "hack_hunt.blind": {
-  "sha256": "aebef1495da0c1b2",
-  "version": "6"
+  "sha256": "61cb8c4b4997bc09",
+  "version": "7"
  },
  "harness_message_hint": {
   "sha256": "19bddec3d9b26d62",
@@ -57,6 +57,14 @@
  },
  "value_provenance": {
   "sha256": "2847f45389ddeea7",
+  "version": "1"
+ },
+ "verification_hunt": {
+  "sha256": "54a736452faa5a56",
+  "version": "1"
+ },
+ "verification_hunt.blind": {
+  "sha256": "8274802e2c927fce",
   "version": "1"
  },
  "web_provenance": {
