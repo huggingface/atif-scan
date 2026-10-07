@@ -946,7 +946,16 @@ def test_answer_coverage_comes_from_the_answering_runs_own_trajectory(job, tmp_p
     ]
     review.write_text(json.dumps({"steps": [{"tool_calls": calls}]}))
     got = review_coverage(review, [1, 2, 3, 4])
-    assert got == {"steps_read": 3, "share": 0.75, "outline": True, "tool_calls": 5}
+    assert got == {
+        "steps_read": 3,
+        "share": 0.75,
+        "basis": "steps",
+        "outline": True,
+        "tool_calls": 5,
+    }
+    # Only the required steps (e.g. every verification claim) count when given.
+    claims = review_coverage(review, [1, 2, 3, 4], required=[2, 4])
+    assert claims is not None and (claims["share"], claims["basis"]) == (0.5, "required")
     assert review_coverage(tmp_path / "missing.json", [1]) is None
 
     # Through --answers: a clean answer from a thin read is counted apart in the brief.
@@ -964,6 +973,26 @@ def test_answer_coverage_comes_from_the_answering_runs_own_trajectory(job, tmp_p
     argv = [str(job), "--task-from", "trial-dir", "--answers", str(qdir), "--format", "json"]
     main(argv)
     (row,) = json.loads(capsys.readouterr().out)["inputs"][0]["answers"]
-    assert row["coverage"] == {"steps_read": 1, "share": 0.33, "outline": False, "tool_calls": 1}
+    assert row["coverage"] == {
+        "steps_read": 1,
+        "share": 0.33,
+        "basis": "steps",
+        "outline": False,
+        "tool_calls": 1,
+    }
     main([*argv, "--brief"])
     assert json.loads(capsys.readouterr().out)["answers_thin"] == {"hack_hunt": 1}
+
+
+def test_verification_coverage_counts_every_claim_not_the_cited_sample():
+    from atif_scan.data.loader import parse_trace
+    from atif_scan.review.catalogue import verification_claim_steps, verification_claims
+
+    steps = [{"step_id": 1, "source": "user", "message": "Fix it."}]
+    steps += [
+        {"step_id": n, "source": "agent", "message": f"Change {n}: verified it works."}
+        for n in range(2, 12)
+    ]
+    trace = parse_trace({"schema_version": "ATIF-v1.7", "steps": steps})
+    assert len(verification_claims(trace)) == 6  # the prompt's sample
+    assert len(verification_claim_steps(trace)) == 10  # what "absent" must have read

@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from ..checks import CheckSpec, Context, Detection, Status, Unread
+from ..checks import CheckSpec, Context, Detection, ImageReading, Shown, Status, Unread
 from ..data.model import Channel, Locator, Surface, Trace
 from ..data.web_inputs import web_input
 from ..data.web_results import web_results_complete
@@ -80,14 +80,29 @@ class _Walk:
     unconfirmed: dict[str, Locator] = field(default_factory=dict)
     unread: list[Unread] = field(default_factory=list)
     complete: bool = True
+    # Images an image model read (`Context.images`), with the folded words it was asked
+    # about: each blinds only the words it didn't say were absent.
+    read_images: list[tuple[Unread, dict[str, Shown]]] = field(default_factory=list)
+    # Read images that left a written word unconfirmed (reported like unread ones).
+    image_gaps: list[Unread] = field(default_factory=list)
 
     def blind(self, unread: Unread) -> None:
         if not self.unread:
             self.unread.append(unread)
 
+    def add(self, key: str, at: Locator) -> None:
+        """A token no earlier context contained: found, or unconfirmed when some earlier
+        context may have shown it."""
+        images = [u for u, words in self.read_images if words.get(key) != "absent"]
+        if not self.unread and not images:
+            self.found[key] = at
+            return
+        self.unconfirmed[key] = at
+        self.image_gaps.extend(u for u in images[:1] if u not in self.image_gaps)
+
     @property
-    def target(self) -> dict[str, Locator]:
-        return self.unconfirmed if self.unread else self.found
+    def gaps(self) -> tuple[Unread, ...]:
+        return tuple(self.unread or self.image_gaps[:1])
 
 
 @dataclass(frozen=True)
@@ -115,7 +130,7 @@ class UnprimedDetector:
         # Withheld reasoning can't prime anything (it's the agent's own); the recorded
         # text is what's judged, and `Trace.reasoning_exposure` says what it covers.
         complete = trace.agent_steps > 0 and walk_.complete
-        unread = tuple(walk_.unread)
+        unread = walk_.gaps
         if self.enough(set(walk_.found), context):
             # Found before any unread context: nothing later can prime them.
             return Detection(Status.MATCH, tuple(walk_.found.values()), complete)
@@ -140,7 +155,7 @@ class UnprimedDetector:
             if horizon is not None and surface.at.step >= horizon[0]:
                 state.blind(horizon[1])
             if not authored:
-                self._read_context(surface, seen, state)
+                self._read_context(surface, context, seen, state)
                 continue
             if self.stop is not None and self.stop(surface):
                 break  # e.g. a benchmark lookup: what follows may be primed by it
@@ -149,15 +164,47 @@ class UnprimedDetector:
                 self._collect(surface, context, seen, primed, state)
         return state
 
-    def _read_context(self, surface: Surface, seen: list[str], state: _Walk) -> None:
+    def _read_context(
+        self, surface: Surface, context: Context, seen: list[str], state: _Walk
+    ) -> None:
         """Add a prompt/result's readable text to `seen`; an image in it, or a part that
-        couldn't be parsed, may hold more: what's written later is then unconfirmed."""
+        couldn't be parsed, may hold more: what's written later is then unconfirmed.
+        Images an image model read prime the words it saw and blind only the words it
+        wasn't sure of (or wasn't asked about)."""
         if surface.content.media:
-            state.blind(Unread("media", surface.at))
+            words = self._image_words(surface, context)
+            if words is None:
+                state.blind(Unread("media", surface.at))
+            else:
+                state.read_images.append((Unread("media", surface.at), words))
+                seen.extend(key for key, shown in words.items() if shown == "present")
         elif not surface.content.understood:
             state.blind(Unread("unreadable", surface.at))
         if surface.content.text:
             seen.append(self.fold(surface.content.text))
+
+    def _image_words(self, surface: Surface, context: Context) -> dict[str, Shown] | None:
+        """The folded words this surface's images were checked for, or None when one of
+        its images wasn't read. A word is absent only when every image was asked about
+        it and none shows it."""
+        ids = surface.content.media_ids
+        readings = [r for i in ids if (r := context.images.get(i)) is not None]
+        if not ids or len(readings) != len(ids):
+            return None
+        words: dict[str, Shown] = {}
+        for reading in readings:
+            for word, shown in reading.words.items():
+                key = self.fold(word)
+                words[key] = _strongest(words.get(key), shown)
+        return {
+            key: "unclear"
+            if shown == "absent" and not all(self._asked(r, key) for r in readings)
+            else shown
+            for key, shown in words.items()
+        }
+
+    def _asked(self, reading: ImageReading, key: str) -> bool:
+        return any(self.fold(word) == key for word in reading.words)
 
     def _judged(self, surface: Surface) -> bool:
         channel = surface.at.channel
@@ -180,7 +227,7 @@ class UnprimedDetector:
             if any(key in s for s in seen):
                 primed.add(key)
                 continue
-            state.target[key] = replace(surface.at, span=span)
+            state.add(key, replace(surface.at, span=span))
 
 
 def regex_candidates(pattern: re.Pattern[str]) -> Candidates:
@@ -189,3 +236,11 @@ def regex_candidates(pattern: re.Pattern[str]) -> Candidates:
             yield m.group(0), m.span()
 
     return candidates
+
+
+_STRENGTH = {"absent": 0, "unclear": 1, "present": 2}
+
+
+def _strongest(current: Shown | None, shown: Shown) -> Shown:
+    """Across images in one surface: present beats unclear beats absent."""
+    return shown if current is None or _STRENGTH[shown] > _STRENGTH[current] else current

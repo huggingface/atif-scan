@@ -159,7 +159,7 @@ class Answers:
             row = _row(meta, answer, status, digest)
             if review is not None and trace is not None and "answer" in row:
                 # How much of this trace the answering run read (counts only).
-                row["coverage"] = review_coverage(review, trace.step_numbers)
+                row["coverage"] = _coverage(review, trace, BY_ID[meta["question"]])
             changed = archive is not None and (
                 meta.get("archive_digest") != archive_digest
                 if "archive_digest" in meta
@@ -169,6 +169,14 @@ class Answers:
                 row = {"question": meta["question"], "version": meta["version"], "status": "stale"}
             rows.append(row)
         return rows
+
+
+def _coverage(review: Path, trace: Trace, question: Question) -> Doc | None:
+    numbers = trace.step_numbers
+    required = (
+        [numbers[i] for i in question.coverage_steps(trace)] if question.coverage_steps else []
+    )
+    return review_coverage(review, numbers, required)
 
 
 def _row(meta: Doc, answer: Doc | None, status: str, digest: str | None) -> Doc:

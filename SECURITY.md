@@ -4,6 +4,15 @@
   auth and env files out of Git. Use only synthetic fixtures, and never copy benchmark
   solutions into this repository.
 - Built-ins never execute commands, visit URLs, run models or fetch files.
+- **`--image-model MODEL`** is the scan's one model call, and it is opt-in. It sends
+  only the images that leave a check unknown (decoded from the trajectory, written to a
+  `0700` temporary folder and deleted afterwards), plus the words in question, to MODEL
+  through `fast-agent go --no-shell --no-subagents`, with fixed arguments and no shell.
+  Images may show anything on the agent's screen, credentials included, so only use a
+  provider you may send the traces to. Answers (words, `present`/`absent`/`unclear`, a
+  sensitivity code) are stored in the atif-scan home's `images/` folder (`0700`/`0600`).
+  Reports carry counts only. The loader keeps an inline payload's sha256, never the
+  payload.
 - Reports are an explicit field allowlist: no raw text, paths, URLs, argument values or
   exception messages. The one report field with trace text is opt-in `--cite`: bounded,
   secret-masked excerpts of the trace. Masking is best-effort, so treat cited output

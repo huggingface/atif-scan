@@ -5,16 +5,17 @@ from __future__ import annotations
 import fnmatch
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
-from typing import TYPE_CHECKING, Protocol
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from .data.jsonval import identifier
 from .data.model import Locator, Trace
 from .data.submission import Submission
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 
 def check_pattern(value: str) -> str:
@@ -61,6 +62,29 @@ class Severity(IntEnum):
     CRITICAL = 100
 
 
+Shown = Literal["present", "absent", "unclear"]
+SHOWN: frozenset[str] = frozenset({"present", "absent", "unclear"})
+
+
+@dataclass(frozen=True)
+class ImageReading:
+    """What an image model said one inline image (by sha256) shows: for each word it was
+    asked about (as the agent wrote it), whether the image shows it. A word it wasn't
+    asked about is unknown, like `unclear`. Produced only by the opt-in `--image-model`."""
+
+    words: Mapping[str, Shown]
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(k, str) and v in SHOWN for k, v in self.words.items()):
+            raise ValueError("invalid_image_reading")
+        object.__setattr__(self, "words", MappingProxyType(dict(self.words)))
+
+
+def _no_images() -> Mapping[str, ImageReading]:
+    empty: dict[str, ImageReading] = {}
+    return MappingProxyType(empty)
+
+
 @dataclass(frozen=True)
 class Context:
     task: str | None = None
@@ -70,6 +94,9 @@ class Context:
     # The submitted patch, when the run records one beside the trajectory (DeepSWE's
     # `artifacts/model.patch`); None when unknown. Paths and lines are never exported.
     submission: Submission | None = None
+    # Image-model readings of inline images, by payload sha256 (`--image-model`; empty
+    # otherwise). Checks that an unread image blocks may use them; nothing else does.
+    images: Mapping[str, ImageReading] = field(default_factory=_no_images)
 
     def __post_init__(self) -> None:
         if self.task is not None:
@@ -82,6 +109,8 @@ class Context:
             raise ValueError("invalid_reward")
         if self.submission is not None and not isinstance(self.submission, Submission):
             raise ValueError("invalid_submission")
+        if not all(isinstance(v, ImageReading) for v in self.images.values()):
+            raise ValueError("invalid_images")
 
 
 @dataclass(frozen=True)

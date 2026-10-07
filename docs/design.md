@@ -56,6 +56,8 @@ itself.
 - Text fields become `Content`. Formats it can't read get `understood=False`, and
   detectors report `unknown` for them instead of `no_match`. Images and other binary
   blocks are excluded from text checks. That doesn't mean they contain nothing relevant.
+  An inline payload is kept only as its sha256 (`Content.media_ids`), so the opt-in
+  `--image-model` answers (`Context.images`) can be matched to it.
 - Every call's arguments go through `tools.classify`. It walks string leaves together
   with their nearest key and routes each one by key convention and value shape to
   `PAYLOAD`, `URL`, `COMMAND`, `QUERY`, `PATH` or `ARGUMENTS`, in that order of

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
@@ -27,6 +27,7 @@ from ..sources.inputs import (
     SourceError,
 )
 from .emit import emit
+from .images import ImageChecker, available, notice
 from .inputs import Record, inputs, load_checks, status_line
 
 if TYPE_CHECKING:
@@ -108,18 +109,21 @@ class Scanner:
     answers: Answers | None = None
     cite: Severity | None = None
     cite_checks: tuple[str, ...] = ()  # --cite-check globs; empty cites every check
+    images: ImageChecker | None = None  # --image-model
 
     @classmethod
     def for_args(cls, args: argparse.Namespace, engine: Engine) -> Scanner:
         answers = Answers.load(args.answers) if args.answers else None
         cite = Severity[args.cite.upper()] if args.cite else None
+        images = ImageChecker(args.image_model) if args.image_model else None
         cache = None
         # Citations and questions carry trace text, and answers need the trace: never cached.
+        # Image readings change results without changing the trace: never cached either.
         # `cite is not None`: Severity.INFO is 0, so `--cite info` is falsy (regression).
-        if not (args.no_cache or cite is not None or args.questions or answers):
+        if not (args.no_cache or cite is not None or args.questions or answers or images):
             directory = args.cache or args.sync_root / "results"
             cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
-        return cls(engine, args.task, cache, answers, cite, tuple(args.cite_check))
+        return cls(engine, args.task, cache, answers, cite, tuple(args.cite_check), images)
 
     def item(self, source: Source, context: Context) -> Doc:
         item = self._item(source, context)
@@ -155,7 +159,15 @@ class Scanner:
         # the same rule itself).
         context = effective_context(trace, context)
         assessments = self.engine.evaluate(trace, context)
+        image_checks: Doc = {}
+        if self.images is not None and trace is not None:
+            readings, image_checks = self.images.readings(source.local, trace, assessments)
+            if readings:
+                # Same trace, now with what the image model said the images show.
+                assessments = self.engine.evaluate(trace, replace(context, images=readings))
         scanned = scanned_item(source, trace, error, context, assessments)
+        if image_checks:
+            scanned["image_checks"] = image_checks  # counts only
         traced = trace_facts(trace)
         if self.cache is not None and key is not None:
             # Only trace-derived data: result.json / Hub facts are merged fresh.
@@ -277,7 +289,14 @@ def scan(args: argparse.Namespace) -> int:
         )
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     scanner = Scanner.for_args(args, engine)
+    if scanner.images is not None:
+        if not available(scanner.images.command):
+            print("atif-scan: --image-model needs fast-agent on PATH", file=sys.stderr)
+            return 2
+        notice(scanner.images.model)
     output, invalid, failed = _scan_all(scanner, records, threshold)
+    if scanner.images is not None:
+        print(f"atif-scan: {scanner.images.summary()}", file=sys.stderr)
     doc = _document(output, args, sync_failed, engine)
     if args.questions and not _review(doc, args, records, engine):
         return 2

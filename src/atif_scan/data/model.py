@@ -76,6 +76,10 @@ class Content:
     # An image/audio/video block (or a harness placeholder for one, e.g. "[Image 1]") was
     # part of it: text the agent saw there isn't in `text`.
     media: bool = False
+    # sha256 of each inline media payload in it, when every media part has one (see
+    # `data.media`); empty when any part is only a placeholder, file reference or
+    # unreadable payload. Identities only: the payload itself is never kept.
+    media_ids: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)
