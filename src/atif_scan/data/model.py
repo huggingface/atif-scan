@@ -268,7 +268,7 @@ class Trace:
     # Bare `[REDACTED]` JSON values the loader read as null (a publisher redaction defect).
     redacted_values: int = 0
     # Token usage summed over agent steps' own metrics (None when no step recorded any),
-    # and LLM calls without usage (loader.step_usage): the fallback when final_metrics
+    # and LLM calls without usage (usage.step_usage): the fallback when final_metrics
     # has no totals.
     step_usage: Usage | None = None
     calls_without_usage: int = 0
@@ -277,7 +277,7 @@ class Trace:
     step_kinds_partial: tuple[str, ...] = ()
     # The last metered agent step's own usage, how many agent steps recorded usage, and
     # whether every metered step's prompt and completion tokens are at least the
-    # previous one's (the step metrics could then be running totals; loader.last_call).
+    # previous one's (the step metrics could then be running totals; usage.last_call).
     last_step_usage: Usage | None = None
     metered_steps: int = 0
     step_usage_rising: bool = False

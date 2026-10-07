@@ -548,7 +548,7 @@ XSS_SAMPLES = (
 
 
 def test_short_data_uris_in_code_are_text_not_media():
-    from atif_scan.data.loader import content
+    from atif_scan.data.content import content
 
     assert not content(XSS_SAMPLES).media
     one_pixel_png = (

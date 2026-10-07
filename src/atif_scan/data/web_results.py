@@ -1,4 +1,8 @@
-"""Shared web-result evidence predicates, never retrieval or execution."""
+"""What a recorded web call returned: content, a runner status only, nothing, or unknown.
+
+A classification of the record, shared by the trial facts, detectors, browser and report;
+deciding what counts as a finding is the detectors' job. Never retrieval or execution.
+"""
 
 from __future__ import annotations
 
@@ -7,8 +11,8 @@ import re
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from .content import content as parse_content
 from .jsonval import as_object, as_str
-from .loader import content as parse_content
 
 if TYPE_CHECKING:
     from .model import Content, Step, ToolCall

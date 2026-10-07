@@ -3,7 +3,8 @@
 Layers, lowest first. A layer may import itself and the layers listed for it:
 
 - data      parsing and per-trial facts (stdlib only): the data package (model, loader,
-            jsonval, shell, jslit, credentials, facts, accounting, paths, web_*)
+            content, tools, pairing, usage, jsonval, shell, jslit, credentials, facts,
+            accounting, paths, web_*)
 - sources   finding and fetching inputs: the sources package (inputs, sync, layout, harbor)
 - analysis  checks and their evaluation: checks, rules, policy, engine, access, detectors,
             packs

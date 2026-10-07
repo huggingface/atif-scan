@@ -16,7 +16,7 @@ from atif_scan import (
     parse_trace,
 )
 from atif_scan.checks import Detection
-from atif_scan.data import credentials, loader
+from atif_scan.data import content, credentials, tools
 from atif_scan.data.model import Channel, Content, Locator, Surface
 from atif_scan.detectors import awareness, installs, lookup, tamper, vocabulary
 from atif_scan.detectors.text import gated
@@ -239,7 +239,7 @@ OLD_CITATION = re.compile(
     ],
 )
 def test_media_placeholder_rewrite_matches_the_old_pattern(text):
-    assert bool(loader.MEDIA_PLACEHOLDER.search(text)) == bool(OLD_MEDIA.search(text))
+    assert bool(content.MEDIA_PLACEHOLDER.search(text)) == bool(OLD_MEDIA.search(text))
 
 
 @pytest.mark.parametrize(
@@ -251,7 +251,7 @@ def test_media_placeholder_rewrite_matches_the_old_pattern(text):
     ],
 )
 def test_patch_path_rewrite_matches_the_old_pattern(patch):
-    new = [m.rstrip() for m in loader.PATCH_PATHS.findall(patch)]
+    new = [m.rstrip() for m in tools.PATCH_PATHS.findall(patch)]
     assert new == OLD_PATCH.findall(patch)
 
 
@@ -323,9 +323,9 @@ def test_git_clone_benchmark_needs_the_same_command():
 
 
 def test_loader_patterns_are_linear(linear):
-    linear(lambda n: loader.content("\n" * n + "x"), 25_000)
+    linear(lambda n: content.content("\n" * n + "x"), 25_000)
     patch = "*** Begin Patch\n*** Add File: a{}b\n"
-    linear(lambda n: loader.call_fields("write", {"patch": patch.format(" " * n)}), 12_500)
+    linear(lambda n: tools.call_fields("write", {"patch": patch.format(" " * n)}), 12_500)
 
 
 def test_unprimed_detector_caches_primed_tokens(linear):
