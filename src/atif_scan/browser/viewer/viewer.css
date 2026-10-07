@@ -125,3 +125,4 @@ footer.notes p{margin:4px 0}
 .lineage.replaced{border-left-color:var(--danger)}
 .lineage strong{display:block;font-size:13px}
 .lineage p{margin:4px 0 8px}
+.list-filters{display:grid;grid-template-columns:auto 1fr;gap:6px 8px;align-items:center;margin:0 12px 12px}.list-filters .input-label{margin:0}.list-filters select{width:100%;min-width:0;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}

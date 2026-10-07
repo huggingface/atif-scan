@@ -27,7 +27,8 @@
   // Counted trials only: replaced originals are evidence, shown under "Replaced".
   const scoredTrials = trials.filter(E.counted);
   const state = { trial: null, ref: null, span: null, finding: null, offset: 0,
-    filter: scoredTrials.some(E.needsAttention) ? "attention" : "all", tab: "findings", allSteps: false };
+    filter: scoredTrials.some(E.needsAttention) ? "attention" : "all", tab: "findings", allSteps: false,
+    priority: "", check: "" };
 
   function firstRef(trial) {
     const step = trial.steps.find(s => s.fields.length);
@@ -108,6 +109,29 @@
     $("replaced-chip").hidden = !evidence;
     $("replaced-count").textContent = `(${evidence})`;
     renderRunSections(run.sections ?? []);
+    renderFilterOptions();
+  }
+  // Priority and check filters, with how many counted trials each would show.
+  function renderFilterOptions() {
+    const priorities = [["critical", "Critical"], ["high", "High and above"], ["medium", "Medium and above"], ["low", "Low and above"]];
+    const priority = $("priority-filter");
+    priority.replaceChildren(node("option", "Any priority"), ...priorities.map(([value, label]) => {
+      const n = scoredTrials.filter(t => E.matchesFilters(t, { priority: value })).length;
+      const option = node("option", `${label} (${n})`); option.value = value; return option;
+    }));
+    priority.firstChild.value = "";
+    const check = $("check-filter");
+    const groups = E.checkIndex(scoredTrials).map(fam => {
+      const group = node("optgroup"); group.label = fam.label;
+      const all = node("option", `All ${fam.label.toLowerCase()} checks`); all.value = "family:" + fam.id;
+      group.append(all, ...fam.checks.map(c => {
+        const option = node("option", `${c.title} · ${c.severity} (${c.trials}${c.allowed ? `, ${c.allowed} allowed` : ""})`);
+        option.value = c.id; return option;
+      }));
+      return group;
+    });
+    check.replaceChildren(node("option", "Any check"), ...groups);
+    check.firstChild.value = "";
   }
   function renderRunSections(sections) {
     $("run-details").hidden = !sections.length;
@@ -142,10 +166,13 @@
   function renderList() {
     const query = $("trial-query").value.toLowerCase();
     const rows = trials.filter(t => `${t.input_id ?? ""} ${t.task ?? ""}`.toLowerCase().includes(query) &&
+      E.matchesFilters(t, state) &&
       (state.filter === "replaced" ? !E.counted(t) : E.counted(t) &&
         (state.filter === "all" || (state.filter === "failed" ? !!E.errorClass(t.facts) : E.needsAttention(t)))));
-    $("trial-list").replaceChildren(...rows.map(trialRow));
-    if (!rows.length) $("trial-list").append(node("p", "No trials match. Try All trials.", "empty-state"));
+    const ordered = state.filter === "attention" || state.priority || state.check ? E.byPriority(rows) : rows;
+    $("trial-list").replaceChildren(...ordered.map(trialRow));
+    if (!rows.length) $("trial-list").append(node("p",
+      state.priority || state.check ? "No trials match these filters." : "No trials match. Try All trials.", "empty-state"));
     $("trial-count").textContent = `${rows.length} / ${state.filter === "replaced" ? trials.length - scoredTrials.length : scoredTrials.length}`;
     // Scroll the list itself (not the page) so the selected trial is visible.
     const list = $("trial-list"), active = list.querySelector(".trial-row.active");
@@ -186,7 +213,9 @@
     const c = E.coverageLines(state.trial.coverage), box = $("coverage");
     box.className = "coverage" + (c.incomplete ? "" : " clear");
     const head = state.trial.input_status !== "available" ? "Trace unavailable — not cleared" :
-      c.incomplete ? "Evidence incomplete — not cleared" : "Recorded fields available — not a verdict";
+      c.incomplete ? "Evidence incomplete — not cleared" :
+      c.telemetry.length ? "Behaviour evidence available · telemetry unresolved — not a verdict" :
+      "Recorded fields available — not a verdict";
     const parts = [node("strong", head)];
     const facts = E.trialFacts(state.trial.facts);
     if (facts) parts.push(node("p", facts, "trial-facts"));
@@ -411,6 +440,14 @@
     ["findings", "search"].forEach(id => $(id + "-panel").hidden = id !== state.tab);
   }));
   $("trial-query").addEventListener("input", renderList);
+  for (const [id, key] of [["priority-filter", "priority"], ["check-filter", "check"]]) {
+    $(id).addEventListener("change", () => {
+      state[key] = $(id).value;
+      // A priority or check narrows the whole run: "Needs attention" would hide part of it.
+      if (state[key] && state.filter === "attention") state.filter = "all";
+      renderList();
+    });
+  }
   $("all-steps").addEventListener("click", () => { state.allSteps = !state.allSteps; renderTimeline(); });
   function setTheme(dark) {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -461,7 +498,8 @@
   let restored = false;
   try { restored = restore(); } catch { restored = false; }
   if (!restored) {
-    const first = scoredTrials.find(t => state.filter === "all" || E.needsAttention(t)) ?? scoredTrials[0] ?? trials[0];
+    const first = (state.filter === "attention" ? E.byPriority(scoredTrials.filter(E.needsAttention))[0] : null) ??
+      scoredTrials[0] ?? trials[0];
     if (first) selectTrial(first); else renderList();
   }
 })();

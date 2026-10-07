@@ -28,6 +28,7 @@
         <div class="panel-head"><h2>Trials</h2><span id="trial-count"></span></div>
         <label class="input-label" for="trial-query">Find a trial</label><input id="trial-query" type="search" placeholder="Task or trial label">
         <div class="chips" role="group" aria-label="Trial filters"><button type="button" data-filter="attention" aria-pressed="true">Needs attention <span id="attention-count"></span></button><button type="button" data-filter="all" aria-pressed="false">All trials</button><button type="button" data-filter="failed" aria-pressed="false">Failed <span id="failed-count"></span></button><button type="button" data-filter="replaced" aria-pressed="false" hidden id="replaced-chip">Replaced <span id="replaced-count"></span></button></div>
+        <div class="list-filters"><label class="input-label" for="priority-filter">Priority</label><select id="priority-filter"><option value="">Any priority</option></select><label class="input-label" for="check-filter">Check</label><select id="check-filter"><option value="">Any check</option></select></div>
         <div id="trial-list" class="trial-list"></div>
         <p class="small-note">No findings and missing evidence are different states. Neither is a clean-origin verdict.</p>
       </aside>
