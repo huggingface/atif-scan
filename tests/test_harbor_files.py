@@ -153,7 +153,9 @@ def test_local_job_folder_uses_recorded_facts(tmp_path, capsys):
         "⚠ overrides that change the agent's time or resources (leaderboards require defaults):"
         " agents[].override_timeout_sec"
     ) in flat
-    assert "⚠ no trial recorded a cost; price the tokens with --price U,C,O" in flat
+    assert "COST       ⚠ no trial recorded a cost" in out
+    assert "· price the tokens with --price U,C,O" in flat
+    assert "= — total unknown: nothing could be priced" in flat
 
 
 def test_price_estimates_unpriced_trials(tmp_path, capsys):
@@ -161,7 +163,7 @@ def test_price_estimates_unpriced_trials(tmp_path, capsys):
     main([str(job), "--brief", "--format", "json", "--price", "2,0.5,10"])
     ce = json.loads(capsys.readouterr().out)["cost_estimate"]
     # per trial: 500 uncached * 2 + 500 cached * 0.5 + 100 out * 10, per million tokens
-    assert ce["method"] == "given --price" and ce["estimate_usd"] == round(3 * 2250 / 1e6, 2)
+    assert ce["method"] == "at the given --price" and ce["estimate_usd"] == round(3 * 2250 / 1e6, 2)
     with pytest.raises(SystemExit):
         main([str(job), "--price", "1,2"])
 

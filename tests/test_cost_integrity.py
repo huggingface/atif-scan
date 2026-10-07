@@ -158,9 +158,14 @@ def test_run_priced_at_declared_prices_when_no_cost_is_recorded(tmp_path, capsys
     assert u["recorded_vs_trajectory"] == {"same": 3}
     assert u["steps_vs_totals"] == {"same": 3}
     assert u["trials_with_tokens"] == 3 and u["basis"] == {"run": 3}
+    flat = " ".join(out.split())
+    assert "COST       ⚠ no trial recorded a cost" in out
+    assert "$0.00 no cost recorded" in flat
     assert (
-        "COST       $0.01 at the run's declared prices (run.json); no trial recorded a cost" in out
+        "+ $0.01 3 trials: tokens without a recorded cost (at the run's declared prices,"
+        " run.json)" in flat
     )
+    assert "= $0.01 estimated total" in flat
     assert "· $2.00 uncached input · $0.50 cached input · $10.00 output, per M tokens" in out
     assert "no cost recorded for any trial" not in out
     assert "TOKENS     3k input (2k cached) · 300 output, from 3 of 3 trials" in out
@@ -265,7 +270,7 @@ def test_partial_step_usage_is_priced_as_a_lower_bound(tmp_path, capsys):
     assert (
         "total provider usage and billing are not established: 1 LLM call record no usage" in flat
     )
-    assert "· est. +<$0.01 for the 1 LLM call without usage" in flat
+    assert "+ <$0.01 1 trial: model calls without recorded usage (each trial's own cost" in flat
     assert b["usage"]["basis"] == {"run": 3, "steps_partial": 1}
 
 
@@ -431,9 +436,12 @@ def test_stream_failures_are_reported_as_harness_events_and_lower_bounds(tmp_pat
     assert (sr["trials"], sr["failed_attempts"], sr["without_totals"]) == (1, 1, 1)
     assert b["usage"]["partial"]["stream_retry_calls"] == 1
     flat = " ".join(out.split())
-    assert "1 LLM call record no usage; fast-agent also records provider retries" in flat
-    assert "1 trial (1 rewarded) had fast-agent provider failures: 1 failed attempt" in flat
-    assert "not model behaviour" in flat
+    assert (
+        "1 LLM call record no usage; fast-agent also records provider retries"
+        " (provider/transport events, not model behaviour)"
+    ) in flat
+    # The same trial isn't described a second time by the retry line.
+    assert "had fast-agent provider failures" not in flat
 
 
 def test_unexplained_calls_without_usage_are_not_called_stream_failures(tmp_path, capsys):

@@ -243,8 +243,10 @@ def test_default_brief_prints_reconstruction_as_warning(tmp_path, capsys):
     evidence = text[text.index("EVIDENCE") :]
     assert "⚠ 1 trial" in evidence
     assert "pairing links inferred" in evidence or "tool result links inferred" in evidence
-    # Real plurals: one trial "isn't" in the total.
-    assert "the 1 trial without usage isn't in the total" in text
+    # The unmetered trial is a ledger row, with why it isn't estimated.
+    flat = " ".join(text.split())
+    assert "+ — 1 trial: work with no usage recorded at all (not estimated:" in flat
+    assert "= — total unknown: nothing could be priced" in flat
 
 
 @pytest.mark.parametrize("ids, target", [(("b", None), 0), ((None, "a"), 1)])

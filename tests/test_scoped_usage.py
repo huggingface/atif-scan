@@ -213,8 +213,8 @@ def test_unknown_step_split_is_not_reported_as_absent_evidence():
     row = {
         **trace_facts(trace),
         "input_id": "synthetic",
-        "input_tokens": 2000,
-        "output_tokens": 200,
+        "input_tokens": 20000,
+        "output_tokens": 2000,  # enough output for the run-level spread
         "input_status": "available",
         "incomplete": True,
         "assessments": [],

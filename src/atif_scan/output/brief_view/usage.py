@@ -3,6 +3,7 @@ rates, estimates said as such), plus walltime."""
 
 from __future__ import annotations
 
+import textwrap
 from typing import TYPE_CHECKING
 
 from ..document import COMPACTED_USAGE_EXPLANATION
@@ -15,9 +16,11 @@ from .evidence import USAGE_CHECKS
 from .words import (
     CENT,
     INFO,
+    LABEL,
     OK,
     RATIO_BASIS,
     WARN,
+    WIDTH,
     Lines,
     _present,
     _tally,
@@ -89,7 +92,7 @@ def _steps_vs_totals(u: Doc) -> Lines:
 
 BASIS = {
     "run": "run records",
-    "run_observed": "observed run counts (not complete totals)",
+    "run_observed": "observed lower bounds (some calls without usage)",
     "final_metrics": "trajectory totals",
     "steps": "step sums",
     "steps_partial": "partial step sums",
@@ -110,20 +113,66 @@ def _stream_retry_reason(explained: int, calls: int) -> str:
     if not explained:
         return ""
     share = "" if explained >= calls else f" ({explained:,} of them)"
-    return f"; fast-agent also records provider retries{share}"
+    return (
+        f"; fast-agent also records provider retries{share} (provider/transport events, not"
+        " model behaviour)"
+    )
 
 
 def _stream_retries(b: Doc) -> Lines:
-    """Provider retry events, without assuming stream failure or absent usage."""
+    """Provider retry events, without assuming stream failure or absent usage. Trials
+    whose retried calls also lack usage are said once, by _missed_calls."""
     sr = (b.get("usage") or {}).get("stream_retries") or {}
-    if not sr.get("trials"):
+    # Trials with calls missing usage are described once, with their retries, above.
+    covered = set((b.get("missed_calls") or {}).get("ids") or [])
+    trials = len(set(sr.get("ids") or []) - covered) if sr.get("ids") else sr.get("trials", 0)
+    if not trials:
         return []
-    rewarded = f" ({sr['rewarded']:,} rewarded)" if sr["rewarded"] else ""
     return [
-        f"{INFO} {plural(sr['trials'], 'trial')}{rewarded} had fast-agent provider"
-        f" failures: {plural(sr['failed_attempts'], 'failed attempt')} retried by the"
-        " harness (provider/transport events, not model behaviour). Retry markers alone"
-        " do not establish missing usage or missing agent history"
+        f"{INFO} {plural(trials, 'other trial')} had fast-agent provider failures retried by"
+        " the harness (provider/transport events, not model behaviour); their usage is"
+        " recorded"
+        if covered
+        else f"{INFO} {plural(trials, 'trial')}"
+        + (f" ({sr['rewarded']:,} rewarded)" if sr["rewarded"] else "")
+        + f" had fast-agent provider failures: {plural(sr['failed_attempts'], 'failed attempt')}"
+        " retried by the harness (provider/transport events, not model behaviour). Retry"
+        " markers alone do not establish missing usage or missing agent history"
+    ]
+
+
+def _outcome(rewarded: int, errored: int, trials: int) -> str:
+    """'(4 rewarded, none errored)'-style context for a group of trials."""
+    parts = [f"{rewarded:,} rewarded" if rewarded < trials else "all rewarded"]
+    parts.append(f"{errored:,} errored" if errored else "none errored")
+    return f" ({', '.join(parts)})"
+
+
+def _status_text(statuses: list[int]) -> str:
+    return f" (HTTP {', '.join(str(s) for s in statuses)})" if statuses else ""
+
+
+def _missed_calls(b: Doc) -> Lines:
+    """Trials that kept observed counts because some model calls have no usage: what
+    is missing and why, in one line."""
+    mc = (b.get("missed_calls") or {}).get("observed") or {}
+    if not mc.get("trials"):
+        return []
+    calls, before = mc["calls"], mc["before_output"]
+    who = f"{plural(mc['trials'], 'trial')}{_outcome(mc['rewarded'], mc['errored'], mc['trials'])}"
+    if before == calls:
+        why = (
+            f": the provider failed {'it' if calls == 1 else 'them'} before any output"
+            f"{_status_text(mc['statuses'])} and the harness retried"
+        )
+    elif before:
+        why = f"; {before:,} failed before any output{_status_text(mc['statuses'])}"
+    else:
+        why = ""
+    each = " each" if calls == mc["trials"] and calls > 1 else ""
+    count_text = "1 model call" if each else plural(calls, "model call")
+    return [
+        f"{WARN} {who} miss usage for {count_text}{each}{why}; their token totals are lower bounds"
     ]
 
 
@@ -131,8 +180,9 @@ def _usage_gaps(b: Doc) -> Lines:
     pu = (b.get("usage") or {}).get("partial") or {}
     um = b.get("unmetered_work") or {"trials": 0}
     texts = []
-    observed = (b.get("usage") or {}).get("observed_accounting", 0)
-    if observed:
+    described = ((b.get("missed_calls") or {}).get("observed") or {}).get("trials", 0)
+    observed = (b.get("usage") or {}).get("observed_accounting", 0) - described
+    if observed > 0:
         texts.append(
             f"{WARN} {plural(observed, 'trial')} retain observed run counts, not complete"
             " totals; total provider usage and billing are not established"
@@ -173,11 +223,24 @@ def _usage_gaps(b: Doc) -> Lines:
 
 
 def _text_ratio(b: Doc) -> Lines:
-    return [
+    texts = [
         f"{INFO} visible agent text per output token: median {r['median']:.2f} characters"
         f"{spread(r)} over {plural(r['traces'], 'trace')}, {RATIO_BASIS[basis]}"
         for basis, r in (b.get("output_ratio") or {}).items()
     ]
+    out = b.get("output_ratio_left_out") or {}
+    if texts and out.get("trials"):
+        errored = out.get("errored") or {}
+        why = (
+            f"; {sum(errored.values()):,} of them errored: {counts(errored.items())}"
+            if errored
+            else ""
+        )
+        texts.append(
+            f"{INFO} not in that spread: {plural(out['trials'], 'trial')} with little or no"
+            f" agent output (under {out['min_tokens']:,} output tokens){why}"
+        )
+    return texts
 
 
 def _usage_title(b: Doc, check: str) -> str:
@@ -243,7 +306,8 @@ def tokens_section(b: Doc) -> Lines:
     if not u.get("recorded_vs_trajectory") and not u.get("steps_vs_totals"):
         checks.append(f"{INFO} no second record of the tokens to check them against")
     checks += _token_finding_texts(b, n)
-    return wrap("TOKENS", [head, *checks, *_usage_gaps(b), *_stream_retries(b), *_text_ratio(b)])
+    gaps = [*_missed_calls(b), *_usage_gaps(b), *_stream_retries(b)]
+    return wrap("TOKENS", [head, *checks, *gaps, *_text_ratio(b)])
 
 
 def _rates_text(ce: Doc) -> str:
@@ -255,58 +319,12 @@ def _rates_text(ce: Doc) -> str:
 
 
 def _cost_head(b: Doc) -> Lines:
-    """The headline: what was recorded, and what the unrecorded part adds."""
-    ce, n = b["cost_estimate"], _present(b)
+    """The recorded cost when nothing is attributed beyond it (else: the ledger)."""
     total = b["overview"]["cost"]["total_usd"]
-    with_usage = n - ce["no_usage"]
-    scoped = (b.get("scoped_costs") or {}).get("trials")
-    if not ce["unpriced"]:
-        qualifier = (
-            "final bills; actual bill unknown for observed-cost trials"
-            if scoped
-            else f"· {OK} every trial with usage has a cost"
-        )
-        return [f"{usd(total)} recorded {qualifier}"]
-    source = ce.get("price_source")
-    if ce["unpriced"] == with_usage and not total:
-        return _no_cost_recorded(ce, source)
-    head = f"{usd(total)} recorded" + _other_model_spend(b)
-    missing = (
-        f"{WARN} {plural(ce['unpriced'], 'trial')} ({pct(ce['unpriced'], n)}) with usage but"
-        " no cost"
-    )
-    if ce["estimate_usd"] is None:
-        return [head, missing + _unestimated(ce)]
-    whole = total + ce["estimate_usd"]
-    how = "at the run's declared prices" if source == "declared" else ce["method"]
-    error = (
-        f", median error {usd(ce['median_abs_error_usd'])} per trial"
-        if ce.get("median_abs_error_usd") is not None
-        else ""
-    )
-    scope = "excluding observed-cost trials" if scoped else "in all"
+    if (b.get("scoped_costs") or {}).get("trials"):
+        return [f"{usd(total)} recorded final bills; actual bill unknown for observed-cost trials"]
     return [
-        head,
-        f"{missing}: est. +{usd(ce['estimate_usd'])} ({how}{error}) → est. {usd(whole)} {scope}",
-    ]
-
-
-def _no_cost_recorded(ce: Doc, source: str | None) -> Lines:
-    """No trial recorded a cost: priced at the declared or given rates, if any."""
-    if source == "declared":
-        return [
-            f"{usd(ce['estimate_usd'])} at the run's declared prices (run.json); no trial"
-            " recorded a cost",
-            f"{INFO} {_rates_text(ce)}",
-        ]
-    if source == "given":
-        return [
-            f"est. {usd(ce['estimate_usd'])} at the given --price; no trial recorded a cost",
-            f"{INFO} {_rates_text(ce)}",
-        ]
-    return [
-        f"{WARN} no trial recorded a cost; price the tokens with --price U,C,O"
-        " ($ per M uncached input, cached input, output)"
+        f"{usd(total)} recorded{_other_model_spend(b)} · {OK} every trial with usage has a cost"
     ]
 
 
@@ -333,43 +351,77 @@ def _other_model_spend(b: Doc) -> str:
     return f", {usd(mm['cost_usd'])} of it on another model"
 
 
-def _last_call_cost(b: Doc) -> Lines:
-    lc = b.get("last_call_totals") or {}
-    if not lc.get("trials"):
+LEDGER_LABELS = {
+    "recorded": "recorded cost",
+    "observed_estimate": "recorded tokens at list prices (the harness's estimate, not a bill)",
+    "unpriced": "tokens without a recorded cost",
+    "last_call": "step tokens beyond totals that cover only the last model call",
+    "calls_without_usage": "model calls without recorded usage",
+    "failed_before_output": "model calls without usage that failed before any output{status}:"
+    " likely unbilled",
+    "unmetered": "work with no usage recorded at all",
+}
+
+
+def _ledger_amount(row: Doc) -> str:
+    if row["usd"] is None:
+        return "—"
+    return ("≤" if row["bound"] else "") + usd(row["usd"])
+
+
+def _ledger_method(row: Doc) -> str:
+    method = row.get("method")
+    if not method or row["kind"] in ("recorded", "observed_estimate"):
+        return ""
+    # estimates.py words unestimated methods "not estimated: <why>".
+    why = method.removeprefix("not estimated: ")
+    if row["usd"] is None:
+        return f" (not estimated: {why})"
+    error = row.get("median_abs_error_usd")
+    return (
+        f" ({why}" + (f", median error {usd(error)} per trial" if error is not None else "") + ")"
+    )
+
+
+LEDGER_AMOUNT = 10  # "≤$1,234.56"
+LEDGER_TEXT = WIDTH - LABEL - LEDGER_AMOUNT - 4  # sign, spaces
+
+
+def _ledger_row(sign: str, amount: str, text: str) -> Lines:
+    """One pre-formatted ledger row: the amount right-aligned, the text wrapped under
+    itself (pre-formatted lines are kept as they are by `wrap`)."""
+    body = textwrap.wrap(text, LEDGER_TEXT, break_long_words=False) or [""]
+    pad = " " * (LEDGER_AMOUNT + 4)
+    return [f"  {sign} {amount:>{LEDGER_AMOUNT}}  {body[0]}", *(f" {pad} {t}" for t in body[1:])]
+
+
+def _ledger_lines(b: Doc) -> Lines:
+    """Recorded amounts, then each addition with why it's attributed, then the total."""
+    ledger = b.get("cost_ledger") or {}
+    rows = ledger.get("rows") or []
+    if not ledger.get("shown"):
         return []
-    who = f"{plural(lc['trials'], 'trial')} whose totals cover only their last model call"
-    if lc.get("estimate_usd") is None:
-        return [f"{WARN} the {who} undercount, not estimated ({lc.get('method')})"]
-    return [
-        f"{WARN} est. +{usd(lc['estimate_usd'])} from the step metrics of {who}, not in the"
-        f" total ({lc['method']})"
-    ]
-
-
-def _gap_costs(b: Doc) -> Lines:
-    pu = (b.get("usage") or {}).get("partial") or {}
-    um = b.get("unmetered_work") or {"trials": 0}
-    texts = _last_call_cost(b)
-    if pu.get("trials") and pu.get("estimate_usd") is not None:
-        texts.append(
-            f"{INFO} est. +{usd(pu['estimate_usd'])} for the"
-            f" {plural(pu['calls_without_usage'], 'LLM call')} without usage (each trial's own"
-            " cost per call)"
+    status = _status_text((b.get("missed_calls") or {}).get("statuses") or [])
+    lines: Lines = []
+    for n, row in enumerate(rows):
+        label = LEDGER_LABELS[row["kind"]].format(status=status)
+        text = (
+            "no cost recorded"
+            if row["kind"] == "recorded" and not row["trials"]
+            else f"{plural(row['trials'], 'trial')}: {label}{_ledger_method(row)}"
         )
-    if um["trials"]:
-        if um["estimate_usd"] is not None:
-            texts.append(
-                f"{WARN} est. +{usd(um['estimate_usd'])} for the"
-                f" {plural(um['trials'], 'trial')} without usage, not in the total (rough:"
-                f" {um['method']}, median error {usd(um['median_abs_error_usd'])} per trial)"
-            )
-        else:
-            texts.append(
-                f"{WARN} the {plural(um['trials'], 'trial')} without usage"
-                f" {'is' if um['trials'] == 1 else 'are'}n't in the total"
-                f" ({um['method']})"
-            )
-    return texts
+        lines += _ledger_row(" " if n < ledger["base_rows"] else "+", _ledger_amount(row), text)
+    total, upper = ledger["total_usd"], ledger["upper_usd"]
+    if not ledger["complete"] and not total:
+        return [*lines, *_ledger_row("=", "—", "total unknown: nothing could be priced")]
+    lines += _ledger_row(
+        "=",
+        ("" if ledger["complete"] else "≥") + usd(total),
+        "estimated total"
+        + (f", at most {usd(upper)}" if upper > total else "")
+        + ("" if ledger["complete"] else "; some additions aren't estimated"),
+    )
+    return lines
 
 
 def _price_checks(b: Doc) -> Lines:
@@ -426,26 +478,63 @@ def walltime_section(b: Doc) -> Lines:
     )
 
 
-def _scoped_cost_notes(b: Doc) -> Lines:
-    scoped = b.get("scoped_costs") or {}
-    if not scoped.get("trials"):
+def _unpriced_headline(b: Doc) -> str:
+    ce, n = b["cost_estimate"], _present(b)
+    if ce["unpriced"] == n - ce["no_usage"] and not b["overview"]["cost"]["total_usd"]:
+        return f"{WARN} no trial recorded a cost"
+    share = pct(ce["unpriced"], n)
+    return f"{WARN} {plural(ce['unpriced'], 'trial')} ({share}) with usage but no cost"
+
+
+def _cost_headline(b: Doc) -> str:
+    """What the recorded amounts are, above the ledger."""
+    scoped = (b.get("scoped_costs") or {}).get("trials")
+    if scoped and not b["overview"]["cost"]["total_usd"]:
+        return f"{WARN} no trial records a billed cost: the amounts below are estimates"
+    if scoped:
+        return f"{WARN} {plural(scoped, 'trial')} record only observed amounts, not bills"
+    if b["cost_estimate"]["unpriced"]:
+        return _unpriced_headline(b)
+    return f"{OK} every trial with usage has a cost"
+
+
+def _pricing_notes(ce: Doc) -> Lines:
+    """The rates unpriced tokens were priced at, or how to price them."""
+    if not ce["unpriced"]:
         return []
-    notes = [
-        f"{WARN} actual bill unknown for {plural(scoped['trials'], 'trial')};"
-        " observed amounts are not final bills"
-    ]
-    estimate = scoped.get("estimated_observed_cost_usd")
-    reported = scoped.get("reported_cost_usd")
-    if estimate is not None:
-        notes.append(
-            f"{usd(estimate)} observed price-derived estimate (excludes unmetered attempts)"
-        )
-    if reported is not None:
-        notes.append(f"{usd(reported)} partial reported observed cost (not a final bill)")
-    if estimate is not None and reported is not None:
-        notes.append(f"{INFO} scoped amounts may overlap; not added together")
-    return notes
+    if ce.get("price_source") and ce.get("rates_per_mtok"):
+        return [f"{INFO} {_rates_text(ce)}"]
+    if ce["estimate_usd"] is None and ce.get("rates_per_mtok") is None:
+        return [
+            f"{INFO} price the tokens with --price U,C,O ($ per M uncached input, cached input,"
+            " output)"
+            + (f"; unpriced tokens{_unestimated(ce)}" if ce.get("priced_other_model") else "")
+        ]
+    return []
+
+
+def _cost_status(b: Doc) -> Lines:
+    texts = [_cost_headline(b)]
+    if other := _other_model_spend(b):
+        texts.append(f"{INFO} recorded cost{other}")
+    return texts + _reported_note(b) + _pricing_notes(b["cost_estimate"])
+
+
+def _reported_note(b: Doc) -> Lines:
+    """A harness-reported partial cost: shown, never added to the estimate it may overlap."""
+    scoped = b.get("scoped_costs") or {}
+    if (reported := scoped.get("reported_cost_usd")) is None:
+        return []
+    overlap = (
+        "; it may overlap the estimate, so it isn't added"
+        if scoped.get("estimated_observed_cost_usd") is not None
+        else ""
+    )
+    return [f"{INFO} {usd(reported)} partial reported observed cost (not a final bill{overlap})"]
 
 
 def cost_section(b: Doc) -> Lines:
-    return wrap("COST", [*_cost_head(b), *_scoped_cost_notes(b), *_gap_costs(b), *_price_checks(b)])
+    """The recorded cost, or a ledger of recorded amounts and attributed additions."""
+    if ledger := _ledger_lines(b):
+        return wrap("COST", [*_cost_status(b), *ledger, *_price_checks(b)])
+    return wrap("COST", [*_cost_head(b), *_reported_note(b), *_price_checks(b)])

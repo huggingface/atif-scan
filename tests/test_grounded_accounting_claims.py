@@ -50,7 +50,9 @@ def test_recorded_tokens_with_unknown_ratio_are_not_missing_usage():
     assert trace.usage is not None
     assert trace.usage.completion_tokens == 20
     assert output_token_ratio(trace).status is Status.UNKNOWN
-    text = " ".join(render(report_row()).split())
+    row = report_row()
+    row["output_tokens"] = 1000  # enough output for the run-level spread
+    text = " ".join(render(row).split())
     assert "lower bound cannot be checked" in text
     assert "read low by design" not in text
 

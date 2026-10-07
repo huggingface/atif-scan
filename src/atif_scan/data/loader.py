@@ -653,6 +653,7 @@ def parse_trace(value: object) -> Trace:
     tokens = as_object(as_object(metrics).get("extra")).get("total_tool_use_tokens")
     per_step, unmetered, partial_kinds = step_usage(raw_steps)
     retry_steps, retry_attempts, calls_complete = stream_retries(raw_steps, metrics)
+    before_output, retry_statuses = retry_outcomes(raw_steps)
     last, metered, rising = last_call(raw_steps)
     return Trace(
         version,
@@ -677,6 +678,8 @@ def parse_trace(value: object) -> Trace:
         step_usage_rising=rising,
         stream_retry_steps=retry_steps,
         stream_retry_attempts=retry_attempts,
+        retry_before_output=before_output,
+        retry_statuses=retry_statuses,
         usage_calls_complete=calls_complete,
         root_usage=root_usage(value),
     )
@@ -988,6 +991,44 @@ def stream_retries(raw_steps: list[object], final_metrics: object) -> tuple[int,
             attempts += tries - 1
     complete = as_object(as_object(final_metrics).get("extra")).get("llm_usage_calls_complete")
     return steps, attempts, complete if isinstance(complete, bool) else None
+
+
+# A provider refusal recorded by the client: "Error code: 503 - {...}" (OpenAI/Anthropic
+# SDKs). Only the status number is kept, never the message.
+HTTP_STATUS = re.compile(r"\AError code: ([1-5]\d\d)\b")
+HTTP_ERROR_MIN = 400
+
+
+def _retry_status(retry: Mapping[str, object]) -> int | None:
+    match = HTTP_STATUS.match(as_str(retry.get("error_message")) or "")
+    return int(match.group(1)) if match else None
+
+
+def _before_output(retry: Mapping[str, object]) -> bool:
+    """The failed attempt returned nothing: no stream event arrived, or the provider
+    refused the request with an HTTP error status before opening a stream. A count of
+    events (even one) or an unknown count with no status is not this."""
+    events = retry.get("stream_events_received")
+    status = _retry_status(retry)
+    return events == 0 or (events is None and status is not None and status >= HTTP_ERROR_MIN)
+
+
+def retry_outcomes(raw_steps: list[object]) -> tuple[int, tuple[int, ...]]:
+    """(fast-agent retried attempts that failed before any output, the HTTP statuses
+    of all failed attempts that recorded one, sorted and unique)."""
+    before, statuses = 0, set[int]()
+    for raw in raw_steps:
+        if not is_object(raw) or raw.get("source") != "agent":
+            continue
+        retry = as_object(as_object(raw.get("extra")).get("retry"))
+        if as_str(retry.get("schema")) != FAST_AGENT_RETRY_SCHEMA:
+            continue
+        for attempt in as_list(retry.get("retries")):
+            record = as_object(attempt)
+            before += _before_output(record)
+            if (status := _retry_status(record)) is not None:
+                statuses.add(status)
+    return before, tuple(sorted(statuses))
 
 
 # How the report names each step token kind (usage fields: input, output, cache).

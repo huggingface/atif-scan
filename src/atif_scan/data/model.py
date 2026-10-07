@@ -285,6 +285,10 @@ class Trace:
     # harness events, not proof that usage or agent history is missing.
     stream_retry_steps: int = 0
     stream_retry_attempts: int = 0
+    # Of those retried attempts, how many failed before any output (no stream event, or
+    # an HTTP error status before a stream opened), and the HTTP statuses recorded.
+    retry_before_output: int = 0
+    retry_statuses: tuple[int, ...] = ()
     # The harness's recorded termination error type (`extra.termination.error_type`, a
     # label-safe code such as ResponsesWebSocketError); None when absent or not an error.
     termination_error: str | None = None

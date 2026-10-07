@@ -25,7 +25,10 @@ from .estimates import (
     Pricing,
     choose_pricing,
     cost_estimate,
+    cost_ledger,
     last_call_totals,
+    ledger_additions,
+    missed_calls,
     missing_activity,
     partial_usage,
     price_check,
@@ -87,12 +90,39 @@ def reasoning_exposure(items: Sequence[Doc]) -> dict[str, int]:
     return {k: counts[k] for k in REASONING_LABELS if counts[k]}
 
 
+# The run-level spread leaves out traces with less output than this: a ratio over a few
+# dozen tokens (a refusal, a safety stop) says nothing about how the run's text was
+# metered. The per-trace check still judges them.
+MIN_RATIO_TOKENS = 1000
+
+
+def _ratio_counted(item: Doc) -> bool:
+    return (count(item.get("output_tokens")) or 0) >= MIN_RATIO_TOKENS
+
+
+def ratio_left_out(items: Sequence[Doc]) -> Doc:
+    """Scanned trials outside the ratio spread (little or no agent output), with the
+    error types of those that errored."""
+    rows = [
+        i
+        for i in items
+        if i.get("input_status") == "available"
+        and not (i.get("chars_per_output_token") is not None and _ratio_counted(i))
+    ]
+    return {
+        "trials": len(rows),
+        "min_tokens": MIN_RATIO_TOKENS,
+        "errored": dict(Counter(str(i["error_type"]) for i in rows if i.get("error_type"))),
+    }
+
+
 def output_ratios(items: Sequence[Doc]) -> Doc | None:
-    """Run-level spread of authored characters per completion token, per basis."""
+    """Run-level spread of authored characters per completion token, per basis, over
+    traces with at least MIN_RATIO_TOKENS output tokens."""
     by_basis: dict[str, list[float]] = {}
     for item in items:
         value, basis = item.get("chars_per_output_token"), as_str(item.get("output_ratio_basis"))
-        if isinstance(value, int | float) and basis in RATIO_BASIS:
+        if isinstance(value, int | float) and basis in RATIO_BASIS and _ratio_counted(item):
             by_basis.setdefault(basis, []).append(float(value))
     if not by_basis:
         return None
@@ -367,6 +397,34 @@ def _scoped_costs(items: Sequence[Doc]) -> Doc:
     return result
 
 
+def _costs(items: Sequence[Doc], ov: Doc, pricing: Pricing, other_model: frozenset[str]) -> Doc:
+    """The cost estimates, each addition the recorded amounts don't cover, and the
+    ledger that lists them with their total."""
+    ce = cost_estimate(items, pricing, other_model)
+    scoped = _scoped_costs(items)
+    unmetered = unmetered_work(items, pricing, other_model)
+    # Totals that are only the last call's usage: what the steps add, priced.
+    last_call = last_call_totals(items, pricing)
+    # Calls without recorded usage in trials that kept the rest (observed lower bounds,
+    # step sums without totals).
+    missed = missed_calls(items, pricing)
+    recorded = (
+        float((ov.get("cost") or {}).get("total_usd") or 0.0),
+        sum(1 for i in items if i.get("cost_usd")),
+    )
+    observed = (scoped.get("estimated_observed_cost_usd"), scoped["trials"])
+    return {
+        "cost_estimate": ce,
+        "scoped_costs": scoped,
+        "unmetered_work": unmetered,
+        "last_call_totals": last_call,
+        "missed_calls": missed,
+        "cost_ledger": cost_ledger(
+            recorded, observed, ledger_additions(ce, last_call, missed, unmetered)
+        ),
+    }
+
+
 def _usage(items: Sequence[Doc], pricing: Pricing) -> Doc:
     """Summarise recorded token evidence separately from cost availability."""
     with_tokens = [i for i in items if _has_tokens(i)]
@@ -436,11 +494,7 @@ def brief(
         "agent_rows": _agent_rows(items),
         "overview": ov,
         "dq_threshold": dq,
-        "cost_estimate": cost_estimate(items, pricing, other_model),
-        "scoped_costs": _scoped_costs(items),
-        "unmetered_work": unmetered_work(items, pricing, other_model),
-        # Totals that are only the last call's usage: what the steps add, priced.
-        "last_call_totals": last_call_totals(items, pricing),
+        **_costs(items, ov, pricing, other_model),
         "usage": _usage(items, pricing),
         "cost_integrity": {
             "declared_prices": declared,
@@ -452,6 +506,7 @@ def brief(
         "tasks_known": sum(1 for i in items if i.get("task")),
         "missing_activity": missing_activity(items),
         "output_ratio": output_ratios(items),
+        "output_ratio_left_out": ratio_left_out(items),
         "reasoning": reasoning_exposure(items),
         "recording": recording,
         # Harness context compactions with the history kept in the file (fast-agent).

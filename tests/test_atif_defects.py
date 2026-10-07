@@ -262,7 +262,14 @@ def test_output_ratio_spread_is_consistent_for_small_and_large_runs():
     from atif_scan.output.brief import output_ratios
 
     ratios = output_ratios(
-        [{"chars_per_output_token": v, "output_ratio_basis": "visible_only"} for v in (1.83, 0.6)]
+        [
+            {
+                "chars_per_output_token": v,
+                "output_ratio_basis": "visible_only",
+                "output_tokens": 5000,
+            }
+            for v in (1.83, 0.6)
+        ]
     )
     assert ratios is not None
     two = ratios["visible_only"]
@@ -272,7 +279,11 @@ def test_output_ratio_spread_is_consistent_for_small_and_large_runs():
 
     ratios = output_ratios(
         [
-            {"chars_per_output_token": float(v), "output_ratio_basis": "answer_only"}
+            {
+                "chars_per_output_token": float(v),
+                "output_ratio_basis": "answer_only",
+                "output_tokens": 5000,
+            }
             for v in range(21)
         ]
     )

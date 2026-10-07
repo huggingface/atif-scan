@@ -25,6 +25,13 @@ Both are fitted on the run's own data and stay estimates; the brief labels them 
 - totals covering only the last call: trials whose final_metrics totals are one model
   call's usage (integrity.totals_are_last_call) undercount by what their other metered
   steps used; that difference (step sums minus totals) is priced at the run's rates.
+- missed calls: trials whose model calls include some without recorded usage (a
+  harness that kept observed lower bounds, or step sums without totals) are priced at
+  each trial's own cost per metered call. A call the provider failed before any output
+  (fast-agent retry records) is likely unbilled: its share is an upper bound only.
+- the ledger (`cost_ledger`) lists the recorded amounts and each of these additions as
+  rows (trials, amount or bound, method) and their total, so every attributed extra
+  says why it is there.
 - declared prices: a run that declares its token prices (harbor-hf's run.json) is priced
   at them instead of a fit, and any cost it also recorded is checked against them.
 """
@@ -40,7 +47,7 @@ if TYPE_CHECKING:
     from ..data.jsonval import Doc
 
 from ..data.accounting import has_scoped_cost
-from ..data.jsonval import count
+from ..data.jsonval import as_object, count, number
 
 MIN_PRICED = 20
 MIN_REFERENCES = 10
@@ -54,7 +61,10 @@ UPPER_QUANTILE = 0.9
 # $/M tokens, in TOKEN_KINDS order: (uncached input, cached input, output).
 Rates = tuple[float, float, float]
 TOKEN_KINDS = ("uncached_input", "cached_input", "output")
-PRICE_SOURCES = {"given": "given --price", "declared": "at the run's declared prices, run.json"}
+PRICE_SOURCES = {
+    "given": "at the given --price",
+    "declared": "at the run's declared prices, run.json",
+}
 
 
 def _solve(a: list[list[float]], b: list[float]) -> list[float] | None:
@@ -352,6 +362,178 @@ def last_call_totals(items: Sequence[Doc], pricing: Pricing | None = None) -> Do
         "tokens": _token_totals([row for _, row in rows]),
         "estimate_usd": round(sum(c or 0.0 for c in costs), 2) if priced else None,
         "method": pricing.method if rows else None,
+    }
+
+
+MISSED_BASES = ("run_observed", "steps_partial")
+
+
+def _trial_amount(item: Doc, pricing: Pricing) -> float | None:
+    """A trial's cost for per-call pricing: recorded (or at known rates), else the
+    harness's own price-derived estimate of what it observed."""
+    cost = pricing.trial_cost(item)
+    if cost is None:
+        cost = number(as_object(item.get("accounting")).get("estimated_observed_cost_usd"), 0)
+    return cost
+
+
+def _quiet(item: Doc) -> int:
+    """Calls without usage that the harness recorded failing before any output."""
+    missing = count(item.get("calls_without_usage")) or 0
+    return min(count(item.get("retry_before_output")) or 0, missing)
+
+
+def _missed_amounts(item: Doc, pricing: Pricing) -> tuple[float, float] | None:
+    """(estimate for missed calls, upper bound for those that failed before output) at
+    the trial's own cost per metered call; None when it can't be priced."""
+    missing = count(item.get("calls_without_usage")) or 0
+    metered = (count(item.get("llm_calls")) or 0) - missing
+    cost = _trial_amount(item, pricing)
+    if cost is None or metered <= 0:
+        return None
+    quiet = _quiet(item)
+    per_call = cost / metered
+    return per_call * (missing - quiet), per_call * quiet
+
+
+def _missed_group(rows: Sequence[Doc]) -> Doc:
+    """Who and what: trials, outcomes, calls without usage, how many failed before
+    any output, and the HTTP statuses the failed attempts recorded."""
+    return {
+        "trials": len(rows),
+        "ids": [i["input_id"] for i in rows],
+        "rewarded": sum(1 for i in rows if (i.get("reward") or 0) > 0),
+        "errored": sum(1 for i in rows if i.get("error_type")),
+        "calls": sum(i["calls_without_usage"] for i in rows),
+        "before_output": sum(_quiet(i) for i in rows),
+        # Trials per ledger row: with calls lost otherwise, with calls failed before output.
+        "trials_other": sum(1 for i in rows if i["calls_without_usage"] > _quiet(i)),
+        "trials_before_output": sum(1 for i in rows if _quiet(i)),
+        "statuses": sorted({s for i in rows for s in i.get("retry_statuses") or []}),
+    }
+
+
+def missed_calls(items: Sequence[Doc], pricing: Pricing | None = None) -> Doc:
+    """Trials with some model calls whose usage wasn't recorded (observed lower bounds,
+    or step sums without totals): the group (`_missed_group`), the observed-bound trials
+    on their own (`observed`, what TOKENS describes; step sums have their own line), and
+    the estimate (other calls) and bound (failed-before-output calls) at each trial's own
+    cost per call. Amounts are None unless every such trial could be priced."""
+    pricing = pricing or Pricing()
+    rows = [
+        i
+        for i in items
+        if (i.get("calls_without_usage") or 0) > 0 and i.get("usage_basis") in MISSED_BASES
+    ]
+    amounts = [_missed_amounts(i, pricing) for i in rows]
+    priced = bool(rows) and all(a is not None for a in amounts)
+    known = [a for a in amounts if a is not None]
+    return {
+        **_missed_group(rows),
+        "observed": _missed_group([i for i in rows if i["usage_basis"] == "run_observed"]),
+        "estimate_usd": round(sum(e for e, _ in known), 4) if priced else None,
+        "bound_usd": round(sum(b for _, b in known), 4) if priced else None,
+    }
+
+
+def _ledger_row(
+    kind: str,
+    trials: int,
+    amount: float | None,
+    method: str | None = None,
+    *,
+    bound: bool = False,
+    error: float | None = None,
+) -> Doc:
+    """`error`: a fitted estimate's median absolute error per trial."""
+    return {
+        "kind": kind,
+        "trials": trials,
+        "usd": amount,
+        "bound": bound,
+        "method": method,
+        "median_abs_error_usd": error,
+    }
+
+
+def ledger_additions(ce: Doc, last_call: Doc, missed: Doc, unmetered: Doc) -> list[Doc]:
+    """One row per kind of cost the recorded amounts don't cover, saying how it was
+    estimated (or why it wasn't)."""
+    rows = []
+    if ce.get("unpriced"):
+        rows.append(
+            _ledger_row(
+                "unpriced",
+                ce["unpriced"],
+                ce["estimate_usd"],
+                ce["method"],
+                error=ce.get("median_abs_error_usd"),
+            )
+        )
+    if last_call.get("trials"):
+        rows.append(
+            _ledger_row(
+                "last_call", last_call["trials"], last_call["estimate_usd"], last_call["method"]
+            )
+        )
+    if missed.get("trials"):
+        before, calls = missed["before_output"], missed["calls"]
+        if calls > before:
+            rows.append(
+                _ledger_row(
+                    "calls_without_usage",
+                    missed["trials_other"],
+                    missed["estimate_usd"],
+                    "each trial's own cost per call",
+                )
+            )
+        if before:
+            rows.append(
+                _ledger_row(
+                    "failed_before_output",
+                    missed["trials_before_output"],
+                    missed["bound_usd"],
+                    "at most each trial's own cost per call",
+                    bound=True,
+                )
+            )
+    if unmetered.get("trials"):
+        rows.append(
+            _ledger_row(
+                "unmetered",
+                unmetered["trials"],
+                unmetered["estimate_usd"],
+                unmetered["method"],
+                error=unmetered.get("median_abs_error_usd"),
+            )
+        )
+    return rows
+
+
+def cost_ledger(
+    recorded: tuple[float, int], observed: tuple[float | None, int], additions: list[Doc]
+) -> Doc:
+    """Recorded amounts (cost, then the harness's observed price-derived estimate) and
+    each attributed addition as rows, with their total. `total_usd` adds estimates;
+    `upper_usd` also adds bounds; `complete` is False when an addition isn't estimated
+    (the total is then a lower bound)."""
+    base = []
+    if observed[0] is not None and observed[1]:
+        base.append(_ledger_row("observed_estimate", observed[1], round(observed[0], 2)))
+    if recorded[1] or not base:  # with nothing recorded, the ledger starts from $0
+        base.insert(0, _ledger_row("recorded", recorded[1], round(recorded[0], 2)))
+    rows = base + additions
+    total = sum(r["usd"] or 0.0 for r in rows if not r["bound"])
+    upper = total + sum(r["usd"] or 0.0 for r in rows if r["bound"])
+    return {
+        "rows": rows,
+        "base_rows": len(base),
+        # Worth showing: something beyond the recorded cost (an addition, or the
+        # harness's own estimate where nothing was billed).
+        "shown": bool(additions) or any(r["kind"] == "observed_estimate" for r in base),
+        "total_usd": round(total, 2),
+        "upper_usd": round(upper, 2),
+        "complete": all(r["usd"] is not None for r in additions),
     }
 
 

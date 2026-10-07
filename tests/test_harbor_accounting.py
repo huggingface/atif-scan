@@ -197,7 +197,8 @@ def test_local_scan_and_cached_rescan_reread_accounting(tmp_path, capsys):
     assert item["cost_usd"] is None
     text = brief_text(brief(doc))
     assert "not complete" in text
-    assert "not final bills" in text
+    assert "no trial records a billed cost" in text
+    assert "the harness's estimate, not a bill" in " ".join(text.split())
     assert "SYNTHETIC_PRIVATE_VALUE" not in json.dumps(doc)
     # Fresh result facts win even when the trajectory scan is cached.
     path = run / "job" / "alpha__t0" / "result.json"
@@ -243,12 +244,16 @@ def test_scoped_amounts_display_without_refitting(tmp_path, capsys, amount, sour
         summary = brief(doc, price=price)
         text = " ".join(brief_text(summary).split())
         assert (
-            f"${amount:,.2f} observed price-derived estimate (excludes unmetered attempts)" in text
+            f"${amount:,.2f} 1 trial: recorded tokens at list prices (the harness's estimate,"
+            " not a bill)" in text
         )
-        assert "$2.50 partial reported observed cost (not a final bill)" in text
-        assert "actual bill unknown" in text
+        assert (
+            "$2.50 partial reported observed cost (not a final bill; it may overlap the"
+            " estimate, so it isn't added)" in text
+        )
+        assert "no trial records a billed cost" in text
         assert "every trial with usage has a cost" not in text
-        assert "not added together" in text
+        assert f"= ${amount:,.2f} estimated total" in text
         assert summary["cost_estimate"]["unpriced"] == 0
         assert summary["cost_estimate"]["estimate_usd"] is None
         assert summary["overview"]["cost"]["total_usd"] == 0
@@ -284,5 +289,5 @@ def test_scoped_sums_keep_reported_and_estimated_amounts_separate(tmp_path, caps
         "reported_cost_usd": 0.75,
     }
     text = " ".join(brief_text(summary).split())
-    assert "$3.75 observed price-derived estimate" in text
+    assert "$3.75 2 trials: recorded tokens at list prices" in text
     assert "$0.75 partial reported observed cost" in text

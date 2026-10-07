@@ -135,6 +135,8 @@ TRACE_FACTS = (
     "usage_basis",
     "calls_without_usage",
     "stream_retry_attempts",
+    "retry_before_output",
+    "retry_statuses",
     "termination_error",
     "final_stop_reason",
     "step_kinds_partial",
@@ -256,6 +258,8 @@ def trace_facts(trace: Trace | None) -> Doc:
         # Explicit fast-agent provider retries are harness events, not proof of
         # missing usage or agent history, whatever the accounting basis.
         "stream_retry_attempts": trace.stream_retry_attempts,
+        "retry_before_output": trace.retry_before_output,
+        "retry_statuses": list(trace.retry_statuses) or None,
         # How the trajectory says it ended, when in error (a code; never the message).
         "termination_error": trace.termination_error,
         # Why the last model turn stopped (a code, e.g. "safety"): how a run ended.

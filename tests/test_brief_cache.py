@@ -145,10 +145,14 @@ def test_brief_is_the_default_text_view_for_a_run(tmp_path, capsys):
     assert "SCORE      100.0% · 3 of 3 scored trials rewarded" in out
     assert "66.7% if the flagged rewarded trial had failed (a scenario, not a verdict)" in out
     assert "⚠ 1 trial (33.3%) has compacted ATIF history" in out
-    assert "COST       $2.20 recorded" in out
-    assert "⚠ 1 trial (33.3%) with usage but no cost" in out
-    # The reason it isn't estimated is stated once (estimates.py words it "not estimated: …").
-    assert "no cost (not estimated: fewer than 20 priced trials)" in out
+    assert "COST       ⚠ 1 trial (33.3%) with usage but no cost" in out
+    flat = " ".join(out.split())
+    # A ledger: the recorded cost, the unpriced trial (why it isn't estimated, stated
+    # once), and a total that is a lower bound.
+    assert "$2.20 2 trials: recorded cost" in flat
+    assert "+ — 1 trial: tokens without a recorded cost (not estimated: fewer than 20" in flat
+    assert "= ≥$2.20 estimated total; some additions aren't estimated" in flat
+    assert flat.count("not estimated: fewer than 20 priced trials") == 1
     assert out.count("not estimated") == 1
     assert re.search(r"high +1 +1  Reward file written\n +tamper\.reward_write\n", out)
     assert SECRET not in out and "echo" not in out
@@ -499,7 +503,8 @@ def test_brief_warns_about_work_without_usage():
     assert "every trial has a cost" not in text
     assert "✓ every trial with usage has a cost" in text
     assert "⚠ 1 trial (1 errored, 1 rewarded) did work but recorded no usage" in flat
-    assert "⚠ est. +$" in flat and "for the 1 trial without usage, not in the total" in flat
+    assert "1 trial: work with no usage recorded at all (cost ~ LLM calls" in flat
+    assert "estimated total" in flat
     assert "120 LLM calls" in flat
     # A fully metered run has no unmetered-work warning or estimate.
     clean = brief_text(
@@ -542,7 +547,8 @@ def test_step_models_reveal_a_fallback_the_header_hides():
     assert "⚠ 25 rewarded trials ran another model than main-model" in flat
     assert "26 trials in all (46.4%) ran another model, costing $26.00: fallback-model 26" in flat
     assert "; 1 trial switched mid-trial" in flat
-    assert "COST       $26.00 recorded, all of it on another model" in text
+    assert "· recorded cost, all of it on another model" in flat
+    assert "$26.00 26 trials: recorded cost" in flat
     assert "not estimated, since only 26 trials on another model recorded a price" in flat
     assert "their 30.4M input (15.0M cached) and 644k output tokens can be priced" in flat
     assert "--price U,C,O" in flat
