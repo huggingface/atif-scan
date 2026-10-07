@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from copy import deepcopy
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
     from ..cli.inputs import Record
     from ..data.jsonval import Doc
     from ..data.model import Step, Trace
+    from ..data.model import Trace as TraceType
+    from ..review.catalogue import Question
 
 FORMAT = "atif-scan-viewer/1"
 ASSETS = ("index.html", "viewer.css", "evidence.js", "viewer.js")
@@ -242,14 +245,101 @@ def run_facts(b: Doc) -> Doc:
     }
 
 
+# --- review mode: a blind human-review export ----------------------------------------
+
+REVIEW_FORMAT = "atif-scan-review/1"
+REVIEW_CHECK = "review.candidates"
+
+
+def _candidates(question: Question, trace: TraceType) -> Doc | None:
+    """The question's review targets as one assessment, so the viewer's receipts jump to
+    them with proven highlights. Candidates, never findings: no priority, not scored."""
+    targets = question.review_targets(trace) if question.review_targets else []
+    if not targets:
+        return None
+    numbers = trace.step_numbers
+    evidence = [
+        {
+            "step": at.step,
+            "step_id": numbers[at.step],
+            "channel": at.channel.value,
+            "call": at.call,
+            "observation": at.observation,
+            "field": at.field,
+            "span": list(at.span) if at.span else None,
+        }
+        for at in targets
+    ]
+    return {
+        "id": REVIEW_CHECK,
+        "kind": "detector",
+        "version": question.version,
+        "severity": "info",
+        "status": "match",
+        "evidence": evidence,
+        "unread": [],
+        "measure": {"candidates": len(evidence)},
+        "expected_by": [],
+    }
+
+
+def blind_item(item: Doc, question: Question, trace: TraceType | None) -> Doc:
+    """A report item with the scanner's view removed (findings, priority, score, the
+    checks left unknown) and the question's candidates in their place."""
+    candidates = _candidates(question, trace) if trace is not None else None
+    return {
+        **item,
+        "assessments": [candidates] if candidates else [],
+        "severity": None,
+        "score": None,
+        "coverage_gaps": None,
+    }
+
+
+def review_block(question: Question) -> Doc:
+    """What the reviewer is asked: the question's own text and closed answer sets, and a
+    random export ID that binds saved verdicts to this export."""
+    return {
+        "format": REVIEW_FORMAT,
+        "export_id": secrets.token_hex(8),
+        "question": question.id,
+        "version": question.version,
+        "title": question.title,
+        "ask": question.ask,
+        "answers": dict(question.answers),
+        "mechanisms": dict(question.mechanisms),
+        "candidates": question.evidence_label if question.review_targets else None,
+    }
+
+
+def _review_trial(trial: Doc, question: Question) -> Doc:
+    for finding in trial["findings"]:
+        if finding["check_id"] == REVIEW_CHECK:
+            finding["title"] = question.evidence_label
+            finding["category"] = "behaviour"
+    return trial
+
+
+def _trial(
+    trial_id: str, item: Doc, trace: TraceType | None, report: Doc, review: Question | None
+) -> Doc:
+    if review is None:
+        return trial_bundle(trial_id, item, trace, report)
+    trial = trial_bundle(trial_id, blind_item(item, review, trace), trace, report)
+    return _review_trial(trial, review)
+
+
 def bundle(
     records: list[Record],
     items: list[Doc],
     digests: list[str | None],
     report: Doc,
     run: Doc | None = None,
+    review: Question | None = None,
 ) -> Doc:
-    """The whole export document. Traces are re-read only when still matching their pin."""
+    """The whole export document. Traces are re-read only when still matching their pin.
+    `review`: a blind human-review export for that question (no findings, scores or
+    scanner run sections; the question's candidates to jump between)."""
     if not len(records) == len(items) == len(digests):
         raise ValueError("record_item_count_mismatch")
     trials = []
@@ -259,14 +349,19 @@ def bundle(
         trace = None
         if item.get("input_status") == "available":
             trace = load_bytes(pinned_bytes(source.local, sha256))
-        trials.append(trial_bundle(str(number), item, trace, report))
-    return {
+        trials.append(_trial(str(number), item, trace, report, review))
+    document = {
         "format": FORMAT,
         "scanner_version": report.get("scanner_version"),
         "packs": deepcopy(report.get("packs")),
         "run": deepcopy(run),
         "trials": trials,
     }
+    if review is not None:
+        document["review"] = review_block(review)
+        if document["run"]:
+            document["run"]["sections"] = []  # the scanner's own run brief: not blind
+    return document
 
 
 def data_script(document: Doc) -> str:

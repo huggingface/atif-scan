@@ -43,7 +43,8 @@
       </section>
       <section class="inspection panel" aria-label="Evidence inspection">
         <div class="panel-head"><h2>Receipts</h2><span class="badge">Inspection, not a verdict</span></div>
-        <div class="tabs" role="group" aria-label="Evidence views"><button type="button" data-tab="findings" aria-pressed="true">Findings</button><button type="button" data-tab="search" aria-pressed="false">Search</button></div>
+        <div class="tabs" role="group" aria-label="Evidence views"><button type="button" data-tab="review" aria-pressed="false" id="review-tab" hidden>Review</button><button type="button" data-tab="findings" aria-pressed="true">Findings</button><button type="button" data-tab="search" aria-pressed="false">Search</button></div>
+        <div id="review-panel" class="review-panel" hidden></div>
         <div id="findings-panel"></div>
         <div id="search-panel" hidden><label class="input-label" for="evidence-query">Literal search · case-sensitive</label><form id="search-form"><input id="evidence-query" type="search" maxlength="150" placeholder="Text in this trajectory"><button type="submit">Find</button></form><p class="small-note">Searches every recorded field of the selected trial, including pages not shown. Missing or compacted history is not searched; no match is not proof of absence.</p><div id="search-results" aria-live="polite"></div></div>
         <div class="field-heading"><h3 id="field-title">Recorded field</h3><button id="copy-citation" type="button">Copy locator</button></div>

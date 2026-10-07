@@ -3,6 +3,7 @@ trials to adjudicate. Labels and outputs name real trials: keep them outside the
 
     atif-scan labels import-tb21 INVENTORY_DIR OUT.jsonl
     atif-scan labels import-hunt BUNDLE KEY.json OUT.jsonl --ref NAME
+    atif-scan labels import-review VERDICTS.json KEY.json OUT.jsonl --ref NAME
     atif-scan labels add OUT.jsonl --run R --trial T --property P --value V \\
         --source S [--ref REF] [--mechanism M] [--steps 3 7] [--from scanner:high jev:...]
     atif-scan labels check [LABELS.jsonl...]
@@ -144,6 +145,84 @@ def import_hunt(bundle: Path, key: Path, out: Path, ref: str) -> int:
             for prop, value in L.hunt_labels(a.question, a.value, a.rewarded)
         ]
     _write(out, rows)
+    return 0
+
+
+class Verdict(NamedTuple):
+    """One human verdict from a review export: the export's opaque input id."""
+
+    input_id: str
+    answer: str
+    rewarded: bool | None
+    mechanism: str | None
+
+
+REVIEW_FORMAT = "atif-scan-review/1"
+MAX_REVIEW_BYTES = 4 * 1024 * 1024
+
+
+def _review_rows(raw: object) -> tuple[str, list[Verdict]]:
+    """(question, answers) from a viewer verdict file; ValueError when it isn't one or a
+    verdict doesn't fit its question. Reviewer notes are never kept."""
+    from ..review.catalogue import BY_ID  # noqa: PLC0415 - catalogue only for this command
+
+    doc = as_object(raw)
+    question = BY_ID.get(as_str(doc.get("question")) or "")
+    if doc.get("format") != REVIEW_FORMAT or question is None:
+        raise ValueError("not_a_review_verdict_file")
+    rows = []
+    for entry in map(as_object, as_list(doc.get("verdicts"))):
+        answer, mechanism = as_str(entry.get("answer")), as_str(entry.get("mechanism"))
+        input_id = as_str(entry.get("input_id"))
+        if (
+            input_id is None
+            or answer not in question.answers
+            or (question.mechanisms and mechanism not in question.mechanisms)
+        ):
+            raise ValueError("invalid_verdict")
+        reward = number(entry.get("reward"))
+        rewarded = None if reward is None else reward > 0
+        rows.append(
+            Verdict(input_id, answer, rewarded, None if mechanism in (None, "none") else mechanism)
+        )
+    return question.id, rows
+
+
+def import_review(verdicts: Path, key: Path, out: Path, ref: str) -> int:
+    """Human verdicts from a `--viewer --review` export become `human` labels, mapped to
+    trials through the private key (opaque export ids -> run, trial)."""
+    data = verdicts.read_bytes()
+    if len(data) > MAX_REVIEW_BYTES:
+        raise SystemExit("atif-scan labels: verdict file too large")
+    try:
+        question, verdicts_ = _review_rows(json.loads(data))
+    except ValueError as error:
+        raise SystemExit(f"atif-scan labels: {error}") from None
+    keyed = as_object(json.loads(key.read_text()))
+    rows, unmapped = [], 0
+    for verdict in verdicts_:
+        entry = as_object(keyed.get(verdict.input_id))
+        run, trial = as_str(entry.get("run")) or ref, as_str(entry.get("trial"))
+        if trial is None or not L.TRIAL.fullmatch(trial):
+            unmapped += 1
+            continue
+        origins = tuple(s for c in as_list(entry.get("candidate_from")) if (s := as_str(c)))
+        rows += [
+            L.Label(
+                run,
+                trial,
+                prop,
+                value,
+                "human",
+                ref,
+                mechanism=verdict.mechanism,
+                candidate_from=origins or ("review",),
+                created=_today(),
+            )
+            for prop, value in L.hunt_labels(question, verdict.answer, verdict.rewarded)
+        ]
+    _write(out, rows)
+    print(f"{len(rows)} label(s) from {len(verdicts_)} verdict(s); {unmapped} not in the key")
     return 0
 
 
@@ -391,6 +470,11 @@ def _parser() -> argparse.ArgumentParser:
     a.add_argument("key", type=Path)
     a.add_argument("out", type=Path)
     a.add_argument("--ref", required=True)
+    a = sub.add_parser("import-review")
+    a.add_argument("verdicts", type=Path)
+    a.add_argument("key", type=Path)
+    a.add_argument("out", type=Path)
+    a.add_argument("--ref", required=True)
     a = sub.add_parser("add")
     a.add_argument("out", type=Path)
     for name in ("run", "trial", "property", "value", "source"):
@@ -427,6 +511,7 @@ def _eval_parser(a: argparse.ArgumentParser) -> None:
 COMMANDS = {
     "import-tb21": lambda a: import_tb21(a.inv, a.out),
     "import-hunt": lambda a: import_hunt(a.bundle, a.key, a.out, a.ref),
+    "import-review": lambda a: import_review(a.verdicts, a.key, a.out, a.ref),
     "add": add,
     "check": lambda a: check(a.labels),
     "eval": evaluate,

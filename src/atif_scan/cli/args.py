@@ -379,6 +379,14 @@ def _browse_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="DIR",
         help="write a static trajectory viewer (masked trace text) to a new or empty DIR",
     )
+    parser.add_argument(
+        "--review",
+        metavar="QUESTION",
+        type=_question_id,
+        help="with --viewer: a blind human-review export for this question (no findings, "
+        "scores or answers; its candidate steps to jump between; verdicts saved in the "
+        "browser and exported as a file for `atif-scan labels import-review`)",
+    )
 
 
 def _check_viewer_dir(parser: argparse.ArgumentParser, directory: Path) -> None:
@@ -394,6 +402,8 @@ def _check_viewer_dir(parser: argparse.ArgumentParser, directory: Path) -> None:
 def _check_browse(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if not args.browse and (args.browse_port is not None or args.feedback_dir is not None):
         parser.error("--browse-port and --feedback-dir require --browse")
+    if args.review is not None and args.viewer is None:
+        parser.error("--review requires --viewer DIR")
     if args.viewer is not None:
         if args.browse:
             parser.error("--viewer cannot be combined with --browse")

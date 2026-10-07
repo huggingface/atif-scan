@@ -410,7 +410,36 @@
     if (field.status === "text") return `${length(field).toLocaleString("en")} chars`;
     return humanise(field.status ?? "unknown");
   }
-  const api = { PAGE_SIZE, MAX_HITS, PRIORITY, sameField, locate, page, highlighted, focusOffset, clip,
+  // --- review mode: blind human verdicts, saved in the browser and exported as a file ---
+  const MAX_NOTE = 1000;
+  function reviewKey(review) { return `atif-scan-review:${review.export_id}`; }
+  function validVerdict(review, verdict) {
+    if (!verdict || typeof verdict !== "object") return false;
+    if (!Object.hasOwn(review.answers, verdict.answer)) return false;
+    const mechanisms = Object.keys(review.mechanisms ?? {});
+    if (mechanisms.length && !mechanisms.includes(verdict.mechanism)) return false;
+    return typeof (verdict.note ?? "") === "string" && (verdict.note ?? "").length <= MAX_NOTE;
+  }
+  function reviewProgress(trials, verdicts, review) {
+    const total = trials.filter(t => t.input_status === "available").length;
+    const done = trials.filter(t => t.input_status === "available" && validVerdict(review, verdicts[t.id])).length;
+    return { done, total };
+  }
+  // The file `atif-scan labels import-review` reads: verdicts keyed by the export's trial
+  // labels, bound to the export and question version. Notes are the reviewer's own text.
+  function reviewExport(review, verdicts, trials, now = new Date()) {
+    const rows = trials
+      .filter(t => validVerdict(review, verdicts[t.id]))
+      .map(t => {
+        const v = verdicts[t.id];
+        return { input_id: t.input_id ?? t.id, task: t.task ?? null,
+          reward: typeof t.reward === "number" ? t.reward : null, answer: v.answer,
+          mechanism: v.mechanism ?? null, note: (v.note ?? "").slice(0, MAX_NOTE), saved_at: v.saved_at ?? null };
+      });
+    return { format: review.format, export_id: review.export_id, question: review.question,
+      version: review.version, exported_at: now.toISOString(), verdicts: rows };
+  }
+  const api = { MAX_NOTE, reviewKey, validVerdict, reviewProgress, reviewExport, PAGE_SIZE, MAX_HITS, PRIORITY, sameField, locate, page, highlighted, focusOffset, clip,
     context, literalMatches, search, ordered, isLead, hasGap, topPriority, rewardLabel,
     needsAttention, stepSummary, family, checkIndex, matchesFilters, byPriority, coverageLines, focusNote, charLabel, length, unreadText,
     compact, usd, duration, costHeadline, harnessLine, trialFacts, calcLines, runRecordsNote, unknownLead, errorClass, outcome, CLASS_LABEL, counted, lineageNote };

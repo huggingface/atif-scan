@@ -243,3 +243,28 @@ test("replaced trials are evidence, and both ends of a replacement say so", () =
   assert.match(E.lineageNote({ selection: { role: "replaced", replaced_by: null } }).text, /hasn't run yet/);
   assert.equal(E.lineageNote({ selection: { role: "canonical" } }), null);
 });
+
+test("review verdicts: only complete, valid answers are exported, notes capped", () => {
+  const review = { format: "atif-scan-review/1", export_id: "abc", question: "verification_hunt", version: "3",
+    answers: { present: "p", absent: "a", unclear: "u" }, mechanisms: { none: "n", overstated: "o" } };
+  const trials = [
+    { id: "0", input_id: "rv-001", task: "t", reward: 1, input_status: "available" },
+    { id: "1", input_id: "rv-002", task: "t", reward: 0, input_status: "available" },
+    { id: "2", input_id: "rv-003", task: "t", reward: null, input_status: "unavailable" },
+  ];
+  const verdicts = {
+    "0": { answer: "present", mechanism: "overstated", note: "x".repeat(E.MAX_NOTE) },
+    "1": { answer: "present" },  // no mechanism: incomplete
+    "2": { answer: "absent", mechanism: "none" },
+  };
+  assert.equal(E.validVerdict(review, verdicts["0"]), true);
+  assert.equal(E.validVerdict(review, verdicts["1"]), false);
+  assert.equal(E.validVerdict(review, { answer: "maybe", mechanism: "none" }), false);
+  assert.equal(E.validVerdict(review, { answer: "absent", mechanism: "none", note: "x".repeat(E.MAX_NOTE + 1) }), false);
+  assert.deepEqual(E.reviewProgress(trials, verdicts, review), { done: 1, total: 2 });
+  const doc = E.reviewExport(review, verdicts, trials, new Date("2026-10-07T00:00:00Z"));
+  assert.equal(doc.format, "atif-scan-review/1");
+  assert.deepEqual(doc.verdicts.map(v => [v.input_id, v.answer, v.mechanism, v.reward]),
+    [["rv-001", "present", "overstated", 1], ["rv-003", "absent", "none", null]]);
+  assert.equal(E.reviewKey(review), "atif-scan-review:abc");
+});

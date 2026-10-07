@@ -15,6 +15,15 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--read)}
 button,input{font:inherit}
+.review-panel{display:grid;gap:10px;margin-bottom:12px}.review-panel h3{margin:0}
+.review-ask{margin:0;font-size:14px;line-height:1.45}
+.review-choices{border:1px solid var(--line);border-radius:5px;padding:8px 10px;margin:0;display:grid;gap:6px}
+.review-choices legend{font-weight:750;padding:0 4px}
+.review-choices label{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start;font-size:13px;line-height:1.35;cursor:pointer}
+.review-choices input{width:auto;margin-top:2px}
+.review-note{width:100%;min-height:64px;border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--ink);padding:8px;font:inherit}
+.review-status{font-size:13px;margin:0}.review-status.warn{color:var(--danger)}
+.review-actions{display:flex;flex-wrap:wrap;gap:8px}
 button{border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--ink);padding:6px 10px;cursor:pointer}
 button:hover{background:var(--inset)}
 button:disabled{opacity:.45;cursor:default}

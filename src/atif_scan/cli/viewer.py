@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..browser import export, session
 from ..checks import Severity
 from ..output.brief import brief
+from ..review.catalogue import BY_ID
 from .scan import Scanner, _document, _prepare, _scan_all
 
 if TYPE_CHECKING:
@@ -59,7 +60,8 @@ def export_viewer(args: argparse.Namespace) -> int:
         run = export.run_facts(
             brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
         )
-        export.write(args.viewer, export.bundle(records, items, digests, doc, run))
+        review = BY_ID[args.review] if args.review else None
+        export.write(args.viewer, export.bundle(records, items, digests, doc, run, review))
     except (OSError, ValueError):
         print("atif-scan: viewer export failed (details withheld)", file=sys.stderr)
         return 2

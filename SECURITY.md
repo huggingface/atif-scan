@@ -132,6 +132,12 @@
   outside its folder (CSP, no fonts, images or network), renders trace text literally
   and executes nothing. The folder is created `0700` with `0600` files and must be new
   or empty.
+- `--viewer DIR --review QUESTION` writes a blind review export (same masking, CSP and
+  file rules; no findings, scores, judge answers or scanner run sections). Verdicts stay
+  in the browser's local storage, keyed by a random export ID, and leave only as a JSON
+  file the reviewer downloads. Notes in it are the reviewer's own unmasked text: keep the
+  file private. `atif-scan labels import-review` keeps answer, mechanism and reward only,
+  never the note, and maps opaque export IDs to trials through the private key.
 - A finding doesn't authorize accusation, disqualification or exclusion. Keep the
   coverage information and get human review.
 
