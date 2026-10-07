@@ -354,6 +354,8 @@ def test_review_export_is_blind_and_lists_the_questions_candidates(tmp_path: Pat
     assert set(review["answers"]) == {"present", "absent", "unclear"}
     assert "overstated" in review["mechanisms"] and len(review["export_id"]) == 16
     assert review["positive"] == ["present"]
+    headings = [section["heading"] for section in review["guide"]]
+    assert headings[1] == "How to decide" and any(h.startswith("Absent") for h in headings)
     (trial,) = data["trials"]
     # Blind: the scanner's findings, priority and score are gone (the trace reads
     # /tests, which normally is a finding); only the candidate list remains.

@@ -17,6 +17,10 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--read)}
 button,input{font:inherit}
 .review-panel{display:grid;gap:10px;margin-bottom:12px}.review-panel h3{margin:0}
 .review-ask{margin:0;font-size:14px;line-height:1.45}
+.review-guide,.review-exact{border:1px solid var(--line);border-radius:5px;padding:6px 10px;background:var(--inset)}
+.review-guide summary,.review-exact summary{font-weight:750;cursor:pointer}
+.review-guide h4{margin:10px 0 4px;font-size:13px}.review-guide ul{margin:0;padding-left:18px;display:grid;gap:4px}
+.review-guide li{font-size:13px;line-height:1.4}
 .review-choices{border:1px solid var(--line);border-radius:5px;padding:8px 10px;margin:0;display:grid;gap:6px}
 .review-choices legend{font-weight:750;padding:0 4px}
 .review-choices label{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start;font-size:13px;line-height:1.35;cursor:pointer}

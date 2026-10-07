@@ -515,8 +515,24 @@
     const elements = [
       node("p", `${done} of ${total} trials reviewed · blind: no findings, scores or judge answers are shown.`, "small-note"),
       node("h3", review.title),
-      node("p", review.ask, "review-ask"),
     ];
+    if (review.guide?.length) {
+      const guide = node("details", undefined, "review-guide");
+      guide.open = state.guideOpen ?? true;
+      guide.addEventListener("toggle", () => { state.guideOpen = guide.open; });
+      guide.append(node("summary", "How to decide"));
+      for (const section of review.guide) {
+        guide.append(node("h4", section.heading));
+        const list = node("ul");
+        for (const point of section.points) list.append(node("li", point));
+        guide.append(list);
+      }
+      const exact = node("details", undefined, "review-exact");
+      exact.append(node("summary", "Exact question the judge is asked"), node("p", review.ask, "review-ask"));
+      elements.push(guide, exact);
+    } else {
+      elements.push(node("p", review.ask, "review-ask"));
+    }
     const report = finalReport(trial);
     const look = node("div", undefined, "review-actions");
     look.append(button("Jump to final report", () => jump(report, null, null)));

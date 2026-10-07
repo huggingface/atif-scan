@@ -312,6 +312,7 @@ def review_block(question: Question) -> Doc:
         # Answers a mechanism describes; the others take "none".
         "positive": [a for a in question.answers if a not in (*UNIVERSAL, "unclear")],
         "candidates": question.evidence_label if question.review_targets else None,
+        "guide": [{"heading": h, "points": list(points)} for h, points in question.review_guide],
     }
 
 

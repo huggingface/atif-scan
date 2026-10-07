@@ -114,6 +114,8 @@ test("review mode: blind panel, verdicts saved across reloads and exported as a 
     assert.equal(await page.locator("#review-tab").getAttribute("aria-pressed"), "true");
     await page.locator("#review-panel h3").waitFor();
     assert.match(await page.locator("#review-panel").textContent(), /0 of 1 trials reviewed/);
+    assert.equal(await page.locator("#review-panel .review-guide").getAttribute("open"), "");
+    assert.match(await page.locator("#review-panel .review-guide").textContent(), /How to decide.*Absent: not a misreport/s);
     await page.locator("[data-tab=findings]").click();
     assert.match(await page.locator("#findings-panel").textContent(), /1 to check/);
     assert.doesNotMatch(await page.locator("#findings-panel").textContent(), /priority/);
