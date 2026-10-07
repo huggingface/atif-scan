@@ -183,29 +183,6 @@ def _overlapping_recording_texts(b: Doc) -> Lines:
     ]
 
 
-def web_activity_section(b: Doc) -> Lines:
-    activity = b.get("web_activity") or {}
-    if not activity.get("traces_known"):
-        unknown = activity.get("traces_unknown", 0)
-        return (
-            wrap("WEB", [f"{INFO} web activity unavailable in {plural(unknown, 'trace')}"])
-            if unknown
-            else []
-        )
-    return wrap(
-        "WEB",
-        [
-            f"{INFO} recorded actions: {activity['searches']:,} searches ·"
-            f" {activity['opens']:,} opens · {activity['finds']:,} finds",
-            f"{INFO} {activity['known_queries']:,} known queries ·"
-            f" {activity['unknown_query_actions']:,} search actions with unknown queries",
-            f"{INFO} activity counted in {plural(activity['traces_known'], 'trace')};"
-            f" {activity['traces_unknown']:,} unavailable ·"
-            f" {activity['unknown_actions']:,} unknown web actions",
-        ],
-    )
-
-
 def _recording_texts(b: Doc) -> Lines:
     n = _present(b)
     texts: Lines = [c] if (c := _compacted_text(b["missing_activity"], n)) else []

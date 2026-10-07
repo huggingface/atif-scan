@@ -324,7 +324,13 @@ def test_empty_parent_ids_do_not_suppress_unrelated_derived_searches():
     assert activity == WebActivity(searches=2, known_queries=2)
 
 
-def test_all_unavailable_activity_is_explicit_without_fabricated_zero_actions():
-    text = brief_text(brief(document([item("a"), item("b")], "test")))
-    assert "web activity unavailable in 2 traces" in text
-    assert "recorded actions: 0 searches" not in text
+def test_brief_text_has_no_web_section():
+    """Recognized web-tool counts can't describe web use: shell access (curl, wget,
+    git, installers) isn't counted, so zeros would read as "no web", and a generic HTTP
+    tool's fetches mix local testing, APIs and URL searches. The counts stay JSON-only;
+    web behaviour is reported by the network/lookup checks and recording gaps."""
+    activity = web_activity(trace(call({"action_type": "search", "query": "q"})))
+    for rows in ([item("a"), item("b")], [item("a", activity=activity)]):
+        text = brief_text(brief(document(rows, "test")))
+        assert "WEB " not in text and "recorded actions:" not in text
+        assert "web activity unavailable" not in text

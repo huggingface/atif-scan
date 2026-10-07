@@ -186,3 +186,40 @@ def test_provider_errors_are_outcomes_not_content(text):
 )
 def test_error_phrases_in_pages_remain_content(text):
     assert recorded_web_content(Content(text))
+
+
+# Regression (dext `http` tool on the Hub): JSON API bodies that are arrays of records
+# were read as content-block envelopes, failed to parse, and became "web output
+# missing", leaving rewarded trials uncleared. They are the page text the agent saw.
+@pytest.mark.parametrize(
+    "body",
+    [
+        json.dumps([{"name": "test.sh", "path": "tasks/demo/tests/test.sh", "type": "file"}]),
+        json.dumps([{"type": "file", "oid": "0" * 40, "size": 17, "path": "README.md"}]),
+        json.dumps([{"type": "directory", "oid": "1" * 40, "path": "data"}]),
+        json.dumps([{"uuid": "SYN01", "name": "Synthetic FP", "seq": "MSKGEELFTG", "ex": None}]),
+        json.dumps([{"sha": "2" * 40, "commit": {"author": {"name": "synthetic"}}}]),
+        "[1, 2, 3]",
+        '["a", "b"]',
+    ],
+)
+def test_json_api_arrays_are_page_content(body):
+    content = Content(body)
+    assert web_result_state(content) is WebResultState.CONTENT
+    step, call = result_step([content])
+    assert web_outcomes_recorded(step, call) and web_results_complete(step, call)
+
+
+def test_http_error_status_before_a_media_body_is_a_recorded_error():
+    """A challenge page after `HTTP 403` can embed media; the 403 is still the outcome."""
+    content = Content(
+        'HTTP 403 Forbidden\n<html><img src="data:image/png;base64,AAAA"></html>', media=True
+    )
+    assert web_result_state(content) is WebResultState.ERROR
+    step, call = result_step([content])
+    assert web_outcomes_recorded(step, call) and not web_results_complete(step, call)
+    # Without an error status, media still can't be read: unavailable, as before.
+    assert web_result_state(Content("<html>page</html>", media=True)) is WebResultState.UNAVAILABLE
+    assert (
+        web_result_state(Content("HTTP 200 OK\n<html>", media=True)) is WebResultState.UNAVAILABLE
+    )

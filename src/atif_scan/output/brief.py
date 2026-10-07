@@ -467,6 +467,8 @@ def brief(
             for item in items
         ),
         "recording_gaps": recording_gaps(items),
+        # Counts of recognized web-tool actions only (not shell curl/wget/git, not
+        # what a generic HTTP tool fetched): JSON only, never a "web use" summary.
         "web_activity": _web_activity(items),
         "findings": findings,
         "jobs": _jobs(ov["runs"]),

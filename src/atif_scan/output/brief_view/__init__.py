@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ...data.jsonval import Doc
-from .evidence import evidence_section, web_activity_section
+from .evidence import evidence_section
 from .run import (
     awareness_section,
     findings_section,
@@ -140,7 +140,6 @@ SECTIONS: tuple[Callable[[Doc], Lines], ...] = (
     review_section,
     findings_section,
     awareness_section,
-    web_activity_section,
     evidence_section,
     walltime_section,
     tokens_section,

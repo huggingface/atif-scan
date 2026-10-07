@@ -44,7 +44,18 @@ PROVIDER_METADATA = re.compile(
     r"(?:find|open|click|search)\(\{[^\r\n]*\}\)[^\r\n]*"
 )
 CLICK_ERROR = re.compile(r"Unable to resolve click call\b[^\r\n]*", re.I)
-SERIALIZED_BLOCKS = re.compile(r"\A\[\s*(?:\{|])")
+# A serialized content-block envelope ([{"type": "text", "text": ...}, ...], as JSON or a
+# Python repr), or an empty one. Only a known block type opens it: a JSON API body that
+# is an array of records (GitHub contents, Hub trees with "type": "file") is page text.
+BLOCK_TYPES = (
+    "text|input_text|output_text|image|input_image|image_url|refusal|resource|audio|input_audio"
+)
+SERIALIZED_BLOCKS = re.compile(
+    r"""\A\[\s*(?:]\s*\Z|\{\s*['"]type['"]\s*:\s*['"](?:""" + BLOCK_TYPES + r""")['"])"""
+)
+# A client's HTTP error status line before the body (`HTTP 403 Forbidden` + a challenge
+# page): a recorded failed retrieval, even when the body embeds media.
+HTTP_ERROR_LINE = re.compile(r"\AHTTP(?:/\d(?:\.\d)?)?[ \t]+[45]\d\d\b[^\r\n]*(?:\r?\n|\Z)")
 MAX_WRAPPER_BYTES = 1024 * 1024
 
 
@@ -154,6 +165,8 @@ def _serialized_blocks(text: str) -> list[dict[str, object]]:
 
 def web_result_state(content: Content) -> WebResultState:
     """Classify readable result evidence, retaining unknown/media and wrapper gaps."""
+    if content.understood and content.media and HTTP_ERROR_LINE.match(content.text.strip()):
+        return WebResultState.ERROR
     if not content.understood or content.media:
         return WebResultState.UNAVAILABLE
     text = content.text.strip()
