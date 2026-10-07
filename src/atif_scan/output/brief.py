@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from ..data.accounting import has_scoped_cost
 from ..data.jsonval import as_list, as_object, as_str, count
 from ..packs import BUNDLED
-from ..review.answers import tally
+from ..review.answers import tally, thin_answers
 from ..sources.harbor.files import PRICE_KINDS
 from .document import RANK, events, is_counted, recording_gaps
 from .estimates import (
@@ -487,6 +487,7 @@ def brief(
         "suggested_packs": _suggested_packs(items, ov["runs"]),
         # Reviewer answers to --questions prompts (annotations only; never DQ math).
         "answers": tally(items),
+        "answers_thin": thin_answers(items),
         "scanner_version": doc["scanner_version"],
         "runs": ov["runs"],
         "agents": _agents(items),

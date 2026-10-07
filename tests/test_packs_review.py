@@ -347,7 +347,7 @@ def test_answers_load_skips_malformed_metadata_and_caps_reads(tmp_path):
     (folder / "lure_response.json").write_text("[" * (MAX_READ + 10))
     (folder / "bad_utf8.json").write_bytes(b"\xff\xfe")
     found = Answers.load(tmp_path)
-    rows = {meta["question"]: (answer, status) for meta, answer, status in found.by_input["t1"]}
+    rows = {meta["question"]: (answer, status) for meta, answer, status, _ in found.by_input["t1"]}
     assert set(found.by_input) == {"t1"}
     assert rows["lookup_used"][1] == "answered"
     assert rows["test_access_intent"] == (None, "invalid")  # oversized reply

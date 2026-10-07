@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..data.jsonval import Doc, JsonObject
     from ..data.model import Trace
 from .catalogue import ANSWER_STEPS, BY_ID, CONFIDENCE, Question
+from .coverage import review_coverage, thin
 from .prompts import trace_digest
 
 MAX_READ = 64 * 1024  # bytes of a metadata or answer file; larger files are ignored
@@ -111,9 +112,11 @@ def _read(path: Path) -> str:
 class Answers:
     """Answers found under a questions directory, keyed by input label."""
 
-    # (metadata, answer, status); `load` keeps only metadata naming a known question with
-    # string input_id and version.
-    by_input: dict[str, list[tuple[Doc, Doc | None, str]]] = field(default_factory=dict)
+    # (metadata, answer, status, the answering run's saved trajectory); `load` keeps only
+    # metadata naming a known question with string input_id and version.
+    by_input: dict[str, list[tuple[Doc, Doc | None, str, Path | None]]] = field(
+        default_factory=dict
+    )
 
     @classmethod
     def load(cls, root: Path) -> Answers:
@@ -141,7 +144,9 @@ class Answers:
                 except (OSError, ValueError):
                     answer = None
                 status = "answered" if answer else "invalid"
-            found.by_input.setdefault(meta["input_id"], []).append((meta, answer, status))
+            review = meta_path.with_name(meta_path.stem + ".review.atif.json")
+            entry = (meta, answer, status, review if review.is_file() else None)
+            found.by_input.setdefault(meta["input_id"], []).append(entry)
         return found
 
     def annotate(self, label: str, trace: Trace | None, local: Path | None = None) -> list[Doc]:
@@ -150,8 +155,11 @@ class Answers:
         archive = discover_history(local) if trace is not None and trace.compacted else None
         archive_digest = archive.digest() if archive is not None else None
         rows = []
-        for meta, answer, status in self.by_input.get(label, []):
+        for meta, answer, status, review in self.by_input.get(label, []):
             row = _row(meta, answer, status, digest)
+            if review is not None and trace is not None and "answer" in row:
+                # How much of this trace the answering run read (counts only).
+                row["coverage"] = review_coverage(review, trace.step_numbers)
             changed = archive is not None and (
                 meta.get("archive_digest") != archive_digest
                 if "archive_digest" in meta
@@ -190,4 +198,15 @@ def tally(items: list[Doc]) -> dict[str, dict[str, int]]:
     return out
 
 
-__all__ = ["Answers", "parse_answer", "tally"]
+def thin_answers(items: list[Doc]) -> dict[str, int]:
+    """{question: universal answers ("clean", "absent") given after reading less than
+    half of the trace} across report items: guesses about the unread rest."""
+    out: dict[str, int] = {}
+    for item in items:
+        for row in item.get("answers") or []:
+            if thin(row):
+                out[row["question"]] = out.get(row["question"], 0) + 1
+    return out
+
+
+__all__ = ["Answers", "parse_answer", "tally", "thin_answers"]
