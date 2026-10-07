@@ -74,7 +74,7 @@ HIDDEN = ("tests", "solution")
 LAYOUT = frozenset({"test_outputs", "test_state", "test_solution", "test_main"})
 
 
-def _texts(root: Path) -> list[tuple[Path, str]]:
+def task_files(root: Path) -> list[tuple[Path, str]]:
     """(path, text) of the readable text files at or under `root`."""
     out: list[tuple[Path, str]] = []
     if not root.exists():
@@ -113,10 +113,12 @@ def load(base: str, task: str) -> TaskReference | None:
     root = Path(base) / task
     if not root.is_dir():
         return None
-    visible_texts = [t for _, t in _texts(root / "instruction.md") + _texts(root / "environment")]
-    test_files = _texts(root / "tests")
+    visible_texts = [
+        t for _, t in task_files(root / "instruction.md") + task_files(root / "environment")
+    ]
+    test_files = task_files(root / "tests")
     tests = [t for path, t in test_files if path.suffix == ".py"]
-    hidden_texts = [t for _, t in test_files + _texts(root / "solution")]
+    hidden_texts = [t for _, t in test_files + task_files(root / "solution")]
     if not hidden_texts:
         return None
     visible = "\n".join(visible_texts)

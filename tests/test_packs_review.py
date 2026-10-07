@@ -372,7 +372,9 @@ def test_timeline_shows_final_message_once():
     long = [PROMPT] + [agent(f"s{i}") for i in range(AFTER + 3)] + [agent("final words")]
     lines = _timeline(parse_trace({"schema_version": "ATIF-v1.7", "steps": long}), 1, frozenset())
     assert sum("final words" in line for line in lines) == 1
-    assert lines[-1].startswith("### final agent message")
+    # It ends the timeline, as one of the last steps shown under "how it ended".
+    assert "final words" in lines[-1]
+    assert any(line.startswith("### how it ended") for line in lines)
 
 
 # --- examples/demo_pack.py ------------------------------------------------------------

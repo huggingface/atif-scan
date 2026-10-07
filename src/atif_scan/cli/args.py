@@ -204,7 +204,8 @@ def _review_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         metavar="DIR",
         help="write a private, MCP-ready review bundle to a new/empty DIR; defaults to "
-        "DQ candidates and hack_hunt; never calls a model",
+        "DQ candidates, hack_hunt plus each finding-specific question that applies; "
+        "never calls a model",
     )
     parser.add_argument(
         "--judge-scope",
@@ -224,8 +225,9 @@ def _review_arguments(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=[],
         choices=list(BY_ID),
-        help="only these questions (repeatable; default: hack_hunt with --judge-prompts, "
-        "otherwise all except opt-in hack_hunt, benchmark_awareness and web_provenance)",
+        help="only these questions (repeatable; default with --judge-prompts: hack_hunt "
+        "plus the finding-specific ones that apply, except network_outcome; otherwise all "
+        "except opt-in hack_hunt, benchmark_awareness and web_provenance)",
     )
     parser.add_argument(
         "--answers",
