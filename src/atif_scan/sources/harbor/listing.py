@@ -69,6 +69,10 @@ def trial_meta(row: Mapping[str, object], retry: Mapping[str, object] | None = N
         "output_tokens": count(row.get("output_tokens")),
         "duration_sec": duration(row),
         "overrides": overrides(row.get("config_values") or {}),
+        # The harness and model the job configured for this trial (a comparison job
+        # configures several; the trajectory's own model may differ: a fallback).
+        "configured_agent": _checked(str(row.get("agent_name") or "") or None),
+        "configured_model": _checked(str(row.get("model_name") or "") or None),
         **(retry or {}),
     }
 

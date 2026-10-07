@@ -9,7 +9,8 @@ The same fact can be recorded in several places. From highest precedence to lowe
   the task known before result.json is read, then result.json's.)
 - error_type: result.json > the run listing > Harbor's `exception.txt` marker, which
   only says "exception". (`recorded_facts`, `listed_facts`)
-- status, hub_trial_id, overrides, retry_attempts, retry_superseded: the run listing
+- status, hub_trial_id, overrides, retry_attempts, retry_superseded, configured_agent,
+  configured_model: the run listing
   (Harbor Hub records only; see `harbor.listing.retry_chains`).
 - duration_sec: result.json > the run listing (whole-trial started_at/finished_at).
 - agent_duration_sec: result.json's agent_execution interval only; never inferred from
@@ -122,6 +123,9 @@ RECORDED = (
     # later attempt replaced this one (not scored); None when not in a chain or unordered.
     "retry_attempts",
     "retry_superseded",
+    # The harness/model setup the job configured for the trial (Harbor Hub listing).
+    "configured_agent",
+    "configured_model",
 )
 TOKENS = ("input_tokens", "cache_tokens", "output_tokens")
 # Facts derived from the trajectory alone (cacheable with its scan), in report order.

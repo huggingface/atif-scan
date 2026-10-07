@@ -213,6 +213,15 @@ atif-scan --inspect harbor://jobs/<id>      # listing only: nothing downloaded
   did agent work first (steps, tokens, cost, or a minute or more of agent time), and the
   accuracy if every attempt were scored. A chain whose start times are missing or tied
   can't be ordered, so all of its attempts stay scored.
+- **Comparison jobs.** One job can configure several harness/model setups (terminus-2
+  with three models beside claude-code and codex, say), and so can several jobs scanned
+  together. The listing records each trial's configured `agent_name`/`model_name`
+  (`configured_agent`/`configured_model` on each item). With two or more setups,
+  `overview.setups` gives each its own trials, rewards, errors, tasks, accuracy, DQ
+  scenario and cost; the brief's SCORE leads with them and labels the job-wide accuracy
+  as pooled (not a score for any agent). Grouping by model alone, or harness alone,
+  still blends setups. The setup is what was configured, not the trajectory's model: a
+  fallback to another model inside one setup stays a model mismatch.
 
 ### Recoverable Grok Build history
 

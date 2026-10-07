@@ -169,14 +169,12 @@ def score_section(b: Doc) -> Lines:
     scored = n - ov["trials"]["reward_unknown"]
     rewarded = _rewarded(b)
     has_se = _has_se(b)
-    body = [
+    headline = (
         f"{acc:.1f}%"
         + (f" ± {se:.1f}" if has_se else "")
         + f" · {rewarded:,} of {plural(scored, 'scored trial')} rewarded"
-    ]
-    if ov["trials"]["reward_unknown"]:
-        body.append(f"{WARN} {plural(ov['trials']['reward_unknown'], 'trial')} without a reward")
-    body += _scenario(ov["disqualification"], has_se)
+    )
+    body = _headline_texts(ov, headline, has_se)
     no_task = ov["tasks"].get("scored_without_task") or 0
     if has_se and no_task:
         body.append(
@@ -188,6 +186,37 @@ def score_section(b: Doc) -> Lines:
     elif b["tasks_known"] and ov["tasks"].get("count"):
         body.append(f"{INFO} no ± with one attempt per task (the error isn't estimable)")
     return wrap("SCORE", body + _leaderboard_texts(b, n))
+
+
+def _headline_texts(ov: Doc, headline: str, has_se: bool) -> Lines:
+    """The score and its DQ scenario; per setup for a comparison job (`_setup_texts`)."""
+    unknown = ov["trials"]["reward_unknown"]
+    missing = [f"{WARN} {plural(unknown, 'trial')} without a reward"] if unknown else []
+    if ov.get("setups"):  # each setup shows its own scenario
+        return [*_setup_texts(ov["setups"], headline, has_se), *missing]
+    return [headline, *missing, *_scenario(ov["disqualification"], has_se)]
+
+
+def _setup_texts(rows: list[Doc], pooled: str, has_se: bool) -> Lines:
+    """A comparison job (several configured harness/model setups): each setup's own
+    score and DQ scenario first; the pooled figure blends different agents."""
+    texts: Lines = []
+    for s in rows:
+        name = f"{s['agent'] or 'unrecorded'} / {s['model'] or 'unrecorded'}"
+        acc = s["accuracy"]
+        score = (
+            f"{acc[0]:.1f}%" + (f" ± {acc[1]:.1f}" if has_se and acc[1] is not None else "")
+            if acc
+            else "no reward"
+        )
+        text = f"{name}: {score} · {s['rewarded']:,} of {s['scored']:,} rewarded"
+        if adj := s.get("accuracy_if_disqualified"):
+            text += f" · {adj[0]:.1f}% if its {s['dq_candidates']:,} flagged failed"
+        texts.append(text)
+    return [
+        *texts,
+        f"{INFO} {len(rows)} harness/model setups configured: pooled {pooled} (not one score)",
+    ]
 
 
 def _scenario(d: Doc | None, has_se: bool) -> Lines:
