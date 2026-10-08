@@ -90,3 +90,10 @@ def answer_moments(trace: Trace, answers: list[Doc]) -> list[Doc]:
                 {"question": row["question"], "answer": row["answer"], **_moment(trace, at, known)}
             )
     return out
+
+
+def step_moment(trace: Trace, number: int, known: frozenset[str] | None = None) -> Doc | None:
+    """The excerpt at an agent step (its first call's first argument, else its message),
+    or None for a prompt or a step the trace doesn't have."""
+    at = _step_locator(trace, number)
+    return _moment(trace, at, trace_secrets(trace) if known is None else known) if at else None

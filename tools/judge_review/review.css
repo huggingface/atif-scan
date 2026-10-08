@@ -1,0 +1,48 @@
+/* Judge review sheet over tokens.css. No external assets. */
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--read)}
+button,textarea{font:inherit}
+button{border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);padding:5px 11px;cursor:pointer}
+button:hover{background:var(--inset)}
+button[aria-pressed="true"]{background:var(--accent);color:var(--petrol);border-color:var(--petrol)}
+button:focus-visible,textarea:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.muted{color:var(--muted)}
+.bar{position:sticky;top:0;z-index:2;display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 22px;background:var(--bg);border-bottom:2px solid var(--line)}
+.brand strong{font:900 20px/1 var(--voice)}.brand span{font-family:var(--code)}
+.progress{display:flex;gap:10px;align-items:center;min-width:240px}
+.meter{width:160px;height:8px;border-radius:4px;background:var(--inset);overflow:hidden}.meter i{display:block;height:100%;background:var(--accent)}
+.tools,.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dots{display:flex;flex-wrap:wrap;gap:4px;padding:8px 22px}
+.dots button{width:18px;height:18px;padding:0;border-radius:4px;font-size:0}
+.dots button.split{border-width:2px;border-color:var(--danger)}
+.dots button.done{background:var(--ok);border-color:var(--ok)}
+.dots button.skip{background:var(--inset);border-style:dashed}
+.dots button.current{outline:3px solid var(--accent);outline-offset:1px}
+.card{max-width:1180px;margin:6px auto 0;padding:0 22px 120px}
+.head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;margin:6px 0 2px}
+.head h1{margin:0;font:800 24px/1.2 var(--voice)}
+.mono{font:12px var(--code);color:var(--muted)}
+.ending{margin:2px 0 12px;font-size:13px}
+.section{border:1px solid var(--line);border-radius:8px;background:var(--card);margin:10px 0;overflow:hidden}
+.section h2{margin:0;padding:6px 12px;font:800 11px/1.6 var(--read);letter-spacing:var(--track-label);text-transform:uppercase;background:var(--inset);border-bottom:1px solid var(--line-soft)}
+.report{margin:0;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.55 var(--code);max-height:340px;overflow:auto}
+mark{background:var(--highlight);color:inherit;box-shadow:0 0 0 1px var(--accent);border-radius:2px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;vertical-align:top;padding:7px 12px;border-top:1px solid var(--line-soft)}
+th{font-size:12px;color:var(--muted);font-weight:650;border-top:0}
+td.reason{font-size:13px;line-height:1.45}
+.moment{padding:8px 12px;border-top:1px dashed var(--line-soft)}.moment:first-of-type{border-top:0}
+.part{display:grid;grid-template-columns:44px 1fr;gap:8px;margin:2px 0}
+.part>span{font:750 10.5px/1.9 var(--read);letter-spacing:var(--track-label);text-transform:uppercase;color:var(--muted)}
+.part pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 var(--code);background:var(--inset);border-radius:5px;padding:4px 8px;max-height:160px;overflow:auto}
+.part p{margin:0;font-style:italic}
+.label{position:fixed;left:0;right:0;bottom:30px;z-index:3;display:flex;justify-content:center;pointer-events:none}
+.label .panel{pointer-events:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border:2px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 6px 24px rgba(8,44,52,.18);max-width:1180px}
+.label .big{font-weight:800;min-width:118px;padding:8px 12px}
+.label .now{font-weight:700;margin-right:6px}
+.label textarea{width:280px;height:36px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);padding:6px}
+.mech{display:flex;gap:6px;align-items:center}
+.keys{position:fixed;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:4px 14px;justify-content:center;padding:5px 12px;background:var(--inset);border-top:1px solid var(--line-soft);font-size:12px}
+kbd{font:700 11px var(--code);border:1px solid var(--line);border-radius:3px;padding:0 4px;background:var(--card)}
+.empty{padding:40px 0;color:var(--muted)}
+@media(max-width:760px){.part{grid-template-columns:1fr}.label textarea{width:100%}}
