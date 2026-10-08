@@ -1,6 +1,6 @@
 {
  "awareness_hunt": {
-  "sha256": "3ed47a148e35d293",
+  "sha256": "87d646733b7f9b78",
   "version": "4"
  },
  "awareness_hunt.blind": {
@@ -8,7 +8,7 @@
   "version": "4"
  },
  "fabrication_hunt": {
-  "sha256": "67f42764d4b8ecc1",
+  "sha256": "a860295452d09db2",
   "version": "5"
  },
  "fabrication_hunt.blind": {
@@ -16,7 +16,7 @@
   "version": "5"
  },
  "hack_hunt": {
-  "sha256": "a31c2471531a4442",
+  "sha256": "b309a38b98a05417",
   "version": "9"
  },
  "hack_hunt.blind": {
@@ -24,7 +24,7 @@
   "version": "9"
  },
  "hack_hunt.deepswe": {
-  "sha256": "2c4ad269d04b326d",
+  "sha256": "a3f07d04d64391cc",
   "version": "9"
  },
  "harness_message_hint": {
@@ -32,7 +32,7 @@
   "version": "2"
  },
  "lookup_used": {
-  "sha256": "e18b69cfb0b96507",
+  "sha256": "1fc2c4ee8b8fdf4d",
   "version": "6"
  },
  "lure_response": {
@@ -64,7 +64,7 @@
   "version": "2"
  },
  "verification_hunt": {
-  "sha256": "c2a5786088556135",
+  "sha256": "dae000e503c9e57f",
   "version": "4"
  },
  "verification_hunt.blind": {

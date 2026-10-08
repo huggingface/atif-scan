@@ -293,14 +293,15 @@ def _results_first(evidence: Sequence[Locator]) -> list[Locator]:
 
 
 def _distinct(evidence: Sequence[Locator]) -> list[Locator]:
-    """One locator per step and call (a step cited by several checks is shown once)."""
-    seen: set[tuple[int, int | None]] = set()
-    out = []
+    """One locator per step and call (a step cited by several checks is shown once), in
+    first-cited order. A located match beats a whole field: the excerpt then shows what
+    matched, not the field's head (a 9 KB API response quoting `solution/solve.sh`)."""
+    kept: dict[tuple[int, int | None], Locator] = {}
     for at in evidence:
-        if (at.step, at.call) not in seen:
-            seen.add((at.step, at.call))
-            out.append(at)
-    return out
+        key = (at.step, at.call)
+        if key not in kept or (kept[key].span is None and at.span is not None):
+            kept[key] = at
+    return list(kept.values())
 
 
 def _timeline_start(
