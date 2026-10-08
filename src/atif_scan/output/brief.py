@@ -277,6 +277,7 @@ AWARENESS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
             "access.benchmark_material_received",
             "lookup.benchmark_content_obtained",
             "lookup.task_named_skill_obtained",
+            "lookup.benchmark_oracle_named",
             "lookup.search_surfaced_benchmark",
             "reference.hidden_content_reused",
         ),
