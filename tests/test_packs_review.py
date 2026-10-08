@@ -400,3 +400,20 @@ def test_demo_pack_readme_command(monkeypatch, capsys):
     assert by_id["demo.pytest_command"]["status"] == "match"
     demo_pack = importlib.import_module("demo_pack")
     assert all(c.spec.version == "1" for c in demo_pack.checks())
+
+
+def test_check_notes_name_real_checks_and_carry_pixel_policy():
+    # A note keyed by a mistyped id never reaches a prompt, so every key must be a real
+    # check. The pixel note carries leaderboard policy the judge can't infer from the
+    # task, which lets reverse engineering of the binary.
+    from atif_scan.access import access_rules
+    from atif_scan.detectors.priming import builtin_allowances
+    from atif_scan.packs import deepswe, reference, tb4, tb21
+    from atif_scan.review.catalogue import CHECK_NOTES
+
+    pack_checks = [*reference.checks(), *tb21.checks(), *tb4.checks(), *deepswe.checks()]
+    every = [*builtin_detectors(), *access_rules(), *builtin_allowances(), *pack_checks]
+    ids = {c.spec.id for c in every}
+    assert set(CHECK_NOTES) - ids == set()
+    note = CHECK_NOTES["tb21.path_tracing_reverse.pixel_special_case"]
+    assert "disqualify" in note and "own binary" in note
