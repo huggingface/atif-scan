@@ -68,12 +68,12 @@
   "version": "2"
  },
  "verification_hunt": {
-  "sha256": "5d1c883791035d52",
-  "version": "5"
+  "sha256": "12e9d18906584250",
+  "version": "6"
  },
  "verification_hunt.blind": {
-  "sha256": "f24ce876c8726da8",
-  "version": "5"
+  "sha256": "fa280662934888d6",
+  "version": "6"
  },
  "web_provenance": {
   "sha256": "bb4b0bafa930ccac",

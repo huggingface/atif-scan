@@ -232,13 +232,16 @@ def build(
     found = list(assessments)
     fired, cited = ([], []) if question.blind else _fired(question, trace, found)
     extra = question.select(trace) if question.select and not question.blind else []
+    listed = extra  # what the findings list names under the question's evidence label
     section: list[str] = []
     if question.table is not None:
         table = question.table(trace, context, found)
         if table is None:
             return None
         section, located = table
-        extra = [*extra, *located]
+        extra = [*located, *extra]  # the section's own places first: they're its subject
+        # Without its own candidates, the section's places are what the label names.
+        listed = listed if question.select else extra
     ranked = [*extra, *_ranked(cited)] if question.evidence_first else _ranked(cited) + extra
     if not ranked and not question.always:
         return None
@@ -251,7 +254,7 @@ def build(
     out = [
         *_preamble(question, trace, context, label, known, shared),
         *(["## Run environment", environment, ""] if environment else []),
-        *_findings(question, trace, found, fired, extra),
+        *_findings(question, trace, found, fired, listed),
         *section,
         *_evidence(question, trace, evidence, known, start),
     ]
