@@ -112,7 +112,7 @@ AGENT_HISTORY = re.compile(
 # copy of the instruction, setup log and launch scripts.
 AGENT_RUNTIME = re.compile(
     r"/tool-results/|/memory(?:/|$)|"
-    r"^/logs/agent/(?:instruction\.txt|setup\.log|command-agent/|"
+    r"^/logs/agent/(?:instruction\.txt|setup\.log|command-agent(?:/|$)|"
     r"fast-agent-home(?:/(?!sessions\b)|/?$))",
     re.I,
 )
