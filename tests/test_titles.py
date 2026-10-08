@@ -9,6 +9,7 @@ import pytest
 from atif_scan import CheckSpec, Severity, builtin_detectors
 from atif_scan.access import access_rules
 from atif_scan.cli import main
+from atif_scan.detectors.priming import builtin_allowances
 from atif_scan.output.document import document
 from atif_scan.policy import load_rules
 
@@ -23,6 +24,7 @@ def bundled_specs(tmp_path, monkeypatch) -> dict[str, CheckSpec]:
     for check in [
         *builtin_detectors(),
         *access_rules(),
+        *builtin_allowances(),
         *tb21.checks(),
         *tb4.checks(),
         *reference.checks(),

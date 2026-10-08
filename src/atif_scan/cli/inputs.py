@@ -17,6 +17,7 @@ from ..checks import Context, identifier
 from ..data.facts import trial_task
 from ..data.loader import TraceError
 from ..detectors import builtin_detectors
+from ..detectors.priming import builtin_allowances
 from ..packs import recognise, tasks_needed
 from ..packs.reference import ENV as PACK_ENV
 from ..policy import load_rules
@@ -234,7 +235,7 @@ def task_for(source: Source, args: argparse.Namespace) -> str | None:
 
 
 def load_checks(args: argparse.Namespace, records: list[Record] | None = None) -> list[Check]:
-    checks: list[Check] = [*builtin_detectors(), *access_rules()]
+    checks: list[Check] = [*builtin_detectors(), *access_rules(), *builtin_allowances()]
     args.packs_loaded = []
     if args.packs == "auto" and records is not None:
         # The recorded task (Hub, result.json) when it wasn't given: small capped reads,

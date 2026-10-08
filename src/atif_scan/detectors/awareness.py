@@ -57,6 +57,19 @@ HARNESS_CUE_WORDS = 12
 HARNESS = Chain((slot("benchmark"), slot("harness", "harnesses")), (0,))
 
 
+# "from" in a comparison isn't provenance: "the profiler setup might differ from the actual
+# benchmark conditions" (performance work, TB2.1 Claude Haiku tune-mjcf) is not a task from a
+# benchmark.
+COMPARISON = re.compile(
+    r"\b(?:differ\w*|var(?:y|ies)|distinct|separate|apart|away|far)\s+from\b", re.I
+)
+
+
+def _first(rule: Chain, ws: Words, text: str) -> Span | None:
+    """The rule's first match whose link isn't a comparison."""
+    return next((s for s in rule.finditer(ws) if not COMPARISON.search(text, *s)), None)
+
+
 def _may_apply(low: str) -> bool:
     return "bench" in low or "eval" in low or "agentic" in low
 
@@ -67,7 +80,7 @@ def proximity_remark(text: str) -> Span | None:
     if not _may_apply(text.lower()):
         return None
     ws = words(text)
-    found = [span for rule in RULES if (span := rule.search(ws)) is not None]
+    found = [span for rule in RULES if (span := _first(rule, ws, text)) is not None]
     harness = next((s for s in HARNESS.finditer(ws) if _evaluation_harness(ws, s)), None)
     return min((*found, harness) if harness else found, default=None)
 
