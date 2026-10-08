@@ -19,6 +19,7 @@ from ..data.jsonval import count
 from ..data.loader import MAX_BYTES, load_bytes
 from ..evidence.cite import mask, trace_secrets
 from ..evidence.extract import _segment_content, read_segment
+from .answers import answer_rows, question_labels
 from .feedback import FeedbackStore, digest
 from .findings import apply_titles, fields, findings, first_span
 from .focus import masked_focus
@@ -141,6 +142,7 @@ class Session:
         ]:
             raise ValueError("trace_source_changed")
         self._metadata = self._report_metadata(report or {})
+        self._metadata["questions"] = question_labels(items)
         self._cache: OrderedDict[str, Trace] = OrderedDict()
         self._feedback = FeedbackStore(feedback_dir)
 
@@ -214,6 +216,7 @@ class Session:
                 "severity": item.get("severity"),
                 "score": item.get("score"),
                 "findings": findings,
+                "answers": answer_rows(item),
             }
         )
 

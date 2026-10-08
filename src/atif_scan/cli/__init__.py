@@ -52,6 +52,10 @@ def _scan_mode(args: argparse.Namespace) -> int:
         from .viewer import export_viewer  # noqa: PLC0415 - export is opt-in.
 
         return export_viewer(args)
+    if args.highlights is not None:
+        from .highlights import export_highlights  # noqa: PLC0415 - export is opt-in.
+
+        return export_highlights(args)
     return scan(args)
 
 

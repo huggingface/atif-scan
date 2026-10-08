@@ -51,7 +51,6 @@ def transport(monkeypatch):
         ["--cite"],
         ["--cite-check", "synthetic.*"],
         ["--questions", "private"],
-        ["--answers", "private"],
         ["--question", "hack_hunt"],
         ["--question-scope", "all"],
         ["--blind"],
@@ -62,6 +61,20 @@ def test_conflicts(flags, capsys):
         main(["synthetic.json", "--browse", *flags])
     assert exc.value.code == 2
     assert "--browse cannot be combined" in capsys.readouterr().err
+
+
+def test_answers_are_refused_in_a_blind_review_export(tmp_path, capsys):
+    # Answers annotate --browse and --viewer, but a blind review must not show a judge's.
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "synthetic.json",
+                *("--viewer", str(tmp_path / "v"), "--review", "hack_hunt"),
+                *("--answers", "private"),
+            ]
+        )
+    assert exc.value.code == 2
+    assert "blind export" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("flags", [["--browse-port", "0"], ["--feedback-dir", "private"]])

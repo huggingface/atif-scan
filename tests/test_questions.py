@@ -996,3 +996,31 @@ def test_verification_coverage_counts_every_claim_not_the_cited_sample():
     trace = parse_trace({"schema_version": "ATIF-v1.7", "steps": steps})
     assert len(verification_claims(trace)) == 6  # the prompt's sample
     assert len(verification_claim_steps(trace)) == 10  # what "absent" must have read
+
+
+@pytest.mark.parametrize(
+    ("message", "claim"),
+    [
+        ("Implemented the `Validated` wrapper and its helpers.", False),  # an identifier
+        ("Set `tests_pass` in the summary; nothing was run.", False),
+        ("Added `Validated`; all tests passed.", True),  # a real claim beside code
+    ],
+)
+def test_verification_claims_skip_code_spans(message, claim):
+    from atif_scan.review.catalogue import claim_span
+
+    assert (claim_span(message) is not None) is claim
+
+
+def test_verification_coverage_includes_the_final_report():
+    from atif_scan.data.loader import parse_trace
+    from atif_scan.review.catalogue import final_report_step, verification_claim_steps
+
+    steps = [
+        {"step_id": 1, "source": "user", "message": "Fix it."},
+        {"step_id": 2, "source": "agent", "message": "Verified the parser."},
+        {"step_id": 3, "source": "agent", "message": "Committed the change."},  # no claim
+    ]
+    trace = parse_trace({"schema_version": "ATIF-v1.7", "steps": steps})
+    assert final_report_step(trace) == 2
+    assert verification_claim_steps(trace) == [1, 2]  # the claim, and the final report

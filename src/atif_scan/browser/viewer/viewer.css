@@ -1,17 +1,5 @@
-/* atif-scan static trajectory viewer: forward palette and dossier styling. No external fonts,
+/* atif-scan static trajectory viewer: dossier styling over tokens.css (the shared palette). No external fonts,
    images or network assets; everything is served from this directory. */
-:root {
-  --ivory:#fff7e8; --paper:#fffcf4; --ivory-deep:#f4ead5; --petrol:#082c34;
-  --amber:#ffb52e; --teal:#277c80; --ink:var(--petrol); --bg:var(--ivory);
-  --card:var(--paper); --inset:var(--ivory-deep); --line:var(--petrol);
-  --muted:#426068; --danger:#9d382b; --highlight:#ffe0a0;
-  --voice:Georgia,serif; --read:system-ui,sans-serif; --code:ui-monospace,monospace;
-}
-[data-theme="dark"] {
-  --ink:#fff7e8; --bg:#082c34; --card:#11414b; --inset:#18505a;
-  --line:#8caaa7; --muted:#d2dbd5; --danger:#ff9486; --highlight:#755015;
-  color-scheme:dark;
-}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--read)}
 button,input{font:inherit}
@@ -138,3 +126,12 @@ footer.notes p{margin:4px 0}
 .lineage strong{display:block;font-size:13px}
 .lineage p{margin:4px 0 8px}
 .list-filters{display:grid;grid-template-columns:auto 1fr;gap:6px 8px;align-items:center;margin:0 12px 12px}.list-filters .input-label{margin:0}.list-filters select{width:100%;min-width:0;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+/* Judge answers (from --answers): annotations beside the findings, never verdicts. */
+.badge.judge{background:var(--accent);color:var(--petrol);border-color:var(--petrol)}
+.answers-panel{display:grid;gap:10px;margin-bottom:12px}
+.answer-card{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--card);display:grid;gap:6px}
+.answer-card.concern{border-left:5px solid var(--accent)}
+.answer-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.answer-head .title{font-weight:750}
+.answer-meaning,.answer-mechanism{margin:0;font-size:13px;line-height:1.4}
+.chip--plain{color:var(--ink)}

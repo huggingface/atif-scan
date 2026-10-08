@@ -6,6 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'none'; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>atif-scan · trajectory viewer</title>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="viewer.css">
   <script defer src="data.js"></script>
   <script defer src="evidence.js"></script>
@@ -27,7 +28,7 @@
       <aside class="trials panel" aria-label="Trial selection">
         <div class="panel-head"><h2>Trials</h2><span id="trial-count"></span></div>
         <label class="input-label" for="trial-query">Find a trial</label><input id="trial-query" type="search" placeholder="Task or trial label">
-        <div class="chips" role="group" aria-label="Trial filters"><button type="button" data-filter="attention" aria-pressed="true">Needs attention <span id="attention-count"></span></button><button type="button" data-filter="all" aria-pressed="false">All trials</button><button type="button" data-filter="failed" aria-pressed="false">Failed <span id="failed-count"></span></button><button type="button" data-filter="replaced" aria-pressed="false" hidden id="replaced-chip">Replaced <span id="replaced-count"></span></button></div>
+        <div class="chips" role="group" aria-label="Trial filters"><button type="button" data-filter="attention" aria-pressed="true">Needs attention <span id="attention-count"></span></button><button type="button" data-filter="all" aria-pressed="false">All trials</button><button type="button" data-filter="failed" aria-pressed="false">Failed <span id="failed-count"></span></button><button type="button" data-filter="judged" aria-pressed="false" hidden id="judged-chip">Judge concerns <span id="judged-count"></span></button><button type="button" data-filter="replaced" aria-pressed="false" hidden id="replaced-chip">Replaced <span id="replaced-count"></span></button></div>
         <div class="list-filters"><label class="input-label" for="priority-filter">Priority</label><select id="priority-filter"><option value="">Any priority</option></select><label class="input-label" for="check-filter">Check</label><select id="check-filter"><option value="">Any check</option></select></div>
         <div id="trial-list" class="trial-list"></div>
         <p class="small-note">No findings and missing evidence are different states. Neither is a clean-origin verdict.</p>
@@ -43,9 +44,10 @@
       </section>
       <section class="inspection panel" aria-label="Evidence inspection">
         <div class="panel-head"><h2>Receipts</h2><span class="badge">Inspection, not a verdict</span></div>
-        <div class="tabs" role="group" aria-label="Evidence views"><button type="button" data-tab="review" aria-pressed="false" id="review-tab" hidden>Review</button><button type="button" data-tab="findings" aria-pressed="true">Findings</button><button type="button" data-tab="search" aria-pressed="false">Search</button></div>
+        <div class="tabs" role="group" aria-label="Evidence views"><button type="button" data-tab="review" aria-pressed="false" id="review-tab" hidden>Review</button><button type="button" data-tab="findings" aria-pressed="true">Findings</button><button type="button" data-tab="answers" aria-pressed="false" id="answers-tab" hidden>Answers <span id="answers-count"></span></button><button type="button" data-tab="search" aria-pressed="false">Search</button></div>
         <div id="review-panel" class="review-panel" hidden></div>
         <div id="findings-panel"></div>
+        <div id="answers-panel" class="answers-panel" hidden></div>
         <div id="search-panel" hidden><label class="input-label" for="evidence-query">Literal search · case-sensitive</label><form id="search-form"><input id="evidence-query" type="search" maxlength="150" placeholder="Text in this trajectory"><button type="submit">Find</button></form><p class="small-note">Searches every recorded field of the selected trial, including pages not shown. Missing or compacted history is not searched; no match is not proof of absence.</p><div id="search-results" aria-live="polite"></div></div>
         <div class="field-heading"><h3 id="field-title">Recorded field</h3><button id="copy-citation" type="button">Copy locator</button></div>
         <div id="provenance" class="provenance"></div>

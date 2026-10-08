@@ -380,6 +380,13 @@ def _browse_arguments(parser: argparse.ArgumentParser) -> None:
         help="write a static trajectory viewer (masked trace text) to a new or empty DIR",
     )
     parser.add_argument(
+        "--highlights",
+        type=Path,
+        metavar="DIR",
+        help="write a static highlight report to a new or empty DIR: masked excerpts of "
+        "where findings, benchmark-awareness stages and judge concerns (--answers) happened",
+    )
+    parser.add_argument(
         "--review",
         metavar="QUESTION",
         type=_question_id,
@@ -389,14 +396,16 @@ def _browse_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _check_viewer_dir(parser: argparse.ArgumentParser, directory: Path) -> None:
+def _check_viewer_dir(
+    parser: argparse.ArgumentParser, directory: Path, flag: str = "--viewer"
+) -> None:
     try:
         if directory.is_symlink() or (
             directory.exists() and (not directory.is_dir() or any(directory.iterdir()))
         ):
-            parser.error("--viewer requires a new or empty directory")
+            parser.error(f"{flag} requires a new or empty directory")
     except OSError:
-        parser.error("viewer directory unavailable (details withheld)")
+        parser.error("export directory unavailable (details withheld)")
 
 
 def _check_browse(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -404,26 +413,34 @@ def _check_browse(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--browse-port and --feedback-dir require --browse")
     if args.review is not None and args.viewer is None:
         parser.error("--review requires --viewer DIR")
+    if sum((args.browse, args.viewer is not None, args.highlights is not None)) > 1:
+        parser.error("--browse, --viewer and --highlights are separate modes: pick one")
     if args.viewer is not None:
-        if args.browse:
-            parser.error("--viewer cannot be combined with --browse")
         _check_viewer_dir(parser, args.viewer)
-    if not args.browse and args.viewer is None:
-        return
+    if args.highlights is not None:
+        _check_viewer_dir(parser, args.highlights, "--highlights")
+    if args.browse or args.viewer is not None or args.highlights is not None:
+        _check_desk_conflicts(parser, args)
+
+
+def _check_desk_conflicts(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """--browse and --viewer show a scan: no bundle writing, citations or inspection."""
     incompatible = (
         args.inspect,
         not args.sync,
         args.cite,
         args.cite_check,
         args.questions,
-        args.answers,
         args.question,
         args.question_scope,
         args.blind,
     )
     if any(incompatible):
-        flag = "--browse" if args.browse else "--viewer"
+        flag = "--browse" if args.browse else "--viewer" if args.viewer else "--highlights"
         parser.error(
             f"{flag} cannot be combined with --inspect, --no-sync, --cite/--cite-check, "
-            "--questions, --answers, --question, --question-scope or --blind"
+            "--questions, --question, --question-scope or --blind"
         )
+    # Answers are shown as annotations; a blind review export must not show a judge's.
+    if args.answers and args.review is not None:
+        parser.error("--review is a blind export: it cannot be combined with --answers")

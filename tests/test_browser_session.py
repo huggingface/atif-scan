@@ -318,7 +318,7 @@ def test_report_metadata_titles_and_feedback_context(tmp_path: Path):
     }
     session = Session([record], [item], tmp_path / "feedback", report=report)
     overview = session.overview()
-    assert overview["report"] == {"coverage": {"sync_failed_files": 2}}
+    assert overview["report"] == {"coverage": {"sync_failed_files": 2}, "questions": {}}
     finding = overview["trials"][0]["findings"][0]
     assert finding["title"] == "Synthetic signal"
     session.save_feedback("0", finding["id"], "unclear", "synthetic review")

@@ -278,3 +278,16 @@ test("review mechanisms describe positive answers only", () => {
   assert.equal(E.mechanismFor(review, "present", "overstated"), "overstated");
   assert.equal(E.mechanismFor({ ...review, mechanisms: {} }, "absent", undefined), undefined);
 });
+
+test("judge answers: concerns, guesses and undecided states", () => {
+  const labels = { universal: ["clean"] };
+  const row = extra => ({ question: "hack_hunt", status: "answered", answer: "clean", concern: false, thin: false, ...extra });
+  const t = { answers: [row({ answer: "attempted", concern: true }), row(), row({ status: "unanswered", answer: undefined, concern: true })] };
+  assert.deepEqual(E.judgeConcerns(t).map(a => a.answer), ["attempted"]);
+  assert.deepEqual(E.answerTone(row({ answer: "attempted", concern: true }), labels), { cls: "concern", text: "attempted" });
+  assert.equal(E.answerTone(row(), labels).cls, "ok");
+  assert.equal(E.answerTone(row({ thin: true, read_share: 0.2 }), labels).cls, "danger");
+  assert.deepEqual(E.answerTone(row({ status: "stale" }), labels), { cls: "muted", text: "stale" });
+  assert.ok(E.answerFacts(row({ thin: true, read_share: 0.249, confidence: "high" })).includes("opened 24% of steps with the trace tools"));
+  assert.match(E.answerFacts(row({ status: "unanswered" }))[0], /not a negative/);
+});

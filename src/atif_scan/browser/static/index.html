@@ -6,6 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>atif-scan · Private evidence desk</title>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="browser.css">
   <script src="browser.js" defer></script>
 </head>
@@ -37,6 +38,11 @@
       <p id="trial-state" role="status"></p>
       <details class="coverage" open><summary>Selected trial coverage / gaps</summary><pre id="coverage">No trial selected.</pre></details>
       <div id="finding-list"></div>
+      <section id="answers-section" class="answers" hidden aria-labelledby="answers-heading">
+        <h3 id="answers-heading">Judge answers</h3>
+        <p class="muted">A model judge's answers to review questions (from <code>--answers</code>). Annotations, not verdicts: they never change findings, priorities or scores. Free-text reasons are not shown.</p>
+        <div id="answer-list"></div>
+      </section>
       <section id="review-panel" hidden aria-labelledby="review-heading">
         <h3 id="review-heading" tabindex="-1"></h3>
         <p id="finding-meta"></p>

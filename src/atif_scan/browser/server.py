@@ -33,7 +33,10 @@ ASSETS = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/browser.js": ("browser.js", "text/javascript; charset=utf-8"),
     "/browser.css": ("browser.css", "text/css; charset=utf-8"),
+    "/tokens.css": ("tokens.css", "text/css; charset=utf-8"),
 }
+# Shared with the static viewer: kept beside both asset folders, not inside either.
+SHARED = frozenset({"tokens.css"})
 FIELDS = {
     "/api/overview": (set(), set()),
     "/api/trial": ({"trial"}, set()),
@@ -241,7 +244,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         name, content_type = asset
         try:
-            content = files("atif_scan.browser").joinpath("static", name).read_bytes()
+            root = files("atif_scan.browser")
+            content = (root if name in SHARED else root.joinpath("static")).joinpath(name)
+            content = content.read_bytes()
         except OSError:
             self._json(500, {"error": "asset_unavailable"})
             return

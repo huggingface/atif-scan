@@ -21,6 +21,7 @@ from ..evidence.cite import mask, trace_secrets
 from ..evidence.extract import _segment_content, _segment_status
 from ..output.brief_view import sections
 from ..review.coverage import UNIVERSAL
+from .answers import answer_rows, question_labels
 from .findings import apply_titles, fields, findings, first_span
 from .focus import masked_focus
 from .session import pinned_bytes
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 
 FORMAT = "atif-scan-viewer/1"
 ASSETS = ("index.html", "viewer.css", "evidence.js", "viewer.js")
+SHARED_ASSETS = ("tokens.css",)  # from the browser package, shared with --browse
 DATA_FILE = "data.js"
 MAX_NAME = 60
 WEB_GAPS = "integrity.web_results_not_recorded"
@@ -199,6 +201,7 @@ def trial_bundle(trial_id: str, item: Doc, trace: Trace | None, report: Doc) -> 
                 if (value := as_object(item.get("selection")).get(key)) is not None
             },
             "findings": found,
+            "answers": answer_rows(item),
             "steps": steps,
         }
     )
@@ -330,6 +333,7 @@ def _trial(
     if review is None:
         return trial_bundle(trial_id, item, trace, report)
     trial = trial_bundle(trial_id, blind_item(item, review, trace), trace, report)
+    trial["answers"] = []  # blind: never a judge's answer
     return _review_trial(trial, review)
 
 
@@ -360,6 +364,8 @@ def bundle(
         "packs": deepcopy(report.get("packs")),
         "run": deepcopy(run),
         "trials": trials,
+        # Wording for the judge answers shown (none in a blind review export).
+        "questions": question_labels(items) if review is None else {},
     }
     if review is not None:
         document["review"] = review_block(review)
@@ -368,10 +374,10 @@ def bundle(
     return document
 
 
-def data_script(document: Doc) -> str:
+def data_script(document: Doc, name: str = "ATIF_VIEWER") -> str:
     """ASCII-only JSON assigned to one global; `<` escaped so no markup survives."""
     text = json.dumps(document, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
-    return "window.ATIF_VIEWER = " + text.replace("<", "\\u003c") + ";\n"
+    return f"window.{name} = " + text.replace("<", "\\u003c") + ";\n"
 
 
 def _writable(directory: Path) -> None:
@@ -381,13 +387,24 @@ def _writable(directory: Path) -> None:
         raise ValueError("viewer_directory_not_empty")
 
 
-def write(directory: Path, document: Doc) -> None:
-    """A new or empty directory, private until the reviewer publishes it themselves."""
+def write(
+    directory: Path,
+    document: Doc,
+    folder: str = "viewer",
+    assets: tuple[str, ...] = ASSETS,
+    global_name: str = "ATIF_VIEWER",
+) -> None:
+    """A new or empty directory, private until the reviewer publishes it themselves: the
+    `folder`'s fixed `assets`, the shared tokens, and the document as `data.js`."""
     _writable(directory)
     directory.mkdir(mode=0o700, exist_ok=True)
-    static = resources.files("atif_scan.browser").joinpath("viewer")
-    files = {name: static.joinpath(name).read_text(encoding="utf-8") for name in ASSETS}
-    files[DATA_FILE] = data_script(document)
+    package = resources.files("atif_scan.browser")
+    static = package.joinpath(folder)
+    files = {name: static.joinpath(name).read_text(encoding="utf-8") for name in assets}
+    files.update(
+        {name: package.joinpath(name).read_text(encoding="utf-8") for name in SHARED_ASSETS}
+    )
+    files[DATA_FILE] = data_script(document, global_name)
     for name, text in files.items():
         fd = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:

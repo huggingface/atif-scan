@@ -35,6 +35,7 @@ Then, as needed:
 
 ```bash
 atif-scan JOB --cite                         # finding rows with masked trace excerpts
+atif-scan JOB --highlights DIR               # excerpts of where the interesting things happened
 atif-scan JOB --browse                       # private localhost evidence browser + feedback
 atif-scan JOB --questions DIR                # review bundle for the flagged successes
 atif-scan hunt --model MODEL --questions DIR # answer it with fast-agent (a provider call)
@@ -91,6 +92,11 @@ has the working rules and `tests/test_architecture.py` enforces the package laye
 puts in front of a judge. After an intended prompt change, bump the question's version
 and regenerate with `UPDATE_GOLDEN=1 uv run pytest tests/test_prompt_golden.py`, then
 review the diff.
+
+**Viewer screenshots.** Before a release, `uv run python tools/viewer_shots.py` exports the
+synthetic example, screenshots it with headless Chrome (desktop and phone, light and dark)
+and fails on a blank page, a page that doesn't open at its masthead, or a theme that didn't
+apply. Screenshots go to the atif-scan home, for a person to look at.
 
 **Gold masters.** Before changing rules, snapshot scans of real runs and diff after:
 

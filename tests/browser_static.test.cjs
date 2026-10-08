@@ -449,3 +449,13 @@ test("new evidence location invalidates an older focus request within the same f
   assert.match(e["field-title"].textContent, /Step 20/);
   assert.equal(marks(e)[0].textContent, "current");
 });
+
+test("judge answers: only answered concerns badge a trial; unanswered is not a negative", () => {
+  const t = { answers: [
+    { question: "hack_hunt", status: "answered", answer: "attempted", concern: true, confidence: "high", read_share: 0.5 },
+    { question: "history_probe", status: "unanswered", concern: false },
+  ] };
+  assert.deepEqual(H.judgeConcerns(t).map(a => a.answer), ["attempted"]);
+  assert.deepEqual(H.answerFacts(t.answers[0]), ["high confidence", "opened 50% of steps with the trace tools"]);
+  assert.match(H.answerFacts(t.answers[1])[0], /not a negative/);
+});

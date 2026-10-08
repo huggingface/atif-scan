@@ -9,6 +9,8 @@ from dataclasses import dataclass, replace
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
+from ..browser.answers import answer_rows
+from ..browser.highlights import interesting
 from ..cache import ResultCache, checks_signature
 from ..checks import Context, Severity, Status, check_selected
 from ..data.facts import recorded_facts, run_facts, trace_facts, trial_reward, trial_task
@@ -17,6 +19,7 @@ from ..data.loader import TraceError
 from ..data.web_activity import web_activity
 from ..engine import Engine, effective_context
 from ..evidence.cite import citations
+from ..evidence.highlights import answer_moments, finding_moments
 from ..evidence.history import history_counts
 from ..output.bundle import write_review
 from ..output.document import assemble, document, report
@@ -110,6 +113,7 @@ class Scanner:
     cite: Severity | None = None
     cite_checks: tuple[str, ...] = ()  # --cite-check globs; empty cites every check
     images: ImageChecker | None = None  # --image-model
+    highlights: bool = False  # --highlights: masked excerpts of interesting moments
 
     @classmethod
     def for_args(cls, args: argparse.Namespace, engine: Engine) -> Scanner:
@@ -120,10 +124,16 @@ class Scanner:
         # Citations and questions carry trace text, and answers need the trace: never cached.
         # Image readings change results without changing the trace: never cached either.
         # `cite is not None`: Severity.INFO is 0, so `--cite info` is falsy (regression).
-        if not (args.no_cache or cite is not None or args.questions or answers or images):
+        # Highlights carry trace text too.
+        highlights = getattr(args, "highlights", None) is not None
+        if not (
+            args.no_cache or cite is not None or args.questions or answers or images or highlights
+        ):
             directory = args.cache or args.sync_root / "results"
             cache = ResultCache(directory, version("atif-scan"), checks_signature(engine))
-        return cls(engine, args.task, cache, answers, cite, tuple(args.cite_check), images)
+        return cls(
+            engine, args.task, cache, answers, cite, tuple(args.cite_check), images, highlights
+        )
 
     def item(self, source: Source, context: Context) -> Doc:
         item = self._item(source, context)
@@ -175,10 +185,18 @@ class Scanner:
         item = assemble(scanned, run_facts(recorded, traced))
         if self.answers is not None:
             item["answers"] = self.answers.annotate(source.label, trace, source.local)
-        if self.cite is not None and trace is not None:
-            # Opt-in trace text; the only report field that isn't allowlisted metadata.
-            item["citations"] = citations(trace, assessments, self.cite, self.cite_checks)
+        if trace is not None:
+            self._trace_text(item, trace, assessments)
         return item
+
+    def _trace_text(self, item: Doc, trace: Trace, assessments: tuple[Assessment, ...]) -> None:
+        """The opt-in fields that carry trace text: --cite (the only report field that
+        isn't allowlisted metadata) and --highlights excerpts (export only, never a report)."""
+        if self.cite is not None:
+            item["citations"] = citations(trace, assessments, self.cite, self.cite_checks)
+        if self.highlights:
+            item["moments"] = finding_moments(trace, assessments, interesting)
+            item["answer_moments"] = answer_moments(trace, answer_rows(item))
 
 
 def _scan_all(

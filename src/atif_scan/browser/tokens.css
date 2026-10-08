@@ -1,0 +1,44 @@
+/* atif-scan design tokens, shared by the private evidence desk (--browse) and the static
+   viewer (--viewer). The forward palette from fast-agent's design system
+   (fast-agent docs/assets/forward/tokens), with system fonts only: no external assets.
+   Every semantic text colour keeps at least 4.5:1 on page, card and inset surfaces in
+   its theme (checked when chosen; don't go lighter or darker without re-checking). */
+:root {
+  /* palette */
+  --ivory:#fff7e8; --paper:#fffcf4; --ivory-deep:#f4ead5;
+  --petrol:#082c34; --petrol-2:#11414b; --petrol-3:#18505a;
+  --amber:#ffb52e; --amber-ink:#8a5a00; --teal:#277c80;
+
+  /* semantic, light */
+  --bg:var(--ivory); --card:var(--paper); --inset:var(--ivory-deep);
+  --ink:var(--petrol); --muted:#426068; --line:var(--petrol); --line-soft:rgba(8,44,52,.14);
+  --accent:var(--amber); --accent-ink:var(--amber-ink); --focus:var(--teal);
+  --danger:#9d382b; --ok:#1a6b44; --info:#2c63b0; --highlight:#ffe0a0;
+
+  /* type */
+  --voice:Georgia,"Times New Roman",serif;
+  --read:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --code:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --track-label:.12em;
+}
+[data-theme="dark"] {
+  --bg:var(--petrol); --card:var(--petrol-2); --inset:var(--petrol-3);
+  --ink:var(--ivory); --muted:#d2dbd5; --line:#8caaa7; --line-soft:rgba(255,247,232,.16);
+  --accent-ink:var(--amber);
+  --danger:#ffa89d; --ok:#6ad19c; --info:#9cc4ff; --highlight:#755015;
+  color-scheme:dark;
+}
+
+/* Figures line up in columns and counters. */
+body { font-variant-numeric:tabular-nums }
+
+/* Status chips: small uppercase labels for priorities and judge answers. */
+.chip {
+  display:inline-block; padding:1px 7px; border:1px solid var(--line); border-radius:4px;
+  font:750 10.5px/1.5 var(--read); letter-spacing:var(--track-label); text-transform:uppercase;
+  white-space:nowrap; background:var(--card); color:var(--ink);
+}
+.chip--concern { background:var(--accent); color:var(--petrol); border-color:var(--petrol) }
+.chip--ok { color:var(--ok); border-color:currentColor }
+.chip--muted { color:var(--muted); border-style:dashed }
+.chip--danger { color:var(--danger); border-color:currentColor }

@@ -56,6 +56,8 @@ test("static viewer highlights evidence, restores links and never executes trace
     assert.match(await page.locator("#field-text mark").first().textContent(), /^\/tests/);
     const hash = await page.evaluate(() => location.hash);
     assert.match(hash, /finding=\d+&loc=\d+/);
+    // Regression: opening on evidence scrolled the window and hid the masthead.
+    assert.equal(await page.evaluate(() => scrollY), 0);
 
     await page.locator("summary", { hasText: "Lower priority" }).click();
     await page.locator(".finding-select", { hasText: "credential" }).click();
@@ -69,6 +71,12 @@ test("static viewer highlights evidence, restores links and never executes trace
     await page.locator("#search-form button").click();
     await page.locator(".search-hit").first().click();
     assert.equal(await page.locator("#field-text mark").textContent(), "synthetic line 399");
+    // Evidence deep in a long field is scrolled into view inside its own panel.
+    assert.ok(await page.evaluate(() => {
+      const box = document.querySelector("#field-text").getBoundingClientRect();
+      const mark = document.querySelector("#field-text mark").getBoundingClientRect();
+      return mark.top >= box.top && mark.bottom <= box.bottom;
+    }));
 
     const restored = await browser.newPage();
     await restored.goto(url + hash);
@@ -77,7 +85,9 @@ test("static viewer highlights evidence, restores links and never executes trace
 
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobile.goto(url);
+    await mobile.locator("#field-text mark").first().waitFor();
     assert.ok(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    assert.equal(await mobile.evaluate(() => scrollY), 0);
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();

@@ -1,11 +1,9 @@
-/* Evidence desk: forward palette, dossier panels,
+/* Evidence desk over tokens.css (the shared palette): dossier panels,
    field buttons and recorded-neighbour inspection. No external assets. */
 :root {
   color-scheme: light;
-  --ivory:#fff7e8; --paper:#fffcf4; --inset:#f4ead5; --petrol:#082c34;
-  --amber:#ffb52e; --teal:#277c80; --muted:#426068; --danger:#923627;
-  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-  color:var(--petrol); background:var(--ivory);
+  font-family:var(--read);
+  color:var(--ink); background:var(--bg);
 }
 * { box-sizing:border-box }
 body { margin:0 }
@@ -55,3 +53,9 @@ fieldset label { margin:10px 0 }
 
 #field-text mark { background:var(--amber); color:var(--petrol); border-bottom:2px solid var(--petrol) }
 #focus-note { border-left:3px solid var(--teal); padding-left:10px }
+/* Judge answers (from --answers): annotations, never verdicts. */
+.answers { margin-top:14px }
+.answer-card { display:grid; gap:4px; border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin:8px 0; background:var(--card) }
+.answer-card.concern { border-left:5px solid var(--accent) }
+.answer-card p { margin:2px 0 }
+.answer-card .chip { justify-self:start }

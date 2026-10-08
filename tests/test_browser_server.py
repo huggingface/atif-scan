@@ -91,7 +91,7 @@ def test_link_binding_and_headers(desk: DeskServer):
     assert desk.token.encode() not in body
 
 
-@pytest.mark.parametrize("path", ["/", "/index.html", "/browser.js", "/browser.css"])
+@pytest.mark.parametrize("path", ["/", "/index.html", "/browser.js", "/browser.css", "/tokens.css"])
 def test_public_fixed_assets(desk: DeskServer, path: str):
     status, headers, body = request(
         desk, path, method="GET", headers={"Authorization": None, "Origin": None}
@@ -99,7 +99,9 @@ def test_public_fixed_assets(desk: DeskServer, path: str):
     assert status == 200
     assert headers["Cache-Control"] == "no-store"
     name = "index.html" if path == "/" else path.removeprefix("/")
-    assert body == files("atif_scan.browser").joinpath("static", name).read_bytes()
+    root = files("atif_scan.browser")
+    asset = root.joinpath(name) if name == "tokens.css" else root.joinpath("static", name)
+    assert body == asset.read_bytes()
     assert int(headers["Content-Length"]) == len(body)
     assert desk.token.encode() not in body
 

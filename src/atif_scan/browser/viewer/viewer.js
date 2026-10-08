@@ -47,6 +47,9 @@
     catch { storageOk = false; }
   }
   if (review) { state.filter = "all"; state.tab = "review"; }
+  // Judge answers (from --answers): annotations, never in a blind review export.
+  const questions = review ? {} : data.questions ?? {};
+  const hasAnswers = !review && trials.some(t => (t.answers ?? []).length);
 
   function firstRef(trial) {
     const step = trial.steps.find(s => s.fields.length);
@@ -66,11 +69,19 @@
     }
     history.replaceState(null, "", "#" + new URLSearchParams(params).toString());
   }
+  // Centre the evidence inside its own panel. The page itself moves only for the
+  // reader's own navigation, and then only as far as needed: on load it stays at the top
+  // (scrolling the window there hid the masthead, and a narrow layout opened blank).
+  let pageScroll = false;
   function scrollToEvidence() {
     requestAnimationFrame(() => {
-      const target = $("field-text").querySelector("mark");
-      if (target) target.scrollIntoView({ block: "center" });
-      else $("field-text").scrollTop = 0;
+      const pre = $("field-text");
+      const target = pre.querySelector("mark");
+      if (target) {
+        const offset = target.getBoundingClientRect().top - pre.getBoundingClientRect().top;
+        pre.scrollTop += offset - (pre.clientHeight - target.offsetHeight) / 2;
+      } else pre.scrollTop = 0;
+      if (pageScroll) pre.scrollIntoView({ block: "nearest" });
     });
   }
   function jump(ref, span = null, finding = state.finding) {
@@ -123,6 +134,9 @@
       `${E.duration(wall.trial_sec)} full trials, summed (parallel trials overlap) · ${wall.recorded_trials} recorded` : "";
     $("attention-count").textContent = `(${scoredTrials.filter(E.needsAttention).length})`;
     $("failed-count").textContent = `(${scoredTrials.filter(t => E.errorClass(t.facts)).length})`;
+    const judged = scoredTrials.filter(t => E.judgeConcerns(t).length).length;
+    $("judged-chip").hidden = !hasAnswers;
+    $("judged-count").textContent = `(${judged})`;
     const evidence = trials.length - scoredTrials.length;
     $("replaced-chip").hidden = !evidence;
     $("replaced-count").textContent = `(${evidence})`;
@@ -173,6 +187,7 @@
     badges.append(badge(E.rewardLabel(trial.reward), typeof trial.reward === "number" ? "" : "unknown"));
     const top = E.topPriority(trial);
     if (top) badges.append(badge(`${top} priority`, top));
+    for (const a of E.judgeConcerns(trial)) badges.append(badge(`judge · ${a.answer}`, "judge"));
     const note = E.lineageNote(trial);
     if (note) badges.append(badge(note.kind === "replacement" ? "replacement" : "replaced · not counted", note.kind === "replacement" ? "explained" : "gap"));
     const failed = E.errorClass(trial.facts);
@@ -184,10 +199,11 @@
   }
   function renderList() {
     const query = $("trial-query").value.toLowerCase();
+    const inFilter = t => state.filter === "all" || (state.filter === "failed" ? !!E.errorClass(t.facts) :
+      state.filter === "judged" ? E.judgeConcerns(t).length > 0 : E.needsAttention(t));
     const rows = trials.filter(t => `${t.input_id ?? ""} ${t.task ?? ""}`.toLowerCase().includes(query) &&
       E.matchesFilters(t, state) &&
-      (state.filter === "replaced" ? !E.counted(t) : E.counted(t) &&
-        (state.filter === "all" || (state.filter === "failed" ? !!E.errorClass(t.facts) : E.needsAttention(t)))));
+      (state.filter === "replaced" ? !E.counted(t) : E.counted(t) && inFilter(t)));
     const ordered = state.filter === "attention" || state.priority || state.check ? E.byPriority(rows) : rows;
     $("trial-list").replaceChildren(...ordered.map(trialRow));
     if (!rows.length) $("trial-list").append(node("p",
@@ -568,9 +584,56 @@
     $("review-panel").replaceChildren(...elements);
     renderReviewStatus();
   }
+  function stepRef(number) {
+    const step = state.trial.steps.find(s => s.step === number);
+    return step && step.fields.length ? firstRef({ steps: [step] }) : null;
+  }
+  function answerCard(row) {
+    const labels = questions[row.question] ?? {};
+    const tone = E.answerTone(row, labels);
+    const card = node("article", undefined, "answer-card" + (row.concern && row.status === "answered" ? " concern" : ""));
+    const head = node("div", undefined, "answer-head");
+    head.append(node("span", labels.title ?? row.question, "title"), node("span", tone.text.replaceAll("_", " "), `chip chip--${tone.cls || "plain"}`));
+    card.append(head, node("div", `${row.question} · v${row.version}`, "mono"));
+    if (row.status === "answered") {
+      const meaning = labels.answers?.[row.answer];
+      if (meaning) card.append(node("p", meaning, "answer-meaning"));
+      if (row.mechanism && row.mechanism !== "none") {
+        const mech = node("p", undefined, "answer-mechanism");
+        mech.append(node("strong", row.mechanism.replaceAll("_", " ")));
+        const said = labels.mechanisms?.[row.mechanism];
+        if (said) mech.append(document.createTextNode(` · ${said}`));
+        card.append(mech);
+      }
+    }
+    const facts = E.answerFacts(row);
+    if (facts.length) card.append(node("p", facts.join(" · "), row.thin || row.status !== "answered" ? "limits" : "calc"));
+    const steps = row.steps ?? [];
+    if (steps.length) {
+      const anchors = node("div", undefined, "anchor-row");
+      anchors.append(node("span", "Steps it cited:", "limits"));
+      for (const n of steps) {
+        const ref = stepRef(n);
+        const b = button(`Step ${n}`, () => ref && jump(ref, null, null));
+        b.disabled = !ref;
+        anchors.append(b);
+      }
+      card.append(anchors);
+    }
+    return card;
+  }
+  function renderAnswers() {
+    const rows = state.trial?.answers ?? [];
+    $("answers-tab").hidden = !hasAnswers;
+    $("answers-count").textContent = rows.length ? `(${rows.length})` : "";
+    const panel = $("answers-panel");
+    panel.replaceChildren(node("p", "A model judge's answers to review questions about this trace. Annotations, not verdicts: they never change findings, priorities or scores. Its free-text reasons aren't exported.", "small-note"));
+    if (!rows.length) { panel.append(node("p", "No question was asked about this trial. That is not a clean result.", "small-note")); return; }
+    panel.append(...rows.map(answerCard));
+  }
   function render() {
     renderList(); renderLineage(); renderOutcome(); renderCoverage(); renderTimeline(); renderFindings(); renderField();
-    renderReview();
+    renderReview(); renderAnswers();
   }
 
   document.querySelectorAll("[data-filter]").forEach(b => b.addEventListener("click", () => {
@@ -579,7 +642,7 @@
   function setTab(tab) {
     state.tab = tab;
     document.querySelectorAll("[data-tab]").forEach(t => t.setAttribute("aria-pressed", String(t.dataset.tab === tab)));
-    ["review", "findings", "search"].forEach(id => $(id + "-panel").hidden = id !== tab);
+    ["review", "findings", "answers", "search"].forEach(id => $(id + "-panel").hidden = id !== tab);
   }
   document.querySelectorAll("[data-tab]").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
   if (review) {
@@ -651,4 +714,5 @@
       scoredTrials[0] ?? trials[0];
     if (first) selectTrial(first); else renderList();
   }
+  requestAnimationFrame(() => { pageScroll = true; });
 })();
