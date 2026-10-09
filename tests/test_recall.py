@@ -146,6 +146,9 @@ def test_own_task_called_a_task_is_recall(task, text):
         ("pypi-server", agent("", calls=[bash("pypi-server run -p 8080 /app/packages")])),
         ("mteb-leaderboard", agent(reasoning="Known spaces: TurkuNLP/mteb-leaderboard.")),
         ("overfull-hbox", agent("Keep only changes that reduce the overfull-hbox count.")),
+        # Regression: the work described, not the slug written (a capitalised name).
+        ("raman-fitting", agent(reasoning="A physicist creating a Raman-fitting task.")),
+        ("rstan-to-pystan", agent("Completed the RStan-to-PyStan task.")),
         ("regex-chess", agent(reasoning='A known GitHub project "regex-chess" exists.')),
         # Framed as a task, but in a command: commands are left out.
         ("regex-chess", agent("", calls=[bash("echo 'regex-chess task notes' > /tmp/n")])),
