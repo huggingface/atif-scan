@@ -169,7 +169,7 @@ def test_empty_message_slots_are_hidden_but_targeted_fields_stay(tmp_path: Path)
     source = Source("synthetic", lambda: load_trace(path), local=path)
     item = Scanner(Engine([]), None).item(source, Context())
     trace = load_trace(path)
-    trial = export.trial_bundle("0", item, trace, {})
+    trial = export.trial_bundle("0", item, trace, {}, full=True)
     step9 = next(s for s in trial["steps"] if s["step"] == 9)
     assert step9["fields"] == []
     parts = {f["part"] for s in trial["steps"] for f in s["fields"]}
@@ -371,6 +371,8 @@ def test_review_export_is_blind_and_lists_the_questions_candidates(tmp_path: Pat
     assert (loc["step"], loc["part"], loc["focus_status"]) == (7, "message", "exact")
     assert data["run"] is None or data["run"]["sections"] == []
     assert trial["answers"] == [] and data["questions"] == {}  # never a judge's answer
+    assert data["evidence_scope"] == "full"
+    assert [s["step"] for s in trial["steps"]] == [1, 4, 7]
 
 
 def test_review_needs_a_viewer_and_a_known_question(trace: Path, tmp_path: Path, capsys):
@@ -462,3 +464,80 @@ def test_export_shows_judge_answers_with_a_masked_reason(trace: Path, tmp_path: 
     capsys.readouterr()
     assert main([str(trace), "--answers", str(qdir), "--format", "json"]) in (0, 1)
     assert "REASON-SENTINEL" not in capsys.readouterr().out
+
+
+def test_viewer_defaults_to_related_steps_with_full_opt_out(trace: Path, tmp_path: Path):
+    compact, full = tmp_path / "compact", tmp_path / "full"
+    _export(trace, compact)
+    _export(trace, full, "--viewer-full")
+    small, large = _data(compact), _data(full)
+    assert small["evidence_scope"] == "findings" and large["evidence_scope"] == "full"
+    a, b = small["trials"][0], large["trials"][0]
+    assert [s["step"] for s in a["steps"]] == [4]
+    assert a["steps"] == [s for s in b["steps"] if s["step"] == 4]
+    assert [s["step"] for s in b["steps"]] == [1, 4]
+    assert a["findings"] == [
+        f for f in b["findings"] if f["severity"] != "info" or f["status"] != "match"
+    ]
+    for key in ("coverage", "facts", "score", "severity", "reward"):
+        assert a[key] == b[key]
+    assert small["run"] == large["run"]
+
+
+def test_viewer_full_requires_viewer(trace: Path, capsys):
+    with pytest.raises(SystemExit):
+        main([str(trace), "--viewer-full"])
+    assert "--viewer-full requires --viewer" in capsys.readouterr().err
+
+
+def test_no_findings_keeps_summary_without_trace_text(trace: Path):
+    source = Source("synthetic", lambda: load_trace(trace), local=trace)
+    item = Scanner(Engine([]), None).item(source, Context())
+    trial = export.trial_bundle("0", item, load_trace(trace), {})
+    assert trial["steps"] == [] and trial["findings"] == []
+    assert trial["coverage"]["incomplete"] == item.get("incomplete")
+    assert trial["input_id"] == "synthetic"
+
+
+def test_related_steps_include_unread_web_pairs_and_answer_citations():
+    found = [
+        {
+            "locations": [{"step": 1, "part": "message", "index": 0, "field": 0}],
+            "unread": [
+                {"location": None},
+                {
+                    "location": {
+                        "step": 2,
+                        "part": "result",
+                        "index": 0,
+                        "field": 0,
+                    }
+                },
+            ],
+            "web_gaps": [
+                {
+                    "call_location": {"step": 3, "part": "call", "index": 0, "field": 0},
+                    "result_location": {"step": 4, "part": "result", "index": 0, "field": 0},
+                }
+            ],
+        }
+    ]
+    targeted = export._targeted_fields(found)
+    assert export._related_steps(targeted, [{"steps": [5]}, {}]) == {1, 2, 3, 4, 5}
+
+
+def test_info_unknowns_are_not_filtered(monkeypatch):
+    found = [
+        {
+            "severity": "info",
+            "status": status,
+            "check_id": f"synthetic.{status}",
+            "_identity": "synthetic",
+            "locations": [],
+        }
+        for status in ("match", "unknown")
+    ]
+    monkeypatch.setattr(export, "findings", lambda item: found)
+    monkeypatch.setattr(export, "apply_titles", lambda found, report: None)
+    shown = export._trial_findings(None, {}, {}, frozenset(), full=False)
+    assert [f["status"] for f in shown] == ["unknown"]

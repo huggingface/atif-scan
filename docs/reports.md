@@ -434,6 +434,18 @@ uv run atif-scan /external/jobs/run-1/task__abc --task-from trial-dir --viewer s
 # open site/index.html
 ```
 
+By default the export keeps **non-info findings and all unknown findings**, with the
+complete recorded steps they reference (including unread evidence, web-result gaps
+and judge-answer citations). Unrelated steps and matched informational findings are
+omitted before text export, not merely hidden in the browser. All trial summaries,
+scores and coverage warnings still describe the original scan. The viewer labels
+this filtered chronology; search and neighbours cover only retained steps, which may
+not be consecutive. No retained field is truncated, so evidence highlights stay valid.
+
+For all informational findings and the full recorded chronology, use
+`--viewer DIR --viewer-full`. Blind `--viewer DIR --review QUESTION` exports always
+keep the full chronology, regardless of this flag.
+
 It uses the evidence-desk layout. A run strip shows harness and model, score, tokens,
 cost (saying whether it is recorded, observed or estimated) and walltime, with the run
 brief's own sections under **Run details**. Below are trials, a chronology with a step

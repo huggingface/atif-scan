@@ -379,7 +379,13 @@ def _browse_arguments(parser: argparse.ArgumentParser) -> None:
         "--viewer",
         type=Path,
         metavar="DIR",
-        help="write a static trajectory viewer (masked trace text) to a new or empty DIR",
+        help="write a static viewer of finding-related steps (masked text) to a new or empty DIR",
+    )
+    parser.add_argument(
+        "--viewer-full",
+        action="store_true",
+        help="with --viewer: include informational matches and all recorded steps "
+        "(blind --review exports always include all steps)",
     )
     parser.add_argument(
         "--highlights",
@@ -413,8 +419,7 @@ def _check_viewer_dir(
 def _check_browse(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if not args.browse and (args.browse_port is not None or args.feedback_dir is not None):
         parser.error("--browse-port and --feedback-dir require --browse")
-    if args.review is not None and args.viewer is None:
-        parser.error("--review requires --viewer DIR")
+    _check_viewer_options(parser, args)
     if sum((args.browse, args.viewer is not None, args.highlights is not None)) > 1:
         parser.error("--browse, --viewer and --highlights are separate modes: pick one")
     if args.viewer is not None:
@@ -423,6 +428,13 @@ def _check_browse(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         _check_viewer_dir(parser, args.highlights, "--highlights")
     if args.browse or args.viewer is not None or args.highlights is not None:
         _check_desk_conflicts(parser, args)
+
+
+def _check_viewer_options(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.review is not None and args.viewer is None:
+        parser.error("--review requires --viewer DIR")
+    if args.viewer_full and args.viewer is None:
+        parser.error("--viewer-full requires --viewer DIR")
 
 
 def _check_desk_conflicts(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
