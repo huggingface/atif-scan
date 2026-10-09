@@ -230,17 +230,25 @@ def test_a_computed_argument_is_covered_for_checks_of_what_was_written():
 
 
 def test_patch_pieces_are_file_content_but_command_pieces_are_not():
+    # A piece with an envelope line is patch text. (A piece with none would be read: in
+    # ~200,000 Codex programs no such piece occurred; a hunk-line rule only ever caught
+    # printed separators like "--- result ---".)
     from atif_scan.data.jslit import program_strings
 
     pieces = (
-        'const a = "*** Begin Patch\\n*** Add File: n.md\\n";\n'
-        'const b = "+one\\n+two cat /tests/x.py\\n";\n'
+        'const a = "*** Begin Patch\\n*** Add File: n.md\\n+one cat /tests/x.py\\n";\n'
+        'const b = "+two\\n*** End Patch";\n'
         'const c = " && cat /tests/x.py"; const d = "--resolve api.x.test:443:1.2.3.4";\n'
-        "tools.apply_patch(a + b + '*** End Patch'); tools.exec_command({cmd: `ls${c}`});"
+        "tools.apply_patch(a + b); tools.exec_command({cmd: `ls${c}`});"
     )
-    # The patch pieces are left out; the command pieces stay (the template's lone "ls" is
-    # a word, not a command line).
     assert program_strings(pieces) == [" && cat /tests/x.py", "--resolve api.x.test:443:1.2.3.4"]
+
+
+def test_text_a_call_already_holds_is_not_read_twice():
+    from atif_scan.data.jslit import program_strings
+
+    program = 'tools.update_plan({plan: [{step: "Inspect the data files", status: s}]});'
+    assert program_strings(program) == []
 
 
 def test_a_lone_word_constant_is_code_not_a_command():
