@@ -307,6 +307,21 @@ def program_calls(name: str, args: object) -> list[tuple[str, object]] | None:
     return jslit.tool_calls(program)
 
 
+def program_fields(args: object) -> tuple[Field, ...]:
+    """A code-mode program's own constants beyond the arguments read as its calls (see
+    `jslit.program_strings`): one unclassified argument field per literal, read wherever
+    commands are, so a command held in a constant (`const cmds = [...]`) is still seen."""
+    program = args.get("input") if isinstance(args, dict) else None
+    found = jslit.program_strings(program) if isinstance(program, str) else []
+    return tuple((Channel.ARGUMENTS, content(text)) for text in found)
+
+
+def computed_fields(tool: str) -> tuple[Field, ...]:
+    """A tool-program call whose whole argument is computed (`tools.apply_patch(p)` with
+    `p` built at runtime): its required field, unreadable but computed."""
+    return ((REQUIRED.get(tool, Channel.ARGUMENTS), Content(understood=False, computed=True)),)
+
+
 def program_tool(name: str, args: object) -> str:
     # Codex's hosted web tool inside code mode: `{search_query: [{q}]}` or `{open: [...]}`.
     if name in ("web__run", "web.run"):
@@ -432,10 +447,25 @@ def _argument_fields(tool: str, args: JsonObject) -> tuple[Field, ...]:
     return tuple(fields)
 
 
+# Tool-program arguments that are runtime handles or limits, never a command, path, URL or
+# text: computed (`session_id: r.session_id`), they hide nothing. 4,577 of ~9,500 computed
+# arguments in TB2.1/TB4 Codex code mode were write_stdin's session_id.
+RUNTIME_HANDLE_KEYS = _keys(
+    "sessionid", "cellid", "yieldtimems", "maxoutputtokens", "timeoutms", "detail"
+)
+
+
+def _computed_field(key: str | None) -> list[Field]:
+    """A tool-program argument that isn't a literal (a variable, `${}`): unknown, unless
+    it's a runtime handle, which hides nothing."""
+    if _norm(key) in RUNTIME_HANDLE_KEYS:
+        return []
+    return [(classify(key, "")[0], Content(understood=False, computed=True))]
+
+
 def _leaf_fields(key: str | None, value: object) -> list[Field]:
     if value is jslit.UNREAD:
-        # Present in a tool program but not a literal (a variable, `${}`): unknown.
-        return [(classify(key, "")[0], Content(understood=False))]
+        return _computed_field(key)
     if isinstance(value, str):
         return _text_fields(*classify(key, value))
     if isinstance(value, list) and _norm(key) in COMMAND_KEYS:

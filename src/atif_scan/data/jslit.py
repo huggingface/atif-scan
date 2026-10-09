@@ -384,28 +384,149 @@ def _rebound(program: str, reader: _Reader) -> set[str]:
     return shadowed
 
 
+# A located call: (tool name, argument, span of a fully readable argument or None).
+Located = tuple[str, object, tuple[int, int] | None]
+
+
 def tool_calls(program: str) -> list[tuple[str, object]]:
     """(tool name, argument) for each `tools.NAME(arg)` call in code, in source order. The
     argument is the parsed literal, UNREAD when it isn't one, or None when the call has
     none; ("?", UNREAD) marks any other use of `tools`. Never raises: unreadable is UNREAD."""
+    return [(name, argument) for name, argument, _ in _located_calls(program)[0]]
+
+
+def _located_calls(program: str) -> tuple[list[Located], Lexed | None]:
     try:
-        reader = _Reader(program, _lex(program), {})
+        lexed = _lex(program)
+        reader = _Reader(program, lexed, {})
         reader.bindings = _string_bindings(program, reader)
     except (ValueError, IndexError, KeyError, RecursionError):
-        return [("?", UNREAD)] if CALL.search(program) else []
-    calls: list[tuple[str, object]] = []
+        return ([("?", UNREAD, None)] if CALL.search(program) else []), None
+    calls: list[Located] = []
     for match in CALL.finditer(program):
         if not reader.code(match.start()):
             continue  # inside a string, template text, comment or regex literal
         if match.group(1) is None:
-            calls.append(("?", UNREAD))  # `tools[k](…)`, `tools.x?.(…)`, `const t = tools`
+            calls.append(("?", UNREAD, None))  # `tools[k](…)`, `tools.x?.(…)`, `t = tools`
             continue
-        reader.pos = match.end()
-        try:
-            argument = None if reader.peek() == ")" else reader.value()
-        except (ValueError, IndexError, KeyError, RecursionError):
-            argument = UNREAD
-        calls.append((match.group(1), argument))
+        calls.append((match.group(1), *_argument(reader, match.end())))
     if not calls and CALL.search(program):
-        calls.append(("?", UNREAD))  # `tools` only seen outside code: unsure, so unknown
-    return calls
+        calls.append(("?", UNREAD, None))  # `tools` only seen outside code: unsure
+    return calls, lexed
+
+
+def _argument(reader: _Reader, pos: int) -> tuple[object, tuple[int, int] | None]:
+    """The call's argument at `pos`, and its span when every part of it was read."""
+    reader.pos = pos
+    try:
+        if reader.peek() == ")":
+            return None, None
+        start = reader.pos
+        argument = reader.value()
+    except (ValueError, IndexError, KeyError, RecursionError):
+        return UNREAD, None
+    return argument, (start, reader.pos) if _readable(argument) else None
+
+
+def _readable(value: object) -> bool:
+    if value is UNREAD:
+        return False
+    if isinstance(value, dict):
+        return all(_readable(v) for v in value.values())
+    if isinstance(value, list):
+        return all(_readable(v) for v in value)
+    return True
+
+
+# Patch text is file content, read through the apply_patch call it feeds: any piece of an
+# envelope (programs build patches from `+`-joined pieces), or only hunk lines.
+_PATCH = re.compile(r"^\*\*\* (?:Begin Patch|End Patch|(?:Add|Update|Delete) File:|Move to:)", re.M)
+_HUNK_LINES = re.compile(r"(?:(?:[+\- ][^\n]*|@@[^\n]*)(?:\n|$))+")
+
+
+_CHANGED_LINE = re.compile(r"^[+-]", re.M)
+# A lone word ("set", "env", "utf8", an object key or method name) is code, not a command
+# or path: kept are literals with a space, `/`, `.`, `:` or `-` (commands, paths, URLs,
+# flags, hyphenated names), judged without the space a `${}` hole leaves. TB4
+# circuit-fibsqrt: an error message `set ${i}` read as `set`, the shell builtin that
+# prints the environment.
+_WORDY = re.compile(r"\S[\s/.:-]|[/.:-]\S")
+
+
+def _patch_text(text: str) -> bool:
+    """Envelope text, or several lines that are all hunk lines with one changed: a single
+    line (`" && ls"`, `"--resolve host:443:ip"`) is never taken for a hunk."""
+    if _PATCH.search(text):
+        return True
+    lines = text.strip("\n")
+    return "\n" in lines and bool(_HUNK_LINES.fullmatch(text) and _CHANGED_LINE.search(text))
+
+
+def program_strings(program: str) -> list[str]:
+    """The program's string and template literals beyond the tool arguments read as calls,
+    decoded, in source order: the constants a computed argument is built from (`const
+    cmds = [...]`, a template's text, `+` joins). One item per literal, so each is read
+    like an argument string (JavaScript quoting around it is not shell quoting). Left
+    out: fully readable `tools.NAME(…)` arguments (their calls' fields), apply_patch
+    envelopes (file content), comments and regex literals. A template's `${…}` holes are
+    a space. Nothing is executed."""
+    calls, lexed = _located_calls(program)
+    if lexed is None:
+        return []
+    read = sorted(span for _, _, span in calls if span is not None)
+    out: list[str] = []
+    template: list[str] = []
+    for start, end in zip(*lexed[:2], strict=True):
+        parts = _literal_parts(program[start:end], template)
+        if parts is None or _inside(read, start):
+            continue
+        text = _decode("".join(parts))
+        if _WORDY.search(text.strip()) and not _patch_text(text):
+            out.append(text)
+    return out
+
+
+def _literal_parts(raw: str, template: list[str]) -> list[str] | None:
+    """A string literal's text, or a whole template's once its last chunk is reached;
+    None for comments, regex literals and template chunks before the last."""
+    if raw[0] in ("'", '"'):
+        return [raw[1:-1] if len(raw) > 1 and raw[-1] == raw[0] else raw[1:]]
+    if raw[0] in ("`", "}"):
+        parts, done = _template_chunk(raw, template)
+        return parts if done else None
+    return None
+
+
+def _template_chunk(raw: str, template: list[str]) -> tuple[list[str], bool]:
+    """Collect one template text chunk (after "`" or a hole's "}"); the whole template's
+    parts and True once its closing "`" is reached."""
+    if raw[0] == "`":
+        template.clear()
+    body = raw[1:]
+    if body.endswith("${"):
+        template.extend((body[:-2], " "))
+        return [], False
+    template.append(body[:-1] if body.endswith("`") else body)
+    parts = list(template)
+    template.clear()
+    return parts, True
+
+
+def _inside(spans: list[tuple[int, int]], pos: int) -> bool:
+    k = bisect_right(spans, (pos, UNICODE_END)) - 1
+    return k >= 0 and spans[k][0] <= pos < spans[k][1]
+
+
+def _decode(text: str) -> str:
+    """Backslash escapes in string or template text, as `_Reader.escape` reads them."""
+    if "\\" not in text:
+        return text
+    reader = _Reader(text, ([], [], {}), {})
+    out: list[str] = []
+    while reader.pos < len(text):
+        if text[reader.pos] == "\\":
+            out.append(reader.escape())
+        else:
+            out.append(text[reader.pos])
+            reader.pos += 1
+    return "".join(out)

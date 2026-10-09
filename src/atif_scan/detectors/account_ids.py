@@ -23,19 +23,19 @@ if TYPE_CHECKING:
 ACCOUNT_IDS_EXPOSED = CheckSpec(
     "observation.account_ids_exposed",
     Severity.MEDIUM,
-    "2",
+    "3",
     title="OpenAI account identifier in the trace",
 )
 ACCOUNT_ID_SHAPES = CheckSpec(
     "observation.account_id_shapes",
     Severity.LOW,
-    "2",
+    "3",
     title="OpenAI org, user or project id shape",
 )
 ACCOUNT_CLAIMS = CheckSpec(
     "observation.account_claims",
     Severity.LOW,
-    "2",
+    "3",
     title="OpenAI account claim or plan type in the trace",
 )
 
@@ -56,7 +56,13 @@ class AccountIdExposure:
     def evaluate(self, trace: Trace, context: Context) -> Detection:
         hits: list[Locator] = []
         surfaces = list(_surfaces(trace))
-        unread = [Unread("unreadable", s.at) for s in surfaces if not s.content.understood]
+        # A computed tool-program argument: its constants are in the program's text (its
+        # parent call's field, scanned here) and its runtime data in the results.
+        unread = [
+            Unread("unreadable", s.at)
+            for s in surfaces
+            if not (s.content.understood or s.content.computed)
+        ]
         for surface in surfaces:
             for found in account_ids.find(surface.content.text):
                 if found.kind == self.kind:

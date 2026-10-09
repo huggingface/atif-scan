@@ -145,7 +145,10 @@ class UnprimedDetector:
             if self.stop is not None and self.stop(surface):
                 break  # e.g. a benchmark lookup: what follows may be primed by it
             if self._judged(surface):
-                state.complete = state.complete and surface.content.understood
+                # A computed tool-program argument holds the program's own text (read in
+                # its parent call's field) and runtime data, which the agent didn't write.
+                readable = surface.content.understood or surface.content.computed
+                state.complete = state.complete and readable
                 self._collect(surface, context, seen, primed, state)
         return state
 

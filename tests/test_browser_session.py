@@ -92,7 +92,7 @@ def test_credential_candidates_are_low_priority_and_still_masked(tmp_path: Path)
     finding = session.overview()["trials"][0]["findings"][0]
     assert finding["severity"] == "low"
     assert finding["title"] == "Possible credential-like value"
-    assert finding["check_version"] == "5"
+    assert finding["check_version"] == "6"
     assert finding["status"] == "match"
     assert token not in session.segment("0", 7, "message")["text"]
 

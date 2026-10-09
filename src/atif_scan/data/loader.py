@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
+from . import jslit
 from .content import content
 from .jsonval import JsonObject, as_list, as_object, as_str, compact_json, count, is_object
 from .model import Observation, Step, ToolCall, Trace
@@ -20,8 +21,10 @@ from .pairing import drop_rejected_unknowns, reconstruct_observation_links
 from .tools import (
     RAW_INPUT_KEY,
     call_fields,
+    computed_fields,
     normalize_tool,
     program_calls,
+    program_fields,
     program_tool,
     raw_input,
 )
@@ -245,7 +248,7 @@ def parse_calls(raw_calls: list[object], copied: bool, details: object = None) -
             ToolCall(
                 call_index,
                 tool,
-                call_fields(tool, args),
+                program_fields(args) if inner is not None else call_fields(tool, args),
                 call_id,
                 name,
                 frozen,
@@ -336,10 +339,14 @@ def _program_call(index: int, k: int, found: ProgramCall) -> ToolCall:
     if isinstance(args, str):
         args = {RAW_INPUT_KEY: args}  # `tools.apply_patch("*** Begin Patch…")`
     tool = program_tool(name, args)
+    if args is jslit.UNREAD:
+        fields = computed_fields(tool)
+    else:
+        fields = call_fields(tool, args if is_object(args) else None)
     return ToolCall(
         index,
         tool,
-        call_fields(tool, args if is_object(args) else None),
+        fields,
         f"{parent}#{k}",
         f"{outer}>{name}",
         None,

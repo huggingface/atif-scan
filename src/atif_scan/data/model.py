@@ -80,6 +80,12 @@ class Content:
     # `data.media`); empty when any part is only a placeholder, file reference or
     # unreadable payload. Identities only: the payload itself is never kept.
     media_ids: tuple[str, ...] = field(default=(), repr=False)
+    # Built at runtime inside a tool program (Codex code mode) from the program's own text
+    # and runtime data: not readable, so action checks stay unknown. The program's
+    # constants (its string and template literals) are its parent call's fields, so
+    # checks of what the agent wrote or what the trace holds read those instead (see
+    # `jslit.program_strings`).
+    computed: bool = False
 
 
 @dataclass(frozen=True)

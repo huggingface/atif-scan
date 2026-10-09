@@ -48,11 +48,13 @@ INSTALL = re.compile(
 # `curl … | python3 -c '<parse json>'` only processes the download, so it isn't one.
 # The download command's own arguments are bounded ({0,2000}): otherwise every `curl` in
 # a long line without a pipe rescans to the line end (quadratic on minified code).
+# A download needs a target: `curl` then whitespace and an argument before the pipe (a
+# jq regex alternation `"bot|curl|python"` in a code-mode constant downloads nothing).
 PIPE_TO_SHELL = gated(
     re.compile(
-        r"\b(?:curl|wget)\b[^\n|;]{0,2000}\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:ba|z|da|k)?sh\b(?!\s+-c\b)|"
+        r"\b(?:curl|wget)\s+[^\s|;][^\n|;]{0,2000}\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:ba|z|da|k)?sh\b(?!\s+-c\b)|"
         r"\b(?:ba|z)?sh\s+(?:-c\s+)?[\"']?\s*<?\$?\(\s*(?:curl|wget)\b[^\n)]{0,2000}\)|"
-        r"\b(?:curl|wget)\b[^\n|;]{0,2000}\|\s*(?:sudo\s+)?python3?(?:\s+-)?\s*(?=$|[;&|)\n\"'])",
+        r"\b(?:curl|wget)\s+[^\s|;][^\n|;]{0,2000}\|\s*(?:sudo\s+)?python3?(?:\s+-)?\s*(?=$|[;&|)\n\"'])",
         re.I,
     ),
     ("curl", "wget"),  # every alternative downloads with one of them
