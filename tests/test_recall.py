@@ -661,3 +661,12 @@ def test_a_task_name_a_search_result_showed_with_spaced_hyphens_is_primed():
     query = agent(reasoning="Search terminal-bench-2-1/tasks/mteb-leaderboard/README.md")
     assert catalog("mteb-leaderboard", shown, query) == Status.NO_MATCH
     assert catalog("mteb-leaderboard", query) == Status.MATCH
+
+
+def test_fold_name_closes_spaced_hyphens_in_linear_time(linear):
+    from atif_scan.detectors.catalog import fold_name
+
+    assert fold_name("Tasks › MTEB - Leaderboard › README") == "tasks › mteb-leaderboard › readme"
+    assert "mteb-leaderboard" in fold_name("x mteb -\n leaderboard y")
+    # Regression: a regex fold was quadratic on long whitespace (a stress test, 50k spaces).
+    linear(lambda n: fold_name("a" + " " * n + "b"), 50_000)

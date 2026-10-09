@@ -110,11 +110,10 @@ def catalog_recall(found: set[str], context: Context) -> bool:
 # Search results render a task path with spaced hyphens ("tasks › mteb - leaderboard ›
 # README.md"): seeing that is seeing the name. TB2.1 Luna xhigh: a search result showed
 # the task, then the agent searched for its README by name; it read as recall.
-SPACED_HYPHEN = re.compile(r"\s*-\s*")
-
-
 def fold_name(text: str) -> str:
-    return SPACED_HYPHEN.sub("-", text.lower())
+    """Lowercase, with the whitespace around each hyphen closed. Split, not a regex:
+    `\\s*-\\s*` retried every position of a long whitespace run (quadratic)."""
+    return "-".join(part.strip() for part in text.lower().split("-"))
 
 
 @dataclass(frozen=True)

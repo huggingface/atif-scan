@@ -106,3 +106,32 @@ def test_near_looks_both_ways_within_the_limit():
 def test_proximity_is_linear(linear):
     unit = "the task likely comes from somewhere else and a benchmark harness. "
     linear(lambda k: benchmark_remark(unit * k), 500)
+
+
+def test_sentence_ends_are_linear_on_long_punctuation_runs(linear):
+    # Regression (TB4 GLM-5.3, takens-embedding-lean): reasoning that degenerated into
+    # hundreds of thousands of "!" took the sentence splitter ~40 minutes.
+    linear(lambda n: words("Wait" + "!" * n + "x and more."), 20_000)
+    linear(lambda n: words("Wait" + "!" * n + " then a word."), 20_000)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "One... two!? three!!!\nfour.five six",
+        "eval.py ran. Done!",
+        "!!! ... ?!",
+        "a!!!b!!! c",
+        "end.",
+        "trailing dots...",
+        "x\n\n!!!\n",
+    ],
+)
+def test_sentence_ends_are_unchanged(text):
+    # The linear pattern finds exactly the ends the backtracking one did.
+    import re
+
+    from atif_scan.detectors.proximity import SENTENCE_END
+
+    old = re.compile(r"[.!?]+(?=\s)|\n")
+    assert [m.end() for m in SENTENCE_END.finditer(text)] == [m.end() for m in old.finditer(text)]

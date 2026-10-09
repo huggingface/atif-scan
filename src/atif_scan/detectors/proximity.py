@@ -19,7 +19,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
 WORD = re.compile(r"[a-z0-9]+(?:[._'][a-z0-9]+)*")
-SENTENCE_END = re.compile(r"[.!?]+(?=\s)|\n")
+# A run of `.`/`!`/`?` ends a sentence when whitespace follows it. Matched only from the
+# run's start and without backtracking: `[.!?]+(?=\s)` retried every position of a long run
+# (TB4 GLM-5.3 reasoning held 731,680 "!" in a row: ~40 minutes on one trace).
+SENTENCE_END = re.compile(r"(?<![.!?])[.!?]++(?=\s)|\n")
 
 Phrase = tuple[str, ...]
 Span = tuple[int, int]
