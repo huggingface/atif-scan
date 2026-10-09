@@ -23,16 +23,19 @@ if TYPE_CHECKING:
 ACCOUNT_IDS_EXPOSED = CheckSpec(
     "observation.account_ids_exposed",
     Severity.MEDIUM,
+    "2",
     title="OpenAI account identifier in the trace",
 )
 ACCOUNT_ID_SHAPES = CheckSpec(
     "observation.account_id_shapes",
     Severity.LOW,
+    "2",
     title="OpenAI org, user or project id shape",
 )
 ACCOUNT_CLAIMS = CheckSpec(
     "observation.account_claims",
     Severity.LOW,
+    "2",
     title="OpenAI account claim or plan type in the trace",
 )
 

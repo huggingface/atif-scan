@@ -32,7 +32,7 @@ invalid inputs or failed sync files. Startup errors also return 2.
 
 1. The default queue shows **matched, medium-or-higher** checks. Filter by check text,
    task/trial text, priority, reward, evidence status, or saved feedback.
-   **Possible credential-like value** (`observation.credentials_exposed`, version 4)
+   **Possible credential-like value** (`observation.credentials_exposed`, version 5)
    is low priority and appears when low/all priorities are selected, not in the
    default medium-plus queue. This is heuristic triage, not clearance for publication;
    secret masking and verified task-fixture allowances remain unchanged.

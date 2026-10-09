@@ -128,6 +128,9 @@ class Observation:
     # Step-local recorded call index; never a synthesized provider identifier.
     source_call_index: int | None = None
     pairing_method: Literal["position", "unique_remainder"] | None = None
+    # One terminal capture for all of the step's typed input (a Terminus 2 batch): it
+    # records the batch's output, not which call printed what, so it stays unresolved.
+    shared_terminal: bool = False
 
 
 @dataclass(frozen=True)

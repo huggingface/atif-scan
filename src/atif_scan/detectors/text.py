@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Context, Detection, Status, Unread
 from ..data.model import SPAN_LENGTH, TOOL_INPUT_CHANNELS, Channel, Locator, Surface
+from ..data.terminal import terminal_gap
+from ..data.tools import types_into_terminal
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..data.model import Trace
+    from ..data.model import Observation, Step, ToolCall, Trace
 
 # What a predicate found in a surface: a `re.Match` or (start, end) span to cite, or just
 # truthy (the whole surface) / falsy (nothing).
@@ -61,13 +63,36 @@ def matched(surface: Surface, result: object) -> Locator | None:
     return surface.at
 
 
+def _recorded(step: Step, call: ToolCall) -> list[tuple[int, Observation]]:
+    """The call's results: linked ones, or for typed terminal input the step's shared
+    capture of the terminal (it holds the call's output, unattributed)."""
+    linked = step.results_for(call)
+    if linked or not (types_into_terminal(call.arguments) or call.tool == "inert"):
+        return linked
+    return [(j, o) for j, o in enumerate(step.observations) if o.shared_terminal]
+
+
+def _terminal_gaps(
+    step: Step, call: ToolCall, results: list[tuple[int, Observation]]
+) -> Iterator[Unread]:
+    """A terminal capture that records its own gap: cut output, or the visible pane only."""
+    if not types_into_terminal(call.arguments):
+        return
+    for j, o in results:
+        gap = terminal_gap(o.content.text or "")
+        if gap is not None:
+            yield Unread(gap, Locator(step.index, Channel.OBSERVATION, observation=j))
+
+
 def unrecorded_results(trace: Trace) -> list[Unread]:
-    """Each agent call with no recorded result, and why when the trace shows it: the
-    next step is a context compaction (which dropped it) or the run ended there."""
+    """Each agent call whose output wasn't fully recorded, and why when the trace shows
+    it: no result (the next step is a context compaction that dropped it, or the run ended
+    there), or a terminal capture that says it cut or missed output."""
     unread: list[Unread] = []
     last = len(trace.steps) - 1
     for step, call in trace.agent_calls():
-        if step.results_for(call):
+        if results := _recorded(step, call):
+            unread += _terminal_gaps(step, call, results)
             continue
         reason = (
             "run_ended"
@@ -77,7 +102,8 @@ def unrecorded_results(trace: Trace) -> list[Unread]:
             else "result_not_recorded"
         )
         unread.append(Unread(reason, Locator(step.index, Channel.METADATA, call=call.index)))
-    return unread
+    # A batch's calls share one capture: report each gap once.
+    return list(dict.fromkeys(unread))
 
 
 @dataclass(frozen=True)

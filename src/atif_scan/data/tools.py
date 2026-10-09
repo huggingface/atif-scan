@@ -194,6 +194,7 @@ COMMAND_KEYS = _keys(
     "keystrokes",
     "chars",
 )
+TERMINAL_INPUT_KEYS = _keys("textinput", "keystrokes", "chars")
 QUERY_KEYS = _keys("query", "q", "searchquery", "searchterm", "queries")
 URL_KEYS = _keys("url", "urls", "uri", "href", "link", "endpoint")
 PATH_KEYS = _keys(
@@ -336,6 +337,12 @@ def _normalize_action(name: str, args: object) -> str:
 
 def _norm(key: str | None) -> str:
     return re.sub(r"[_\-\s]", "", key.lower()) if key else ""
+
+
+def types_into_terminal(arguments: Mapping[str, object] | None) -> bool:
+    """The call types text into a terminal (a top-level keystrokes-style argument), so its
+    output is whatever the terminal shows next, not a result of its own."""
+    return arguments is not None and any(_norm(k) in TERMINAL_INPUT_KEYS for k in arguments)
 
 
 def leaves(value: object, key: str | None = None) -> Iterator[tuple[str | None, object]]:

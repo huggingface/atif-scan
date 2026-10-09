@@ -9,6 +9,8 @@ import re
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from .tools import types_into_terminal
+
 if TYPE_CHECKING:
     from .model import Observation, ToolCall
 
@@ -74,6 +76,18 @@ def _unique_remainder(calls: list[ToolCall], observations: list[Observation]) ->
     return remaining[0] if len(remaining) == 1 else None
 
 
+def _shared_terminal(calls: list[ToolCall], observations: list[Observation]) -> bool:
+    """A batch typed into one terminal with one unlinked capture: Terminus 2 records the
+    pane once per step. Inert calls (mark_task_complete) print nothing of their own."""
+    typed = [types_into_terminal(c.arguments) for c in calls]
+    return (
+        len(observations) == 1
+        and observations[0].source_call_id is None
+        and any(typed)
+        and all(t or c.tool == "inert" for t, c in zip(typed, calls, strict=True))
+    )
+
+
 def reconstruct_observation_links(
     calls: list[ToolCall], observations: list[Observation]
 ) -> list[Observation]:
@@ -86,6 +100,8 @@ def reconstruct_observation_links(
     """
     if len(calls) < MIN_PAIRED_CALLS or not any(o.source_call_id is None for o in observations):
         return observations
+    if _shared_terminal(calls, observations):
+        return [replace(observations[0], pairing_unresolved=True, shared_terminal=True)]
     if _positional_links_valid(calls, observations):
         return [
             replace(

@@ -186,7 +186,7 @@ def environment_dump(surface: Surface) -> Hit:
 CREDENTIALS_EXPOSED = CheckSpec(
     "observation.credentials_exposed",
     Severity.LOW,
-    "4",
+    "5",
     title="Possible credential-like value",
 )
 

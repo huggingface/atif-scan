@@ -154,6 +154,8 @@ UNREAD_REASONS = frozenset(
         "result_not_recorded",  # a call with no recorded result
         "result_compacted",  # its result was dropped by the context compaction after it
         "run_ended",  # the run stopped before the call returned
+        "result_truncated",  # the recorded result says the harness cut part of the output
+        "terminal_screen_only",  # only the visible terminal screen was recorded
         "undecidable",  # the predicate can't judge it statically (`find $(…)`)
         "prompt_names_benchmark",  # the prompt already says what the evidence says
         "usage_not_recorded",  # the trajectory records no token totals to compare

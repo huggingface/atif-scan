@@ -181,7 +181,7 @@ def test_existing_code_and_reference_exclusions(text):
 
 def test_exposure_detector_version_invalidates_old_results():
     spec = CredentialExposure().spec
-    assert spec.version == "4"
+    assert spec.version == "5"
     assert spec.severity == Severity.LOW
     assert spec.title == "Possible credential-like value"
 
