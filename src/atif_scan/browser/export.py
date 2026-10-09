@@ -130,15 +130,21 @@ def _field(step: Step, location: Doc, known: frozenset[str]) -> Doc:
     }
 
 
-def _steps(trace: Trace, targeted: list[Doc], known: frozenset[str]) -> list[Doc]:
+def _steps(
+    trace: Trace, targeted: list[Doc], known: frozenset[str], wanted: set[int] | None = None
+) -> list[Doc]:
     by_number = dict(zip(trace.step_numbers, trace.steps, strict=True))
-    shown: dict[int, list[Doc]] = {n: [] for n in by_number}
+    shown: dict[int, list[Doc]] = {n: [] for n in by_number if wanted is None or n in wanted}
     for location, _ in fields(trace):
+        if location["step"] not in shown:
+            continue
         step = by_number[location["step"]]
         field = _field(step, location, known)
         if _wanted(step, location, field["status"], location in targeted):
             shown[location["step"]].append(field)
-    return [{"step": n, "role": s.source, "fields": shown[n]} for n, s in by_number.items()]
+    return [
+        {"step": n, "role": by_number[n].source, "fields": values} for n, values in shown.items()
+    ]
 
 
 def _focus(trace: Trace, item: Doc, finding: Doc, location: Doc, known: frozenset[str]) -> Doc:
@@ -154,9 +160,9 @@ def _focus(trace: Trace, item: Doc, finding: Doc, location: Doc, known: frozense
 
 
 def _trial_findings(
-    trace: Trace | None, item: Doc, report: Doc, known: frozenset[str]
+    trace: Trace | None, item: Doc, report: Doc, known: frozenset[str], full: bool
 ) -> list[Doc]:
-    found = findings(item)
+    found = [f for f in findings(item) if full or f["severity"] != "info" or f["status"] != "match"]
     apply_titles(found, report)
     for finding in found:
         if trace is not None:
@@ -175,11 +181,37 @@ def trial_bundle(
     trace: Trace | None,
     report: Doc,
     reasons: Mapping[str, str] | None = None,
+    *,
+    full: bool = False,
 ) -> Doc:
     """One trial: allowlisted scan fields, findings with proven highlights, masked steps,
-    and judge answers with their reasons (`reasons`) masked like the steps."""
+    and judge answers with their reasons (`reasons`) masked like the steps. By default,
+    omit informational matches and unrelated steps; `full` retains the chronology."""
     known = trace_secrets(trace) if trace is not None else frozenset()
-    found = _trial_findings(trace, item, report, known)
+    found = _trial_findings(trace, item, report, known, full)
+    targeted = _targeted_fields(found)
+    rows = answer_rows(item, reasons, known)
+    wanted = None if full else _related_steps(targeted, rows)
+    steps = _steps(trace, targeted, known, wanted) if trace is not None else []
+    return deepcopy(
+        {
+            "id": trial_id,
+            **{key: item.get(key) for key in TRIAL_KEYS},
+            "coverage": {key: item.get(key) for key in COVERAGE_KEYS},
+            "facts": {key: item.get(key) for key in FACT_KEYS},
+            "selection": {
+                key: value
+                for key in SELECTION_KEYS
+                if (value := as_object(item.get("selection")).get(key)) is not None
+            },
+            "findings": found,
+            "answers": rows,
+            "steps": steps,
+        }
+    )
+
+
+def _targeted_fields(found: list[Doc]) -> list[Doc]:
     targeted = [
         {key: loc[key] for key in ("step", "part", "index", "field")}
         for finding in found
@@ -198,23 +230,14 @@ def trial_bundle(
         for key in ("call_location", "result_location")
         if gap.get(key) is not None
     ]
-    steps = _steps(trace, targeted, known) if trace is not None else []
-    return deepcopy(
-        {
-            "id": trial_id,
-            **{key: item.get(key) for key in TRIAL_KEYS},
-            "coverage": {key: item.get(key) for key in COVERAGE_KEYS},
-            "facts": {key: item.get(key) for key in FACT_KEYS},
-            "selection": {
-                key: value
-                for key in SELECTION_KEYS
-                if (value := as_object(item.get("selection")).get(key)) is not None
-            },
-            "findings": found,
-            "answers": answer_rows(item, reasons, known),
-            "steps": steps,
-        }
-    )
+    return targeted
+
+
+def _related_steps(targeted: list[Doc], answers: list[Doc]) -> set[int]:
+    """Whole steps, including unread/web-gap evidence and judge citations."""
+    return {loc["step"] for loc in targeted} | {
+        step for row in answers for step in row.get("steps", [])
+    }
 
 
 def run_facts(b: Doc) -> Doc:
@@ -344,10 +367,12 @@ def _trial(
     report: Doc,
     review: Question | None,
     reasons: Mapping[str, str] | None = None,
+    *,
+    full: bool = False,
 ) -> Doc:
     if review is None:
-        return trial_bundle(trial_id, item, trace, report, reasons)
-    trial = trial_bundle(trial_id, blind_item(item, review, trace), trace, report)
+        return trial_bundle(trial_id, item, trace, report, reasons, full=full)
+    trial = trial_bundle(trial_id, blind_item(item, review, trace), trace, report, full=True)
     trial["answers"] = []  # blind: never a judge's answer
     return _review_trial(trial, review)
 
@@ -360,11 +385,14 @@ def bundle(
     run: Doc | None = None,
     review: Question | None = None,
     answers: Answers | None = None,
+    *,
+    full: bool = False,
 ) -> Doc:
     """The whole export document. Traces are re-read only when still matching their pin.
     `review`: a blind human-review export for that question (no findings, scores or
     scanner run sections; the question's candidates to jump between). `answers`: the
-    loaded bundle, for each answer's masked reason (never in a blind export)."""
+    loaded bundle, for each answer's masked reason (never in a blind export).
+    `full`: retain info matches and unrelated steps; blind exports are always full."""
     if not len(records) == len(items) == len(digests):
         raise ValueError("record_item_count_mismatch")
     trials = []
@@ -375,9 +403,10 @@ def bundle(
         if item.get("input_status") == "available":
             trace = load_bytes(pinned_bytes(source.local, sha256))
         reasons = answers.reasons_for(source.label) if answers is not None else None
-        trials.append(_trial(str(number), item, trace, report, review, reasons))
+        trials.append(_trial(str(number), item, trace, report, review, reasons, full=full))
     document = {
         "format": FORMAT,
+        "evidence_scope": "full" if full or review is not None else "findings",
         "scanner_version": report.get("scanner_version"),
         "packs": deepcopy(report.get("packs")),
         "run": deepcopy(run),

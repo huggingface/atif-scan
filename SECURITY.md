@@ -130,7 +130,11 @@
   effort, so read the export before publishing it; it is not a clearance. The data is
   allowlisted (labels, task, reward, coverage, check IDs/titles/priorities, field
   locators, masked field text and, with `--answers`, the judge's masked reasons) and never includes source paths, citations, feedback
-  or raw metadata; media is not exported. Highlights are offsets proven against the
+  or raw metadata; media is not exported. By default only non-info findings, all unknown
+  findings and their related whole steps (including judge-cited steps) are exported;
+  summaries and coverage still describe the full scan. `--viewer-full` includes all
+  findings and steps; blind `--review` exports always retain the full chronology.
+  Filtering is not a safety clearance. Highlights are offsets proven against the
   masked text, otherwise the whole field is marked as the evidence. Sources are pinned
   by digest before scanning and must still match when exported. The page loads nothing
   outside its folder (CSP, no fonts, images or network), renders trace text literally
