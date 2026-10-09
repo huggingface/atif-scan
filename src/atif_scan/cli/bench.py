@@ -8,13 +8,12 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..data.paths import bench_root
 from ..sources.bench import catalogue, load_run
 from ..sources.selection import release, replacements
 
 if TYPE_CHECKING:
     from ..sources.selection import Selection
-
-DEFAULT_ROOT = Path.home() / "source" / "bench-run"
 
 
 def _check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> bool:
@@ -33,7 +32,7 @@ def _check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> bool:
 
 
 def _selection(args: argparse.Namespace) -> Selection | None:
-    root = args.bench_root or DEFAULT_ROOT
+    root = args.bench_root or bench_root()
     if args.release is not None:
         return release(root, args.release)
     run = load_run(root, args.run)
@@ -60,11 +59,16 @@ def select(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="atif-scan runs")
-    parser.add_argument("--bench-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument(
+        "--bench-root",
+        type=Path,
+        default=None,
+        help="bench-run checkout (default: $ATIF_SCAN_BENCH_ROOT, else ~/source/bench-run)",
+    )
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args(argv)
     try:
-        rows = catalogue(args.bench_root)
+        rows = catalogue(args.bench_root or bench_root())
     except (OSError, ValueError):
         parser.error("unreadable or invalid bench-run catalogue")
     if args.format == "json":

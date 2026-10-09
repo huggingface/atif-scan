@@ -216,3 +216,18 @@ def test_other_receipt_kinds_stay_unknown(tmp_path: Path, kind: str):
     with pytest.raises(ValueError, match="unsupported_receipt"):
         load_run(tmp_path, "codex-demo")
     assert catalogue(tmp_path)[0]["parts"] is None
+
+
+def test_bench_root_from_the_environment(tmp_path: Path, capsys, monkeypatch):
+    # The default checkout isn't tied to one machine's layout: $ATIF_SCAN_BENCH_ROOT, and
+    # --bench-root still wins over it.
+    prepared(tmp_path)
+    monkeypatch.setenv("ATIF_SCAN_BENCH_ROOT", str(tmp_path))
+    assert main(["runs", "--format", "json"]) == 0
+    assert [r["run"] for r in json.loads(capsys.readouterr().out)["runs"]] == ["demo"]
+    with pytest.raises(SystemExit):
+        main(["runs", "--bench-root", str(tmp_path / "missing"), "--format", "json"])
+    monkeypatch.delenv("ATIF_SCAN_BENCH_ROOT")
+    from atif_scan.data.paths import bench_root
+
+    assert bench_root() == Path.home() / "source" / "bench-run"

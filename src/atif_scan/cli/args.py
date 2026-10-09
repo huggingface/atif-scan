@@ -77,7 +77,9 @@ def _input_arguments(parser: argparse.ArgumentParser) -> None:
         "trial_ids), with replaced trials kept as evidence",
     )
     parser.add_argument(
-        "--bench-root", type=Path, help="bench-run checkout (default: ~/source/bench-run)"
+        "--bench-root",
+        type=Path,
+        help="bench-run checkout (default: $ATIF_SCAN_BENCH_ROOT, else ~/source/bench-run)",
     )
     parser.add_argument("--manifest", type=Path, help="explicit input manifest (JSON)")
     parser.add_argument(

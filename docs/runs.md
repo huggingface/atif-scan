@@ -25,10 +25,15 @@ tasks or partial flags.
 
 Keep real traces and reports outside Git (see [SECURITY.md](../SECURITY.md)).
 
-## Local bench-run cohorts
+## bench-run cohorts and releases (optional)
+
+[bench-run](#about-bench-run) is the separate tool that runs, catalogues and releases
+our benchmark cohorts. These commands read a bench-run checkout's own records; without
+one they have nothing to read, and every other input works the same. The checkout is
+`--bench-root`, else `$ATIF_SCAN_BENCH_ROOT`, else `~/source/bench-run`.
 
 ```bash
-atif-scan runs                                  # ~/source/bench-run
+atif-scan runs                                  # $ATIF_SCAN_BENCH_ROOT or ~/source/bench-run
 atif-scan runs --bench-root /external/bench-run --format json
 atif-scan --bench-root /external/bench-run --run demo-run           # replacements resolved
 atif-scan --run demo-run --as-run                                   # the original jobs only
@@ -61,6 +66,19 @@ unverified failure. `--as-run` scans the original job parts as they ran.
 its reported trials, which must match Harbor Hub's `harbor_rows.trial_ids` and each
 trial's own `result.json` id; its replaced trials are scanned as evidence the same way.
 Use it for anything you publish: it is the frozen set a leaderboard shows.
+
+A release manifest (`bench-run.release/v1`) is JSON: `release_id`; `cohorts`, each a
+catalogued run (`cohort`) with its reported `trials` (`job` folder under `jobs/`,
+`trial` folder, Harbor trial `id`, and `replacement` when the slot was re-run) and the
+replacement `lineage` (`id`, `partition`, `replaced_trial`, `replaced_error`,
+`failure_phase`, `supersedes`, `state`); and `harbor_rows.rows[].trial_ids`, the trials
+each published leaderboard row counts. Each cohort's run receipts are verified as for
+`--run`, so a release is read from the bench-run checkout that made it.
+
+**About bench-run.** bench-run is not published yet, so these commands serve whoever
+runs it. The checks they make (receipt digests, replacement chains, release trial ids)
+are atif-scan's; the folder layout and file kinds are bench-run's, and atif-scan rejects
+anything it doesn't recognise rather than guessing.
 
 Catalog status does not exclude a run. Prepared cohorts bind `identity.run_id`; Codex
 diagnostic receipts (`kind: codex-diagnostic`, replacements

@@ -15,6 +15,9 @@ files 0600 where atif-scan writes them), never committed. Mirrors/results are ex
 labels, feedback, gold and bundles may not be recoverable after deletion. Two older
 variables still win for their part: ATIF_SCAN_SYNC_DIR (hf/, harbor/, results/) and
 ATIF_SCAN_GOLD_DIR (gold/).
+
+The bench-run checkout read by `atif-scan runs`, `--run` and `--release` is not under it:
+$ATIF_SCAN_BENCH_ROOT, else ~/source/bench-run (`--bench-root` wins over both).
 """
 
 from __future__ import annotations
@@ -51,3 +54,10 @@ def gold_dir() -> Path:
 
 def bundles_dir() -> Path:
     return home() / "bundles"
+
+
+def bench_root() -> Path:
+    """The bench-run checkout: $ATIF_SCAN_BENCH_ROOT, else ~/source/bench-run."""
+    if os.environ.get("ATIF_SCAN_BENCH_ROOT"):
+        return Path(os.environ["ATIF_SCAN_BENCH_ROOT"]).expanduser()
+    return Path.home() / "source" / "bench-run"
