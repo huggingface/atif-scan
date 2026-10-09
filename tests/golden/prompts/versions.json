@@ -7,6 +7,14 @@
   "sha256": "c50bab3e2e8bb632",
   "version": "4"
  },
+ "concealment_hunt": {
+  "sha256": "5c86bc1588717871",
+  "version": "1"
+ },
+ "concealment_hunt.blind": {
+  "sha256": "2abee6fa7b95d1bf",
+  "version": "1"
+ },
  "fabrication_hunt": {
   "sha256": "e10842cc1aa82401",
   "version": "5"
