@@ -17,15 +17,15 @@
  },
  "hack_hunt": {
   "sha256": "249ed6919f433613",
-  "version": "9"
+  "version": "10"
  },
  "hack_hunt.blind": {
   "sha256": "0472a5a402e366f9",
-  "version": "9"
+  "version": "10"
  },
  "hack_hunt.deepswe": {
   "sha256": "72b3bfff15b1699c",
-  "version": "9"
+  "version": "10"
  },
  "harness_message_hint": {
   "sha256": "162d3a7620314475",
