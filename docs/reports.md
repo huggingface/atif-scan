@@ -60,7 +60,7 @@ The snapshot below predates credential detector v4: current scans label those he
 candidates **low**, not medium, and recompute the medium-plus totals:
 
 ```text
-atif-scan 0.7.0 · run integrity report
+atif-scan 0.7.1 · run integrity report
 Findings set review priority, not verdicts.  ✓ checked  ⚠ needs attention  · context  est. estimate
 
 RUN        Harbor job 30225ce2 · tb4-grok-4.7-xhigh
