@@ -19,3 +19,9 @@ in pyproject.toml). Fix complexity by splitting into named helpers rather than
 suppressing; a `# noqa`/`# ty: ignore` needs a rule code and a reason. Untrusted JSON is
 narrowed with `jsonval`; report documents are `jsonval.Doc`. Add regression tests whenever a
 new false-positive or evidence gap is found. No external model runs are needed.
+
+Models to use atif-scan: 
+ - codexresponses.gpt-6-luna?reasoning=medium for the --image-model 
+ - codexresponses.gpt-6.1-sol?reasoning=high for judge prompting
+
+Confirm these models with the user only once at the beginning of the session.
