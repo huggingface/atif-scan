@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from ..data.model import Trace
 from .catalogue import ANSWER_STEPS, BY_ID, CONFIDENCE, Question
 from .coverage import review_coverage, thin
-from .prompts import trace_digest
+from .prompts import REASON_CHARS, answer_mechanisms, trace_digest
 
 MAX_READ = 64 * 1024  # bytes of a metadata or answer file; larger files are ignored
 
@@ -70,13 +70,13 @@ def parse_answer(text: str, meta: object) -> Doc | None:
     value = _reply(text)
     if value is None or not _valid_reply(question, value):
         return None
-    steps = as_list(value.get("steps"))  # a list, or falsy (no steps)
+    steps = as_list(value["steps"])  # validated in full; never discard invalid citations
     return {
         "question": question.id,
         "version": version,
         "answer": value["answer"],
         "confidence": value.get("confidence"),
-        "steps": sorted({n for s in steps if (n := count(s)) is not None})[:ANSWER_STEPS],
+        "steps": sorted({n for step in steps if (n := count(step)) is not None}),
         **({"mechanism": value.get("mechanism")} if question.mechanisms else {}),
     }
 
@@ -101,13 +101,31 @@ def _reply(text: str) -> JsonObject | None:
     return value if is_object(value) else None
 
 
-def _valid_reply(question: Question, value: JsonObject) -> bool:
-    steps = value.get("steps") or []
+def _valid_steps(value: object) -> bool:
     return (
-        value.get("answer") in question.answers
-        and value.get("confidence") in CONFIDENCE
-        and isinstance(steps, list)
-        and (not question.mechanisms or value.get("mechanism") in question.mechanisms)
+        isinstance(value, list)
+        and len(value) <= ANSWER_STEPS
+        and all(count(step) is not None for step in value)
+    )
+
+
+def _valid_reply(question: Question, value: JsonObject) -> bool:
+    required = {"answer", "confidence", "steps", "reason"}
+    if question.mechanisms:
+        required.add("mechanism")
+    if set(value) != required:
+        return False
+    answer = as_str(value.get("answer"))
+    confidence = as_str(value.get("confidence"))
+    reason = as_str(value.get("reason"))
+    mechanism = as_str(value.get("mechanism"))
+    return (
+        answer in question.answers
+        and confidence in CONFIDENCE
+        and reason is not None
+        and len(reason) <= REASON_CHARS
+        and _valid_steps(value.get("steps"))
+        and (not question.mechanisms or mechanism in answer_mechanisms(question, answer or ""))
     )
 
 

@@ -1,82 +1,82 @@
 {
  "awareness_hunt": {
-  "sha256": "59ab9a9fd5b23ee2",
-  "version": "4"
+  "sha256": "8814ab870d90d16d",
+  "version": "5"
  },
  "awareness_hunt.blind": {
-  "sha256": "c50bab3e2e8bb632",
-  "version": "4"
+  "sha256": "6429ad1f53da10fc",
+  "version": "5"
  },
  "fabrication_hunt": {
-  "sha256": "e10842cc1aa82401",
-  "version": "5"
+  "sha256": "2d81fbc9fe058508",
+  "version": "6"
  },
  "fabrication_hunt.blind": {
-  "sha256": "b8bbe7d5698164e2",
-  "version": "5"
+  "sha256": "e70b66014680fff7",
+  "version": "6"
  },
  "hack_hunt": {
-  "sha256": "249ed6919f433613",
-  "version": "10"
+  "sha256": "84290721ec27e190",
+  "version": "11"
  },
  "hack_hunt.blind": {
-  "sha256": "0472a5a402e366f9",
-  "version": "10"
+  "sha256": "83910ed0f644ff1a",
+  "version": "11"
  },
  "hack_hunt.deepswe": {
-  "sha256": "72b3bfff15b1699c",
-  "version": "10"
+  "sha256": "b59363c11d539279",
+  "version": "11"
  },
  "harness_message_hint": {
-  "sha256": "162d3a7620314475",
-  "version": "2"
- },
- "history_probe": {
-  "sha256": "91d466b1d4c23348",
-  "version": "1"
- },
- "lookup_used": {
-  "sha256": "1fc2c4ee8b8fdf4d",
-  "version": "6"
- },
- "lure_response": {
-  "sha256": "d93a71382d560f32",
-  "version": "2"
- },
- "model_call_legitimacy": {
-  "sha256": "05387bd41597dc2a",
-  "version": "2"
- },
- "network_outcome": {
-  "sha256": "1cd1eea34c63f24f",
-  "version": "2"
- },
- "recall_or_derivation": {
-  "sha256": "3fa1fc15a33f3ff7",
-  "version": "2"
- },
- "skill_task_specific": {
-  "sha256": "21272e362b526b8c",
-  "version": "2"
- },
- "test_access_intent": {
-  "sha256": "dd447c5bb230c6da",
+  "sha256": "8570d3c55d031bfe",
   "version": "3"
  },
- "value_provenance": {
-  "sha256": "80676542df402406",
+ "history_probe": {
+  "sha256": "6fffc06c0366a8b1",
   "version": "2"
+ },
+ "lookup_used": {
+  "sha256": "ea59b194d2261b61",
+  "version": "7"
+ },
+ "lure_response": {
+  "sha256": "297922a1147aaf5d",
+  "version": "3"
+ },
+ "model_call_legitimacy": {
+  "sha256": "175160a416ada3cd",
+  "version": "3"
+ },
+ "network_outcome": {
+  "sha256": "713b6f95bd87b5d4",
+  "version": "3"
+ },
+ "recall_or_derivation": {
+  "sha256": "7b412bc8b4308058",
+  "version": "3"
+ },
+ "skill_task_specific": {
+  "sha256": "41b84a149551011c",
+  "version": "3"
+ },
+ "test_access_intent": {
+  "sha256": "a2f653aa1bb442cd",
+  "version": "4"
+ },
+ "value_provenance": {
+  "sha256": "6231d6490a8a4373",
+  "version": "3"
  },
  "verification_hunt": {
-  "sha256": "12e9d18906584250",
-  "version": "6"
+  "sha256": "5af8bc4858abcdf0",
+  "version": "7"
  },
  "verification_hunt.blind": {
-  "sha256": "fa280662934888d6",
-  "version": "6"
+  "sha256": "90ee6e1a1e503b08",
+  "version": "7"
  },
  "web_provenance": {
-  "sha256": "bb4b0bafa930ccac",
-  "version": "2"
+  "sha256": "a65778505e213566",
+  "version": "3"
  }
 }
