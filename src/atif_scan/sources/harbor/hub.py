@@ -228,6 +228,10 @@ ROW_KEYS = (
     "output_tokens",
     "started_at",
     "finished_at",
+    # The configured setup (listing.trial_meta): without them a cached comparison job
+    # reads as one setup, and every setup but the largest as a model substitution.
+    "agent_name",
+    "model_name",
 )
 SHOW_KEYS = (
     "name",

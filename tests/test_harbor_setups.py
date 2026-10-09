@@ -102,3 +102,49 @@ def test_a_model_fallback_is_not_a_setup():
     # safety fallback) is a model mismatch inside the one setup.
     rows = [r for r in comparison() if r["agent_name"] == "codex"]
     assert card(rows, model_name="claude-opus-4-7")["setups"] is None
+
+
+def served(rows: list[Doc], fallback: dict[int, str] | None = None) -> Doc:
+    """The comparison job scanned: each trajectory ran its configured model, except the
+    listed trials (by row number), which ran a fallback."""
+    job = inspect_job(f"harbor://jobs/{JOB}", cli=ListingCLI(rows))
+    by_name = {f"{r['task_name'].rsplit('/', 1)[-1]}__{n:08x}": n for n, r in enumerate(rows, 1)}
+    items = []
+    for t in job["trials"]:
+        n = by_name[t["input_id"]]
+        model = (fallback or {}).get(n) or t["configured_model"]
+        items.append({**t, "input_status": "listed", "incomplete": False, "assessments": []})
+        items[-1]["model_name"] = model
+    return overview({"inputs": items, "runs": [job["run"]]}, scanned=True)
+
+
+def test_each_setup_is_checked_for_a_model_fallback_on_its_own():
+    # Regression (TB2.1 job c8fcaaeb, read without its job config): the most common model
+    # was "the" model, so every rewarded trial of the other setups was a critical DQ.
+    assert served(comparison())["model_mismatch"] is None
+    # Row 9 is terminus-2/claude-opus-4-7, rewarded, but ran gpt-5.5: gpt-5.5 is another
+    # setup's model, not this one's.
+    ov = served(comparison(), {9: "gpt-5.5"})
+    mm = ov["model_mismatch"]
+    assert mm["trial_ids"] == ["a__00000009"]
+    assert mm["other_models"] == {"gpt-5.5": 1} and len(mm["rewarded_ids"]) == 1
+    assert mm["planned_models"] == ["claude-opus-4-7", "gpt-5.5"]
+    assert ov["disqualification"]["by_model_only"] == 1
+
+
+def test_a_saved_listing_keeps_each_trials_setup():
+    # Regression: the saved Hub listing dropped agent_name/model_name, so a cached rescan
+    # of a comparison job lost its setups.
+    import json
+
+    from atif_scan.sources.harbor.hub import _reduced
+    from atif_scan.sources.harbor.listing import saved_listing
+
+    saved = {"version": 1, "job": JOB, **_reduced({"name": "demo"}, comparison())}
+    _, facts = saved_listing(json.dumps(saved).encode())
+    setups = {(f["configured_agent"], f["configured_model"]) for f in facts.values()}
+    assert setups == {
+        ("terminus-2", "gpt-5.5"),
+        ("codex", "gpt-5.5"),
+        ("terminus-2", "claude-opus-4-7"),
+    }
