@@ -192,10 +192,14 @@ def test_answers_round_trip_keeps_candidates_and_adds_summary_counts(population,
     assert "private synthetic review text" not in json.dumps(doc)
 
 
-@pytest.mark.parametrize("extra", [["--no-sync"], ["--inspect"], ["--answers", "q"]])
+@pytest.mark.parametrize("extra", [["--no-sync"], ["--inspect"], ["--answers", "ANSWERS"]])
 def test_reject_ambiguous_or_ephemeral_workflows(population, tmp_path, extra):
+    # Every path under tmp_path: a regression must not write a bundle into the checkout
+    # (an early version left one, `q/`, committed by accident).
+    extra = [str(tmp_path / "answers") if x == "ANSWERS" else x for x in extra]
     with pytest.raises(SystemExit, match="2"):
         main(["--manifest", str(population), "--questions", str(tmp_path / "q"), *extra])
+    assert not (tmp_path / "answers").exists()
 
 
 def test_former_judge_flags_still_write_the_same_bundle(population, tmp_path, capsys):

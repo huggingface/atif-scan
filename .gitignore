@@ -18,5 +18,6 @@ reports/
 /judge/
 /judges/
 /j[0-9]*/
+/q/
 *.answer.json
 *.review.atif.json

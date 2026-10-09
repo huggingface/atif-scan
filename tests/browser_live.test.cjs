@@ -1,8 +1,7 @@
 /*
  * Optional, synthetic-only live frontend test (no downloads or model calls):
- * NODE_PATH=/home/ssmith/source/harbor-hf/node_modules:/home/ssmith/source/inspector/node_modules \
- *   node --test tests/browser_live.test.cjs
- * BROWSER_EXECUTABLE may select an already-installed Chromium.
+ * NODE_PATH=/path/to/node_modules node --test tests/browser_live.test.cjs
+ * Needs an installed Playwright and Chromium; BROWSER_EXECUTABLE may select one. Skips otherwise.
  */
 "use strict";
 const assert = require("node:assert/strict");
