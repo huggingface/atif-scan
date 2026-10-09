@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from ..data.jsonval import Doc
     from ..engine import Engine
+    from ..review.answers import Answers
     from .inputs import Record
 
 
@@ -34,8 +35,9 @@ def _pinned(records: list[Record]) -> list[str | None] | None:
 
 def _scanned(
     args: argparse.Namespace, records: list[Record], engine: Engine
-) -> tuple[list[Doc], Doc, int]:
-    """Scan items, the report document and the normal scan exit status."""
+) -> tuple[list[Doc], Doc, int, Answers | None]:
+    """Scan items, the report document, the normal scan exit status and the answers the
+    scan read (the same load, so reasons match the rows)."""
     sync_failed = sum(getattr(args, "sync_failures", []))
     threshold = Severity[args.fail_on.upper()] if args.fail_on else None
     scanner = Scanner.for_args(args, engine)
@@ -45,7 +47,7 @@ def _scanned(
             f"atif-scan: {sync_failed} sync file(s) unavailable; export incomplete", file=sys.stderr
         )
     status = 2 if invalid or sync_failed else 1 if failed else 0
-    return items, _document(items, args, sync_failed, engine), status
+    return items, _document(items, args, sync_failed, engine), status, scanner.answers
 
 
 def export_viewer(args: argparse.Namespace) -> int:
@@ -55,13 +57,14 @@ def export_viewer(args: argparse.Namespace) -> int:
     if prepared is None or digests is None:
         return 2
     records, engine = prepared
-    items, doc, status = _scanned(args, records, engine)
+    items, doc, status, answers = _scanned(args, records, engine)
     try:
         run = export.run_facts(
             brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
         )
         review = BY_ID[args.review] if args.review else None
-        export.write(args.viewer, export.bundle(records, items, digests, doc, run, review))
+        document = export.bundle(records, items, digests, doc, run, review, answers)
+        export.write(args.viewer, document)
     except (OSError, ValueError):
         print("atif-scan: viewer export failed (details withheld)", file=sys.stderr)
         return 2

@@ -147,6 +147,26 @@ def test_parse_answer(reply, ok):
         assert "reason" not in parsed  # free text never enters reports
 
 
+def test_answer_reason_is_kept_apart_from_report_rows(tmp_path):
+    from atif_scan.review.answers import MAX_REASON, Answers, answer_reason
+
+    assert answer_reason('{"answer": "used", "reason": "  copied  "}') == "copied"
+    assert answer_reason('{"answer": "used", "reason": ""}') is None
+    assert answer_reason('{"answer": "used", "reason": 3}') is None
+    assert len(answer_reason(json.dumps({"reason": "x" * 5000})) or "") == MAX_REASON
+    folder = tmp_path / "trial"
+    folder.mkdir()
+    for question, answer in (("lookup_used", "used"), ("hack_hunt", "maybe")):
+        meta = {"question": question, "input_id": "synthetic", "version": "1"}
+        (folder / f"{question}.json").write_text(json.dumps(meta))
+        reply = {"answer": answer, "confidence": "high", "steps": [], "reason": f"R-{question}"}
+        (folder / f"{question}.answer.json").write_text(json.dumps(reply))
+    answers = Answers.load(tmp_path)
+    # Only a valid answer keeps its reason, and the report rows never carry it.
+    assert answers.reasons_for("synthetic") == {"lookup_used": "R-lookup_used"}
+    assert "R-" not in json.dumps(answers.annotate("synthetic", None))
+
+
 def test_prompt_shows_the_task_instruction_not_a_harness_context_block(tmp_path, capsys):
     # Regression (Codex TB2.1): the first user message is `<environment_context>…`; the
     # prompt showed it as "the task instruction".

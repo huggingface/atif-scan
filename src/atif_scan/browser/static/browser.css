@@ -59,3 +59,4 @@ fieldset label { margin:10px 0 }
 .answer-card.concern { border-left:5px solid var(--accent) }
 .answer-card p { margin:2px 0 }
 .answer-card .chip { justify-self:start }
+.answer-card .answer-reason { white-space:pre-wrap; overflow-wrap:anywhere; border-left:3px solid var(--line-soft); padding-left:8px }

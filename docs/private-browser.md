@@ -22,8 +22,9 @@ cannot fetch URLs. Streamed remote manifest entries are unsupported: sync them f
 `--answers DIR` can: each trial then lists its judge answers under **Judge answers**
 (answer, mechanism, confidence, the share of steps the judge opened, and buttons for the
 steps it cited), and trial rows note answers that report a concern. Answers are
-annotations: they change no finding, priority or score, and the judge's free-text
-`reason` is never shown. Text/JSON output formatting options do not affect the browser.
+annotations: they change no finding, priority or score. The judge's free-text `reason`
+is shown in the opened trial, masked as a whole like trace text (best effort), and only
+for a current answer; it never reaches the overview, reports or feedback. Text/JSON output formatting options do not affect the browser.
 The browser always receives the full scan; its own filters are presentation-only.
 After shutdown, the process retains the normal scan exit status, including exit 2 for
 invalid inputs or failed sync files. Startup errors also return 2.

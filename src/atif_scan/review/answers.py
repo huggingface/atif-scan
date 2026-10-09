@@ -24,6 +24,7 @@ MAX_READ = 64 * 1024  # bytes of a metadata or answer file; larger files are ign
 
 
 MAX_OBJECTS = 64  # `{` positions tried when a reply wraps its JSON object in prose
+MAX_REASON = 2000  # characters of a judge's free-text reason kept (the schema asks <= 600)
 
 
 def _unfence(text: str) -> str:
@@ -80,6 +81,17 @@ def parse_answer(text: str, meta: object) -> Doc | None:
     }
 
 
+def answer_reason(text: str) -> str | None:
+    """The reply's free-text `reason`, bounded, or None. It may quote the trace and is
+    unmasked: it never enters reports. Only the viewer and private browser show it, masked
+    with the trace's own secrets, beside the valid answer it came with."""
+    value = _reply(text)
+    reason = value.get("reason") if value is not None else None
+    if not isinstance(reason, str) or not reason.strip():
+        return None
+    return reason.strip()[:MAX_REASON]
+
+
 def _reply(text: str) -> JsonObject | None:
     """The reply's JSON object: the whole (unfenced) text, else one embedded in prose."""
     try:
@@ -117,6 +129,9 @@ class Answers:
     by_input: dict[str, list[tuple[Doc, Doc | None, str, Path | None]]] = field(
         default_factory=dict
     )
+    # {(input label, question): reason} for valid answers only. Unmasked trace-derived
+    # text held in memory: never a report field (see `reasons_for`).
+    reasons: dict[tuple[str, str], str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, root: Path) -> Answers:
@@ -139,15 +154,19 @@ class Answers:
             reply = meta_path.with_name(meta_path.stem + ".answer.json")
             answer, status = None, "unanswered"
             if reply.exists():
-                try:
-                    answer = parse_answer(_read(reply), meta)
-                except (OSError, ValueError):
-                    answer = None
+                answer, reason = _parse_reply(reply, meta)
                 status = "answered" if answer else "invalid"
+                if answer and reason:
+                    found.reasons[(meta["input_id"], meta["question"])] = reason
             review = meta_path.with_name(meta_path.stem + ".review.atif.json")
             entry = (meta, answer, status, review if review.is_file() else None)
             found.by_input.setdefault(meta["input_id"], []).append(entry)
         return found
+
+    def reasons_for(self, label: str) -> dict[str, str]:
+        """{question: unmasked reason} for one input's valid answers. Callers mask it and
+        show it only beside a current (`answered`, not stale) row."""
+        return {q: r for (i, q), r in self.reasons.items() if i == label}
 
     def annotate(self, label: str, trace: Trace | None, local: Path | None = None) -> list[Doc]:
         """Report rows for one input: stale answers (other trace/version) are marked."""
@@ -169,6 +188,16 @@ class Answers:
                 row = {"question": meta["question"], "version": meta["version"], "status": "stale"}
             rows.append(row)
         return rows
+
+
+def _parse_reply(reply: Path, meta: Doc) -> tuple[Doc | None, str | None]:
+    """(validated answer, its reason) from one reply file; (None, None) if unreadable."""
+    try:
+        text = _read(reply)
+    except (OSError, ValueError):
+        return None, None
+    answer = parse_answer(text, meta)
+    return answer, answer_reason(text) if answer else None
 
 
 def _coverage(review: Path, trace: Trace, question: Question) -> Doc | None:
@@ -217,4 +246,4 @@ def thin_answers(items: list[Doc]) -> dict[str, int]:
     return out
 
 
-__all__ = ["Answers", "parse_answer", "tally", "thin_answers"]
+__all__ = ["Answers", "answer_reason", "parse_answer", "tally", "thin_answers"]

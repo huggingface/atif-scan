@@ -605,6 +605,11 @@
         if (said) mech.append(document.createTextNode(` · ${said}`));
         card.append(mech);
       }
+      if (row.reason) {
+        const why = node("blockquote", undefined, "answer-reason");
+        why.append(node("span", "The judge's reason", "answer-reason-label"), node("p", row.reason));
+        card.append(why);
+      }
     }
     const facts = E.answerFacts(row);
     if (facts.length) card.append(node("p", facts.join(" · "), row.thin || row.status !== "answered" ? "limits" : "calc"));
@@ -627,7 +632,7 @@
     $("answers-tab").hidden = !hasAnswers;
     $("answers-count").textContent = rows.length ? `(${rows.length})` : "";
     const panel = $("answers-panel");
-    panel.replaceChildren(node("p", "A model judge's answers to review questions about this trace. Annotations, not verdicts: they never change findings, priorities or scores. Its free-text reasons aren't exported.", "small-note"));
+    panel.replaceChildren(node("p", "A model judge's answers to review questions about this trace. Annotations, not verdicts: they never change findings, priorities or scores. Each reason is the judge's own wording, masked like the trace (best effort): check it against the steps it cites.", "small-note"));
     if (!rows.length) { panel.append(node("p", "No question was asked about this trial. That is not a clean result.", "small-note")); return; }
     panel.append(...rows.map(answerCard));
   }

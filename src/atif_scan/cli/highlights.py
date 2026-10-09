@@ -23,7 +23,7 @@ def export_highlights(args: argparse.Namespace) -> int:
     if prepared is None or digests is None:
         return 2
     records, engine = prepared
-    items, doc, status = _scanned(args, records, engine)
+    items, doc, status, _ = _scanned(args, records, engine)  # highlights never show reasons
     try:
         summary = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
         document = highlights.document(items, doc, summary)

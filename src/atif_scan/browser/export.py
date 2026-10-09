@@ -1,4 +1,5 @@
-"""Static trajectory viewer export: allowlisted findings plus whole-field masked text.
+"""Static trajectory viewer export: allowlisted findings plus whole-field masked text
+(trace fields and judge reasons).
 
 Unlike reports, this export deliberately contains trace text so a reviewer can publish
 an individually checked trajectory. Every field is masked as a whole (best effort)
@@ -28,12 +29,14 @@ from .session import pinned_bytes
 from .web import web_gap_details
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ..cli.inputs import Record
     from ..data.jsonval import Doc
     from ..data.model import Step, Trace
     from ..data.model import Trace as TraceType
+    from ..review.answers import Answers
     from ..review.catalogue import Question
 
 FORMAT = "atif-scan-viewer/1"
@@ -166,8 +169,15 @@ def _trial_findings(
     return found
 
 
-def trial_bundle(trial_id: str, item: Doc, trace: Trace | None, report: Doc) -> Doc:
-    """One trial: allowlisted scan fields, findings with proven highlights, masked steps."""
+def trial_bundle(
+    trial_id: str,
+    item: Doc,
+    trace: Trace | None,
+    report: Doc,
+    reasons: Mapping[str, str] | None = None,
+) -> Doc:
+    """One trial: allowlisted scan fields, findings with proven highlights, masked steps,
+    and judge answers with their reasons (`reasons`) masked like the steps."""
     known = trace_secrets(trace) if trace is not None else frozenset()
     found = _trial_findings(trace, item, report, known)
     targeted = [
@@ -201,7 +211,7 @@ def trial_bundle(trial_id: str, item: Doc, trace: Trace | None, report: Doc) -> 
                 if (value := as_object(item.get("selection")).get(key)) is not None
             },
             "findings": found,
-            "answers": answer_rows(item),
+            "answers": answer_rows(item, reasons, known),
             "steps": steps,
         }
     )
@@ -328,10 +338,15 @@ def _review_trial(trial: Doc, question: Question) -> Doc:
 
 
 def _trial(
-    trial_id: str, item: Doc, trace: TraceType | None, report: Doc, review: Question | None
+    trial_id: str,
+    item: Doc,
+    trace: TraceType | None,
+    report: Doc,
+    review: Question | None,
+    reasons: Mapping[str, str] | None = None,
 ) -> Doc:
     if review is None:
-        return trial_bundle(trial_id, item, trace, report)
+        return trial_bundle(trial_id, item, trace, report, reasons)
     trial = trial_bundle(trial_id, blind_item(item, review, trace), trace, report)
     trial["answers"] = []  # blind: never a judge's answer
     return _review_trial(trial, review)
@@ -344,10 +359,12 @@ def bundle(
     report: Doc,
     run: Doc | None = None,
     review: Question | None = None,
+    answers: Answers | None = None,
 ) -> Doc:
     """The whole export document. Traces are re-read only when still matching their pin.
     `review`: a blind human-review export for that question (no findings, scores or
-    scanner run sections; the question's candidates to jump between)."""
+    scanner run sections; the question's candidates to jump between). `answers`: the
+    loaded bundle, for each answer's masked reason (never in a blind export)."""
     if not len(records) == len(items) == len(digests):
         raise ValueError("record_item_count_mismatch")
     trials = []
@@ -357,7 +374,8 @@ def bundle(
         trace = None
         if item.get("input_status") == "available":
             trace = load_bytes(pinned_bytes(source.local, sha256))
-        trials.append(_trial(str(number), item, trace, report, review))
+        reasons = answers.reasons_for(source.label) if answers is not None else None
+        trials.append(_trial(str(number), item, trace, report, review, reasons))
     document = {
         "format": FORMAT,
         "scanner_version": report.get("scanner_version"),

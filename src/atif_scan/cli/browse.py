@@ -64,6 +64,7 @@ def browse(args: argparse.Namespace) -> int:
             args.feedback_dir or home() / "feedback",
             expected_digests=before,
             report=doc,
+            answers=scanner.answers,
         )
         _serve(desk, args.browse_port if args.browse_port is not None else 0)
     except (OSError, ValueError):

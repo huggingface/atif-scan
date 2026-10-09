@@ -44,7 +44,7 @@ const BrowserHelpers = (() => {
   function charCount(text) { return Array.from(text).length; }
   function previousOffset(page) { return Math.max(0, page.offset - page.limit); }
   function dirty(saved, draft) { return saved.verdict !== draft.verdict || saved.note !== draft.note; }
-  // Judge answers (allowlisted rows, no reason): annotations, never verdicts. Same wording
+  // Judge answers (allowlisted rows, masked reason): annotations, never verdicts. Same wording
   // as the static viewer's evidence.js.
   function judgeConcerns(trial) {
     return (trial?.answers ?? []).filter(a => a.status === "answered" && a.concern);
@@ -184,6 +184,7 @@ if (typeof document !== "undefined") (() => {
         node("span", answer, "chip " + (row.status !== "answered" ? "chip--muted" : row.concern ? "chip--concern" : row.thin ? "chip--danger" : "")),
         node("span", `${row.question} · v${row.version}${row.mechanism && row.mechanism !== "none" ? ` · ${row.mechanism.replaceAll("_", " ")}` : ""}`, "muted"));
       if (row.status === "answered" && q.answers?.[row.answer]) card.append(node("p", q.answers[row.answer]));
+      if (row.status === "answered" && row.reason) card.append(node("p", `Judge's reason: ${row.reason}`, "answer-reason"));
       for (const fact of H.answerFacts(row)) card.append(node("span", fact, "muted"));
       const steps = row.steps ?? [];
       if (steps.length) {

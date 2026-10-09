@@ -30,8 +30,12 @@
 - **Answering** is the user's decision: whoever answers (e.g. `atif-scan hunt`) sends the
   prompts to a model provider. Prompts frame trace text as untrusted data. `hunt` disables
   shell and subagents; the optional `--inspect-tool` grants read-only MCP tools bound to
-  one local trajectory, never arbitrary paths or execution. `--answers` keeps only the
-  validated answer, confidence, mechanism and steps, never the free-text reason.
+  one local trajectory, never arbitrary paths or execution. In reports, `--answers` keeps
+  only the validated answer, confidence, mechanism and steps, never the free-text reason.
+  The judge's reason may quote the trace, so it appears only where trace text already
+  does: the static viewer and the private browser, masked as a whole with the trace's
+  own secrets (best effort), beside a current valid answer. Highlights and blind review
+  exports never carry it.
 - **fast-agent calls** (`--image-model`, `hunt`) run `fast-agent go --isolated`
   (fast-agent 0.10.43+): config, secrets and model aliases are read from the fast-agent
   home, but nothing is written there (no session history, file logs or telemetry) and no
@@ -125,7 +129,7 @@
   trajectory. Every field is masked as a whole before export, but masking is best
   effort, so read the export before publishing it; it is not a clearance. The data is
   allowlisted (labels, task, reward, coverage, check IDs/titles/priorities, field
-  locators and masked field text) and never includes source paths, citations, feedback
+  locators, masked field text and, with `--answers`, the judge's masked reasons) and never includes source paths, citations, feedback
   or raw metadata; media is not exported. Highlights are offsets proven against the
   masked text, otherwise the whole field is marked as the evidence. Sources are pinned
   by digest before scanning and must still match when exported. The page loads nothing

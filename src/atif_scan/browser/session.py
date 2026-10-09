@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ..cli.inputs import Record
     from ..data.jsonval import Doc
     from ..data.model import Trace
+    from ..review.answers import Answers
 
 CACHE_SIZE = 2
 MAX_QUERY = 150
@@ -130,6 +131,7 @@ class Session:
         *,
         expected_digests: list[str | None] | None = None,
         report: Doc | None = None,
+        answers: Answers | None = None,
     ):
         if len(records) != len(items):
             raise ValueError("record_item_count_mismatch")
@@ -143,6 +145,12 @@ class Session:
             raise ValueError("trace_source_changed")
         self._metadata = self._report_metadata(report or {})
         self._metadata["questions"] = question_labels(items)
+        # Unmasked judge reasons per trial: masked with the trace's secrets when a trial
+        # is opened (`trial`), never in the overview.
+        self._reasons = {
+            key: answers.reasons_for(source.label) if answers is not None else {}
+            for key, (source, _) in zip(self._trials, records, strict=True)
+        }
         self._cache: OrderedDict[str, Trace] = OrderedDict()
         self._feedback = FeedbackStore(feedback_dir)
 
@@ -232,6 +240,8 @@ class Session:
         if self._get(trial_id).item.get("input_status") != "available":
             return {**result, "steps": []}
         trace = self._trace(trial_id)
+        known = trace_secrets(trace)
+        result["answers"] = answer_rows(self._get(trial_id).item, self._reasons[trial_id], known)
         for finding in result["findings"]:
             if (
                 finding["check_id"] == "integrity.web_results_not_recorded"
