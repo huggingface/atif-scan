@@ -109,6 +109,8 @@ class Script:
     # The bodies `cat`/`tee` write to a file (`cat > f <<EOF`): file content, not input
     # to a program. A body fed to an interpreter (`python - <<EOF`) isn't one.
     file_bodies: list[Span] = field(default_factory=list)
+    # The file each of `file_bodies` is written to (same order).
+    file_targets: list[str] = field(default_factory=list)
     complete: bool = True
 
 
@@ -271,8 +273,9 @@ class _Reader:
                 self.nested(command, text[body:end], body, depth)
             else:
                 self.script.bodies.append(self.span(body, end))
-                if command.name in FILE_WRITERS and writes(command):
+                if command.name in FILE_WRITERS and (targets := writes(command)):
                     self.script.file_bodies.append(self.span(body, end))
+                    self.script.file_targets.append(targets[0][0])
         self.heredocs = []
 
     def nested(
@@ -478,6 +481,27 @@ class _Pending:
 
 # Commands whose heredoc body is written out verbatim (to their redirect or tee target).
 FILE_WRITERS = frozenset({"cat", "tee"})
+
+
+def unused_file_bodies(script: Script) -> list[Span]:
+    """The written heredoc bodies (`file_bodies`) whose file no other command in the script
+    names afterwards: file content, not something the script then runs or uses."""
+    out = []
+    for span, target in zip(script.file_bodies, script.file_targets, strict=True):
+        used = any(
+            any(_names_file(w, target) for w in c.words)
+            for c in script.commands
+            if not (c.name in FILE_WRITERS and any(t == target for t, _ in writes(c)))
+        )
+        if not used:
+            out.append(span)
+    return out
+
+
+def _names_file(word: str, target: str) -> bool:
+    """`word` is the written file `target`: the same path, or its file name."""
+    base = target.rsplit("/", 1)[-1]
+    return word in {target, base} or word.endswith("/" + base)
 
 
 def runs_script(command: Command) -> bool:
