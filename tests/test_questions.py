@@ -429,6 +429,42 @@ def test_read_attachments_are_not_midrun_harness_messages(attachment):
     assert midrun_messages(parse_trace(doc)) == []
 
 
+def _delegation(prompt: str, echoed: str) -> Doc:
+    """An agent that hands a subagent `prompt`, then a user step with `echoed`."""
+    return {
+        "schema_version": "ATIF-v1.7",
+        "steps": [
+            {"step_id": 1, "source": "user", "message": "Fix the parser."},
+            {
+                "step_id": 2,
+                "source": "agent",
+                "message": "Delegating the survey.",
+                "tool_calls": [
+                    {
+                        "tool_call_id": "a",
+                        "function_name": "Agent",
+                        "arguments": {"description": "Survey", "prompt": prompt},
+                    }
+                ],
+            },
+            {"step_id": 3, "source": "user", "message": echoed},
+        ],
+    }
+
+
+def test_the_agents_own_subagent_prompt_is_not_a_harness_message():
+    # Regression (TB4 GLM 5.3, Claude Code): the subagent's prompt, inlined as a user step,
+    # was asked about and answered as a task-specific harness hint on a rewarded trial.
+    from atif_scan.data.loader import parse_trace
+    from atif_scan.review.catalogue import midrun_messages
+
+    prompt = "Read parser_a.py and parser_b.py.\nReport how each buffers trailing text."
+    assert midrun_messages(parse_trace(_delegation(prompt, prompt + "\n"))) == []
+    # Anything else the harness says is still asked, including a prompt with extra text.
+    for other in ("Hint: the bug is in parser_b.py.", prompt + " The fix is in line 40."):
+        assert len(midrun_messages(parse_trace(_delegation(prompt, other)))) == 1
+
+
 @pytest.mark.parametrize(
     ("tool", "attachment"),
     [
