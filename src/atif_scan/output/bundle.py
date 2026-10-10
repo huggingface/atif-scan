@@ -83,6 +83,7 @@ def write_review(
     writer = Writer(root, question_ids, _harness_template(records, selected), blind, environment)
     manifest: list[Doc] = []
     selection: list[Doc] = []
+    noted = 0  # trials whose prompts say the scanner flagged a model mismatch
     try:
         for source, _ in records:
             item = selected.get(source.label)
@@ -102,6 +103,7 @@ def write_review(
                 entry["status"] = "unavailable"
                 continue
             entry["status"] = "written" if writer.count > before else "not_applicable"
+            noted += flagged is not None and entry["status"] == "written"
             manifest.append(record)
     finally:
         writer.close()
@@ -115,6 +117,9 @@ def write_review(
         "written": writer.count,
         "unavailable": statuses.count("unavailable"),
         "not_applicable": statuses.count("not_applicable"),
+        # A manifest records no configured model, so inputs sampled from several runs or
+        # models read as one run and most of them get the note (see cli.scan._review).
+        "model_mismatch_notes": noted,
         # The questions actually asked (finding-specific ones only where they applied).
         "question_ids": [q for q in question_ids if q in writer.asked] or question_ids[:1],
     }
