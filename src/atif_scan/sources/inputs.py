@@ -40,6 +40,7 @@ from .harbor.runs import (
     errored,
     hub_trial,
     job_folders,
+    listed_without_trajectory,
     reward_lookup,
     saved_hub_listings,
     trial_details,
@@ -583,6 +584,48 @@ def _trial_source(
     )
 
 
+def _untraced(label: str, facts: Doc) -> Source:
+    """A trial its saved Hub listing names but whose trajectory isn't in the folder:
+    unavailable with its listed facts, exactly as a harbor:// scan reports it."""
+
+    def load() -> Trace:
+        raise TraceError("no_trajectory_downloaded")
+
+    return Source(label, load, meta=facts)
+
+
+def _listing_sources(
+    listing: Listing,
+    value: str,
+    pattern: str,
+    saved: dict[str, SavedRun],
+    membership: Mapping[str, bool],
+    before: int,
+) -> list[Source]:
+    """One input's selected trajectories, then the trials its saved Hub listing names
+    without one (unavailable, as a harbor:// scan reports them). `before` counts the
+    sources already resolved, for positional labels."""
+    entries = selected(listing, pattern)
+    if not entries:
+        raise SourceError("no_files_match_pattern")
+    sources = [
+        _trial_source(
+            listing,
+            entry,
+            value,
+            label_for(entry, pattern) or f"input-{before + n + 1:04d}",
+            saved,
+            membership,
+        )
+        for n, entry in enumerate(entries)
+    ]
+    if pattern == DEFAULT_PATTERN:
+        sources += [
+            _untraced(label, facts) for label, facts in listed_without_trajectory(saved, entries)
+        ]
+    return sources
+
+
 def resolve(
     values: Sequence[str],
     pattern: str = DEFAULT_PATTERN,
@@ -610,12 +653,7 @@ def resolve(
         if runs is not None:
             runs.extend(found_runs)
             runs.extend(run for run, _ in saved.values() if run)
-        entries = selected(listing, pattern)
-        if not entries:
-            raise SourceError("no_files_match_pattern")
-        for entry in entries:
-            label = label_for(entry, pattern) or f"input-{len(sources) + 1:04d}"
-            sources.append(_trial_source(listing, entry, value, label, saved, membership))
+        sources += _listing_sources(listing, value, pattern, saved, membership, len(sources))
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

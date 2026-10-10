@@ -62,7 +62,11 @@ CENT = 0.01
 PRIORITIES = ("critical", "high", "medium", "low", "info", "none", "unavailable")
 
 
-RUN_KINDS = {"harbor_hub": "Harbor job", "harbor_leaderboard_row": "leaderboard row"}
+RUN_KINDS = {
+    "harbor_hub": "Harbor job",
+    "harbor_leaderboard_row": "leaderboard row",
+    "datacurve_index": "Datacurve index",
+}
 
 
 REASONING = {

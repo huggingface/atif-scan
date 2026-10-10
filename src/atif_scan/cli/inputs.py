@@ -18,7 +18,7 @@ from ..data.facts import trial_task
 from ..data.loader import TraceError
 from ..detectors import builtin_detectors
 from ..detectors.priming import builtin_allowances
-from ..packs import recognise, tasks_needed
+from ..packs import recognise, tasks_needed, untruncated_task
 from ..packs.reference import ENV as PACK_ENV
 from ..policy import load_rules
 from ..sources.harbor.files import trial_result
@@ -216,12 +216,14 @@ def sync_if_remote(value: str, args: argparse.Namespace) -> str:
 
 def folder_task(source: Source) -> str | None:
     """The task in a Harbor trial folder name (`<task>__<suffix>`). Job folders can
-    contain `__` too (`2026-08-19__20-38-18`), so the part closest to the file wins."""
+    contain `__` too (`2026-08-19__20-38-18`), so the part closest to the file wins.
+    Harbor cuts a task name to 32 characters in the folder name; a bundled pack's task
+    is restored from its cut name (None when two tasks share it)."""
     for part in reversed(re.split(r"[\\/]", source.hint or source.label)):
         task, separator, _ = part.partition("__")
         if separator and task:
             try:
-                return identifier(task)
+                return untruncated_task(identifier(task))
             except ValueError:
                 return None
     return None

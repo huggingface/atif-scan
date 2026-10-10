@@ -40,7 +40,8 @@ def _run_ref(r: Doc) -> str:
     name = str(r.get("job_name") or "")
     if name and kind != "job" and name.startswith(kind):  # "leaderboard row #9" says it
         return f"{name} · id {r['job_id'][:8]}" if r.get("job_id") else name
-    where = f"{kind} {r['job_id'][:8]}" if r.get("job_id") else "Harbor job folder"
+    folder = "Harbor job folder" if kind == "job" else kind
+    where = f"{kind} {r['job_id'][:8]}" if r.get("job_id") else folder
     return f"{where} · {name}" if name and name != "job" else where
 
 

@@ -13,8 +13,9 @@ The same fact can be recorded in several places. From highest precedence to lowe
   configured_model: the run listing
   (Harbor Hub records only; see `harbor.listing.retry_chains`).
 - duration_sec: result.json > the run listing (whole-trial started_at/finished_at).
-- agent_duration_sec: result.json's agent_execution interval only; never inferred from
-  trajectory step timestamps or substituted with whole-trial time.
+- agent_duration_sec: result.json's agent_execution interval > a Datacurve index's
+  `agent_duration_seconds` (the same interval, recorded by the publisher); never inferred
+  from trajectory step timestamps or substituted with whole-trial time.
 - input/cache/output tokens: result.json > the run listing > the trajectory
   (final_metrics totals, else its steps' summed usage).
 - cost_usd, decided separately from the tokens: result.json > the run listing >
@@ -25,8 +26,9 @@ The same fact can be recorded in several places. From highest precedence to lowe
 - agent, model, LLM calls, reasoning exposure, output ratio: the trajectory only.
 
 "The run listing" is, per trial, the Harbor Hub listing (live, or saved beside a synced
-job as hub-listing.json) or else a harbor-hf `trials.jsonl` ledger; a saved listing
-replaces the ledger's record of the same trial as a whole.
+job as hub-listing.json) or else a Datacurve `trials.json` index or a harbor-hf
+`trials.jsonl` ledger; a saved listing replaces the others' record of the same trial as
+a whole.
 
 Listing facts are gathered when inputs are resolved (`listed_facts`, kept on
 `Source.meta`); result.json and attempt costs are read lazily (`Source.details`). Both

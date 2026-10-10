@@ -73,7 +73,8 @@
   never citations or trace text.
 - Besides trajectories, the scanner reads only small, size-capped run files: reward files
   (`verifier/reward.{json,txt}`, at most 4 KiB), Harbor's `result.json`/`config.json`,
-  `trials.jsonl`, and harbor-hf's `run.json` (declared prices) and
+  `trials.jsonl`, a Datacurve `trials.json` trial index (at most 96 MiB: the whole public
+  index is ~51 MB), and harbor-hf's `run.json` (declared prices) and
   `attempt-costs/*.json` (at most 4 KiB). Only allowlisted numbers, codes and labels are
   extracted from them. `--inspect` reads no file contents.
 - A trial's submitted patch (`<trial>/artifacts/model.patch` beside

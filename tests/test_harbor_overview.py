@@ -606,16 +606,28 @@ def test_local_copy_of_a_hub_job_keeps_hub_facts(harbor, tmp_path, capsys):
         for i in live["inputs"]
         if i["input_status"] == "available"
     }
-    assert {i["input_id"]: tuple(i[k] for k in keys) for i in local["inputs"]} == facts
+    available = [i for i in local["inputs"] if i["input_status"] == "available"]
+    assert {i["input_id"]: tuple(i[k] for k in keys) for i in available} == facts
     assert any(r for _, r, *_ in facts.values())  # the fixture has rewards to lose
     rewarded = {
         i["input_id"]: next(a["status"] for a in i["assessments"] if a["id"] == "context.rewarded")
-        for i in local["inputs"]
+        for i in available
     }
     assert "unknown" not in {s for k, s in rewarded.items() if facts[k][1] is not None}
     (run,) = [r for r in local["runs"] if r.get("source") == "harbor_hub"]
     assert run["job_id"] == JOB and run["overrides"] == live["runs"][0]["overrides"]
-    assert run["listed_trials"] == len(live["inputs"]) > len(local["inputs"])  # T6: none
+    # A listed trial without a trajectory (T6) stays in the run as unavailable, as in the
+    # live scan, rather than silently leaving the denominator.
+    status = ("input_status", "input_error", "task", "reward", "error_type", "hub_trial_id")
+
+    def statuses(doc: Doc) -> dict[str, tuple[object, ...]]:
+        return {i["input_id"]: tuple(i[k] for k in status) for i in doc["inputs"]}
+
+    assert run["listed_trials"] == len(live["inputs"]) == len(local["inputs"])
+    assert statuses(local) == statuses(live)
+    assert ("unavailable_or_invalid", "no_trajectory_downloaded") in {
+        s[:2] for s in statuses(local).values()
+    }
 
     # A damaged or foreign sidecar is ignored, never trusted or fatal: the listing's
     # facts go (no Hub trial id, cost), while each trial's synced result.json still
@@ -678,3 +690,26 @@ def test_harbor_sync_permissions_are_private(harbor, tmp_path):
     harbor_sources(f"harbor://jobs/{JOB}", dest)
     for path in (dest, *dest.rglob("*")):
         assert path.stat().st_mode & 0o777 == (0o700 if path.is_dir() else 0o600)
+
+
+def test_listed_trials_without_a_trajectory_are_kept_in_every_layout():
+    """A synced Hub job whose listed trials have no trajectory (agent timeout before
+    anything was written, a failed download) used to lose them on a local rescan: the
+    run shrank from 330 listed trials to 319 and two tasks vanished from the brief."""
+    from atif_scan.sources.harbor.runs import listed_without_trajectory
+    from atif_scan.sources.inputs import Entry
+
+    hub = {"source": "harbor_hub"}
+    trials = {"a__1": {"task": "a"}, "a__2": {"task": "a", "reward": 0.0}}
+    flat = [Entry("a__1/trajectory.json", 1)]
+    assert listed_without_trajectory({".": (hub, trials)}, flat) == [("a__2", trials["a__2"])]
+    nested = [Entry("j1/a__1/trajectory.json", 1)]
+    assert listed_without_trajectory({"j1": (hub, trials)}, nested) == [("j1/a__2", trials["a__2"])]
+    archive = [Entry("j1/job/a__1/agent/trajectory.json", 1)]
+    assert listed_without_trajectory({"j1": (hub, trials)}, archive) == [
+        ("j1/job/a__2/agent", trials["a__2"])
+    ]
+    complete = [*flat, Entry("a__2/trajectory.json", 1)]
+    assert listed_without_trajectory({".": (hub, trials)}, complete) == []
+    # A trials.jsonl ledger alone may describe trials that were never copied.
+    assert listed_without_trajectory({".": (None, trials)}, flat) == []

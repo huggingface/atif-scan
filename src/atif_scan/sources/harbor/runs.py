@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, TypeVar
 from ...data.jsonval import Doc, as_object, number
 from ...data.submission import MAX_BYTES as PATCH_BYTES
 from ...data.submission import Submission, parse_patch
+from ..datacurve import INDEX_BYTES, RUN_SOURCE, TRIAL_INDEX, trial_index
 from .files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,
@@ -314,10 +315,11 @@ def trial_folder(entry: Entry) -> str:
 
 
 def saved_hub_listings(listing: Listing) -> dict[str, SavedRun]:
-    """Saved Harbor Hub listings (harbor_hub.save_listing) and `trials.jsonl` run ledgers
-    by the folder holding them: (run facts, {trial folder: trial facts}), so a scan of a
-    synced job keeps its recorded facts (reward, task, error, cost). A ledger lists the
-    trials of the folder it sits in or of its `trials/` subfolder (see hub_trial).
+    """Saved Harbor Hub listings (harbor_hub.save_listing), `trials.jsonl` run ledgers and
+    Datacurve trial indexes (`trials.json`, see sources.datacurve) by the folder holding
+    them: (run facts, {trial folder: trial facts}), so a scan of a synced job keeps its
+    recorded facts (reward, task, error, cost). A ledger or index lists the trials of the
+    folder it sits in or of its `trials/` subfolder (see hub_trial).
     Unreadable files are skipped: those trials simply lack the facts."""
     # harbor_hub imports sources, which imports this module.
 
@@ -325,19 +327,97 @@ def saved_hub_listings(listing: Listing) -> dict[str, SavedRun]:
         return {}
     out: dict[str, SavedRun] = {}
     for path in sorted(listing.paths):
-        name = PurePosixPath(path).name
+        if (found := _saved_file(listing, path)) is None:
+            continue
+        run, trials, replaces = found
         folder = str(PurePosixPath(path).parent)
-        if name == TRIAL_LEDGER:
-            if (data := listing.read(path, LEDGER_BYTES)) is None:
-                continue
-            run, known = out.get(folder, (None, {}))
-            out[folder] = (run, {**trial_ledger(data), **known})  # a saved Hub listing wins
-        elif name == SAVED_LISTING:
-            if (data := listing.read(path, LISTING_BYTES)) is None:
-                continue
-            run, trials = saved_listing(data)
-            out[folder] = (run, {**out.get(folder, (None, {}))[1], **trials})
+        known_run, known = out.get(folder, (None, {}))
+        if replaces:  # a saved Hub listing wins over ledgers and indexes
+            out[folder] = (run, {**known, **trials})
+        else:
+            out[folder] = (known_run or run, {**trials, **known})
     return out
+
+
+SAVED_CAPS = {TRIAL_LEDGER: LEDGER_BYTES, TRIAL_INDEX: INDEX_BYTES, SAVED_LISTING: LISTING_BYTES}
+
+
+def _saved_file(listing: Listing, path: str) -> tuple[Doc | None, dict[str, Doc], bool] | None:
+    """(run facts, {trial folder: facts}, whether they replace facts already known) of
+    one saved listing, ledger or index; None when `path` is none of these or unreadable."""
+    name = PurePosixPath(path).name
+    cap = SAVED_CAPS.get(name)
+    if cap is None or (data := listing.read(path, cap)) is None:
+        return None
+    if name == TRIAL_LEDGER:
+        return None, trial_ledger(data), False
+    if name == TRIAL_INDEX:
+        folder = str(PurePosixPath(path).parent)
+        return (*trial_index(data, _subfolders(listing, folder)), False)
+    return (*saved_listing(data), True)
+
+
+def _subfolders(listing: Listing, folder: str) -> set[str]:
+    """Names of the folders directly inside `folder` ("." is the listing's root)."""
+    prefix = "" if folder == "." else folder + "/"
+    return {
+        rel.split("/", 1)[0]
+        for path in listing.paths
+        if path.startswith(prefix) and "/" in (rel := path[len(prefix) :])
+    }
+
+
+def _trial_keys(entry: Entry) -> set[tuple[str, str]]:
+    """(folder, trial) pairs a trajectory can be listed under (see hub_trial)."""
+    trial = PurePosixPath(entry.path).parent
+    if trial.name == "agent":
+        trial = trial.parent
+    return {(str(folder), trial.name) for folder in (trial.parent, trial.parent.parent)}
+
+
+def _archived(folder: str, entries: Iterable[Entry]) -> bool:
+    """Whether a job folder's trajectories are a full archive (`job/<trial>/agent/`)."""
+    prefix = "" if folder == "." else folder + "/"
+    return any(
+        e.path.startswith(prefix + "job/") and e.path.endswith("/agent/trajectory.json")
+        for e in entries
+    )
+
+
+# Run listings that name every trial of their run (a ledger may not).
+LISTED_SOURCES = frozenset({"harbor_hub", RUN_SOURCE})
+
+
+def _untraced_layout(run: Doc, folder: str, entries: list[Entry]) -> str:
+    if run.get("source") == RUN_SOURCE:
+        return "{}/agent"
+    return "job/{}/agent" if _archived(folder, entries) else "{}"
+
+
+def listed_without_trajectory(
+    saved: dict[str, SavedRun], entries: Iterable[Entry]
+) -> list[tuple[str, Doc]]:
+    """(report label, listed facts) of each trial a saved Hub listing or a Datacurve index
+    names that has no trajectory in the folder: a harbor:// scan reports these as
+    unavailable, so a local rescan must too, never drop them from the run (Datacurve
+    publishes rows whose trajectory is missing). Labels follow the folder's layout:
+    `<trial>`, `job/<trial>/agent` for a full archive, `<trial>/agent` for a Datacurve
+    mirror. Ledger-only folders are left alone: a ledger may describe trials that were
+    never meant to be copied."""
+    entries = list(entries)
+    present = {key for e in entries for key in _trial_keys(e)}
+    missing: list[tuple[str, Doc]] = []
+    for folder, (run, trials) in sorted(saved.items()):
+        if not run or run.get("source") not in LISTED_SOURCES:
+            continue
+        prefix = "" if folder == "." else folder + "/"
+        layout = _untraced_layout(run, folder, entries)
+        missing += [
+            (prefix + layout.format(name), facts)
+            for name, facts in sorted(trials.items())
+            if (folder, name) not in present
+        ]
+    return missing
 
 
 def hub_trial(saved: dict[str, SavedRun], entry: Entry) -> Doc:

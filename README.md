@@ -10,6 +10,7 @@ pass `--image-model`.
 
 Main features: 
  - Scan local directories, or download and cache from Hugging Face buckets or Harbor.
+ - Read mirrors of Datacurve's public DeepSWE trials, with their trial index ([docs/runs.md](docs/runs.md#datacurves-public-deepswe-trials)).
  - ATIF integrity checks (costs, trials, token accounting etc.)
  - Cheap deterministic checks for benchmark awareness, reward hacking etc.
  - Allowances for known benchmark tasks (tb-21, deepswe, tb-4 bundled)

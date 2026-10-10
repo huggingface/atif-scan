@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 
 from ..data import paths
 from ..data.loader import MAX_BYTES
+from .datacurve import INDEX_BYTES, TRIAL_INDEX
 from .harbor.files import (
     ATTEMPT_COST_BYTES,
     ATTEMPT_COSTS,
@@ -55,6 +56,7 @@ SYNC_CAPS = {
     "reward.json": REWARD_BYTES,
     EXCEPTION_MARKER: RESULT_BYTES,
     TRIAL_LEDGER: LEDGER_BYTES,
+    TRIAL_INDEX: INDEX_BYTES,
     RUN_MANIFEST: RUN_MANIFEST_BYTES,
 }
 SYNC_NAMES = frozenset(SYNC_CAPS)
