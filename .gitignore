@@ -19,5 +19,7 @@ reports/
 /judges/
 /j[0-9]*/
 /q/
+# Viewer exports (masked trace text) made in the checkout.
+/views/
 *.answer.json
 *.review.atif.json
