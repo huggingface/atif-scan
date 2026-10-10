@@ -15,6 +15,14 @@
   "sha256": "2abee6fa7b95d1bf",
   "version": "1"
  },
+ "escape_hunt": {
+  "sha256": "1401790c629bb698",
+  "version": "1"
+ },
+ "escape_hunt.blind": {
+  "sha256": "f8a29523316338a9",
+  "version": "1"
+ },
  "fabrication_hunt": {
   "sha256": "e10842cc1aa82401",
   "version": "5"
