@@ -106,6 +106,9 @@ class Command:
 class Script:
     commands: list[Command] = field(default_factory=list)  # every command, nested included
     bodies: list[Span] = field(default_factory=list)  # heredoc contents (not commands)
+    # The bodies `cat`/`tee` write to a file (`cat > f <<EOF`): file content, not input
+    # to a program. A body fed to an interpreter (`python - <<EOF`) isn't one.
+    file_bodies: list[Span] = field(default_factory=list)
     complete: bool = True
 
 
@@ -268,6 +271,8 @@ class _Reader:
                 self.nested(command, text[body:end], body, depth)
             else:
                 self.script.bodies.append(self.span(body, end))
+                if command.name in FILE_WRITERS and writes(command):
+                    self.script.file_bodies.append(self.span(body, end))
         self.heredocs = []
 
     def nested(
@@ -469,6 +474,10 @@ class _Pending:
 
     def __post_init__(self) -> None:
         self.command = Command(pipeline=self.pipeline)
+
+
+# Commands whose heredoc body is written out verbatim (to their redirect or tee target).
+FILE_WRITERS = frozenset({"cat", "tee"})
 
 
 def runs_script(command: Command) -> bool:
