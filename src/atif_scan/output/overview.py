@@ -180,9 +180,19 @@ NOT_CLEARED_BECAUSE = {
 }
 
 
+# Why an undecided check couldn't decide, when that names the gap better than "tool input
+# not readable". Regression: 53 rewarded Gemini 3.7 Flash DeepSWE trials whose patch
+# Datacurve didn't publish were reported as "tool input unreadable".
+UNDECIDED_BECAUSE = {
+    "submission_not_recorded": "submitted patch not recorded",
+    "submission_unreadable": "submitted patch unreadable",
+}
+
+
 def uncleared_reasons(items: list[Doc]) -> dict[str, int]:
-    """Why each rewarded trial can't be cleared: a missing trace (by error code) or the
-    recording defects it has; anything else is a tool input the scanner couldn't read."""
+    """Why each rewarded trial can't be cleared: a missing trace (by error code), the
+    recording defects it has, or what kept its checks from deciding (a submitted patch
+    that wasn't recorded); anything else is a tool input the scanner couldn't read."""
     reasons: Counter[str] = Counter()
     for i in items:
         if i["input_status"] != "available":
@@ -190,9 +200,21 @@ def uncleared_reasons(items: list[Doc]) -> dict[str, int]:
         else:
             matched = {a["id"] for a in i["assessments"] if a["status"] == Status.MATCH}
             found = [label for c, label in NOT_CLEARED_BECAUSE.items() if c in matched]
-            found = found or ["tool input not readable"]
+            found = found or _undecided(i) or ["tool input not readable"]
         reasons.update(found)
     return ranked(reasons)
+
+
+def _undecided(item: Doc) -> list[str]:
+    """UNDECIDED_BECAUSE labels for the unread reasons of the item's unknown checks."""
+    codes = {
+        u.get("reason")
+        for a in item["assessments"]
+        if a["status"] == Status.UNKNOWN
+        for u in a.get("unread") or []
+        if isinstance(u, dict)
+    }
+    return [label for code, label in UNDECIDED_BECAUSE.items() if code in codes]
 
 
 DATE_SUFFIX = re.compile(r"-(?:\d{4}-\d{2}-\d{2}|\d{8})$")

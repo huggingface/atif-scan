@@ -54,6 +54,24 @@ def test_heredoc_bodies_are_contents_not_commands():
     assert names(text) == ["cat", "python3"]
 
 
+@pytest.mark.parametrize(
+    ("text", "written"),
+    [
+        ("cat > /app/p.ts <<'EOF'\nfetch(u)\nEOF", True),
+        ("cat <<EOF > /app/p.ts\nfetch(u)\nEOF", True),
+        ("tee -a /app/p.ts <<'EOF'\nfetch(u)\nEOF", True),
+        ("python3 - <<'PY'\nfetch(u)\nPY", False),  # fed to a program
+        ("cat <<'EOF'\nfetch(u)\nEOF", False),  # printed, not written
+        ("node <<'EOF' > /tmp/out\nfetch(u)\nEOF", False),  # run; its output is written
+    ],
+)
+def test_file_bodies_are_heredocs_written_to_a_file(text, written):
+    script = shell.parse(text)
+    (body,) = script.bodies
+    assert text[body[0] : body[1]] == "fetch(u)\n"
+    assert script.file_bodies == ([body] if written else [])
+
+
 def test_names_skip_assignments_keywords_and_wrappers():
     assert names("A=1 sudo -E env B=2 timeout -s 9 5 nice -n 3 /usr/bin/curl x") == ["curl"]
     assert names("if true; then curl x; fi") == ["curl", "fi", "true"]

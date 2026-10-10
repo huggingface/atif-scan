@@ -65,6 +65,8 @@ def test_exact_builtin_contract():
         "network.external_url",
         "network.http_or_git",
         "network.isolation_bypass",
+        "network.proxy_bypass",
+        "recall.lab_internal_host_request",
         "network.package_install",
         "network.web_search",
         "network.remote_script",

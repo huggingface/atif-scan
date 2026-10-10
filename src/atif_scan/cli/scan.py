@@ -260,6 +260,14 @@ def _review(doc: Doc, args: argparse.Namespace, records: list[Record], engine: E
     except (OSError, ValueError):
         print("atif-scan: review bundle failed (details withheld)", file=sys.stderr)
         return False
+    if noted := doc["review"].get("model_mismatch_notes"):
+        print(
+            f"atif-scan: warning: {noted} trial(s)' prompts say the scanner flagged a model "
+            "mismatch (they ran another model than the inputs' most common one). If the "
+            "inputs mix runs or models on purpose (a manifest sampling several runs), write "
+            "one bundle per run so the note doesn't mislead the judge.",
+            file=sys.stderr,
+        )
     return True
 
 
