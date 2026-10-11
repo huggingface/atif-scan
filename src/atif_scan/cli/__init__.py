@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from ..sources.harbor.files import SUBMISSION_BYTES, submission, text_label
 from ..sources.sync import default_sync_root
 from . import bench, hunt, labels
-from .args import _check_combinations, build_parser, price
+from .args import _check_combinations, _check_input_source, build_parser, price
 from .inspect import inspect
 from .scan import scan
 
@@ -67,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     bench.select(parser, args)
     _check_combinations(parser, args)
+    _check_input_source(parser, args)
     args.price_rates = price(args.price)  # validate early, whatever the output format
     args.submission_doc = _submission(parser, args)
     if args.inspect:

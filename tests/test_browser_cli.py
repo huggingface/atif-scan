@@ -271,9 +271,13 @@ def test_exit_status_after_interrupt(
 
 
 def test_invalid_preparation(transport, capsys):
-    assert main(["--browse"]) == 2
+    with pytest.raises(SystemExit) as exc:
+        main(["--browse"])
+    assert exc.value.code == 2
     transport[0].assert_not_called()
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no input provided" in captured.err
 
 
 def test_remote_url_reuses_sync(trace, tmp_path, monkeypatch, transport, capsys):

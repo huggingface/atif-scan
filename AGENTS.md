@@ -1,6 +1,6 @@
 # atif-scan development
 
-<!-- fast-agent subagents -->
+<!-- fast-agent-subagents -->
 
 Read README.md and SECURITY.md first. Keep the core (`data`, `checks`/`rules`/`policy`/`engine`, `detectors`, `packs`) stdlib-only
 and offline; `huggingface_hub` and `rich` are imported lazily, only by `sources` (hf://

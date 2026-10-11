@@ -136,9 +136,16 @@ def test_cli_inspect_text_and_json_never_echo_root(tmp_path, capsys):
     assert str(tmp_path) not in text + raw and NOT_READ not in text + raw
 
 
-@pytest.mark.parametrize("argv", [["--inspect"], ["--inspect", "--manifest", "m.json"]])
-def test_cli_inspect_needs_paths(argv, capsys):
-    assert main(argv) == 2
+def test_cli_inspect_needs_paths(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--inspect"])
+    assert exc.value.code == 2
+    assert "no input provided" in capsys.readouterr().err
+
+
+def test_cli_inspect_rejects_manifest(capsys):
+    assert main(["--inspect", "--manifest", "m.json"]) == 2
+    assert "--inspect takes paths" in capsys.readouterr().err
 
 
 def test_cli_inspect_missing_path(tmp_path, capsys):

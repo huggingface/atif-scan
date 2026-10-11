@@ -284,7 +284,11 @@ def _prepare(args: argparse.Namespace) -> tuple[list[Record], Engine] | None:
         engine = Engine(load_checks(args, records))
     except SourceError as error:
         # Fixed codes only (e.g. a missing optional extra); never paths or remote messages.
-        print(f"atif-scan: {error}", file=sys.stderr)
+        message = {
+            "no_matching_inputs": "no matching inputs; check the selected source and --pattern",
+            "duplicate_input_labels": "duplicate input labels; use unique IDs in --manifest",
+        }.get(str(error), str(error))
+        print(f"atif-scan: {message}", file=sys.stderr)
         return None
     except Exception as error:  # noqa: BLE001 - policies and plugins can raise anything; withheld
         # The exception's class name is a fixed code that says where to look; its message

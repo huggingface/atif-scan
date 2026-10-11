@@ -592,6 +592,7 @@ def checks() -> list[Detector | Rule | Allowance]:
             CheckSpec(
                 "tb21.benchmark_named_by_task",
                 Severity.INFO,
+                "2",
                 tasks=CANARY_TASKS,
                 title="Task files marked it a benchmark (TB2.1)",
             ),

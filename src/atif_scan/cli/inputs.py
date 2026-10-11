@@ -27,6 +27,7 @@ from ..sources.harbor.runs import RESULT_BYTES
 from ..sources.inputs import (
     HF_PREFIX,
     Source,
+    SourceError,
     file_source,
     normalize,
     resolve,
@@ -111,8 +112,10 @@ def inputs(args: argparse.Namespace) -> list[Record]:
             jobs = args.selection.replacement_jobs
             args.runs[:] = [r for r in args.runs if r.get("job_name") not in jobs]
         result = [(s, Context(task_for(s, args), args.partial)) for s in found]
-    if not result or len({s.label for s, _ in result}) != len(result):
-        raise ValueError("empty_or_duplicate_inputs")
+    if not result:
+        raise SourceError("no_matching_inputs")
+    if len({s.label for s, _ in result}) != len(result):
+        raise SourceError("duplicate_input_labels")
     return result
 
 

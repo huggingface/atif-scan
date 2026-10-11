@@ -347,6 +347,15 @@ def _check_combinations(parser: argparse.ArgumentParser, args: argparse.Namespac
         )
 
 
+def _check_input_source(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Require an explicit source, including selectors that may resolve to no trials."""
+    if not any((args.paths, args.manifest, args.run, args.release, args.submission)):
+        parser.error(
+            "no input provided; specify a trace file or directory, "
+            "or use --manifest, --run, --release or --submission"
+        )
+
+
 def _browse_port(value: str) -> int:
     try:
         port = int(value)

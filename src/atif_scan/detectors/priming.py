@@ -132,6 +132,7 @@ def instruction_detectors() -> list[PrimedByInstruction]:
             CheckSpec(
                 "awareness.instruction_benchmark_wording",
                 Severity.INFO,
+                "2",
                 title="Benchmark remarks all echo the instruction",
             ),
             remark_spans,

@@ -398,7 +398,11 @@ def test_cli_manifest_duplicates_and_partial(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["coverage"]["incomplete"] == 1
     manifest.write_text(json.dumps({"inputs": [{"id": "one", "path": "t.json"}] * 2}))
     assert main(["--manifest", str(manifest)]) == 2
-    assert not capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "duplicate input labels" in captured.err
+    assert str(manifest) not in captured.err
+    assert "details withheld" not in captured.err
 
 
 def test_custom_tool_arguments_preserved_immutable_and_hidden():
@@ -619,3 +623,42 @@ def test_any_of_ignores_inputs_that_do_not_apply():
     assert rule.evaluate({"a": na, "b": unknown}) is None
     assert rule.evaluate({"a": na, "b": yes}) is True
     assert rule.evaluate({"a": na, "b": na}) is False
+
+
+@pytest.mark.parametrize("argv", [[], ["--format", "json"]])
+def test_cli_requires_input_source(argv, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "usage:" in captured.err
+    assert "no input provided" in captured.err
+    assert "ValueError" not in captured.err
+    assert "details withheld" not in captured.err
+
+
+@pytest.mark.parametrize("manifest", [False, True])
+def test_cli_empty_inputs_have_safe_specific_error(tmp_path, capsys, manifest):
+    if manifest:
+        path = tmp_path / "private-manifest.json"
+        path.write_text(json.dumps({"inputs": []}))
+        argv = ["--manifest", str(path)]
+    else:
+        argv = [str(tmp_path)]
+    assert main(argv) == 2
+    captured = capsys.readouterr()
+    assert not captured.out
+    expected = "no matching inputs" if manifest else "no_files_match_pattern"
+    assert expected in captured.err
+    assert str(tmp_path) not in captured.err
+    assert "details withheld" not in captured.err
+
+
+@pytest.mark.parametrize("flag", ["--manifest", "--run", "--release", "--submission"])
+def test_cli_input_validation_accepts_alternative_sources(flag):
+    from atif_scan.cli.args import _check_input_source, build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([flag, "synthetic"])
+    _check_input_source(parser, args)
