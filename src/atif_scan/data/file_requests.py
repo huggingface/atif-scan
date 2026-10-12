@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from . import shell
+from .python_file_requests import PYTHON, python_paths
 
 READERS = frozenset({"cat", "head", "tail", "wc", "md5sum", "sha256sum", "diff", "cmp"})
 # Options consuming a value rather than a file operand. cat -n is a flag, whereas
@@ -75,6 +76,19 @@ def _read_command(command: shell.Command, text: str) -> PathRead:
     return PathRead(requests, tuple(unknown), all(_literal(path) for path, _ in targets))
 
 
+def _python_requests(command: shell.Command) -> tuple[PathRequest, ...]:
+    if not PYTHON.fullmatch(command.name or ""):
+        return ()
+    words = command.argv()[1:]
+    for i, (word, _) in enumerate(words):
+        if word == "-c" and i + 1 < len(words):
+            code, span = words[i + 1]
+            return tuple(PathRequest(path, span) for path in python_paths(code) if _literal(path))
+        if word not in {"-u", "-B", "-I", "-S", "-E", "-s"}:
+            break  # script/-m arguments are not inline code
+    return ()
+
+
 @lru_cache(maxsize=512)
 def command_paths(text: str) -> PathRead:
     script = shell.parse(text)
@@ -85,7 +99,10 @@ def command_paths(text: str) -> PathRead:
         if (start, end) not in script.file_bodies and command.name not in READERS | NON_READERS
     )
     return PathRead(
-        tuple(request for read in reads for request in read.requests),
+        (
+            *(request for read in reads for request in read.requests),
+            *(request for command in script.commands for request in _python_requests(command)),
+        ),
         (*bodies, *(text for read in reads for text in read.undecidable)),
         script.complete and all(read.complete for read in reads),
     )
