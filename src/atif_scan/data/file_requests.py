@@ -76,33 +76,36 @@ def _read_command(command: shell.Command, text: str) -> PathRead:
     return PathRead(requests, tuple(unknown), all(_literal(path) for path, _ in targets))
 
 
-def _python_requests(command: shell.Command) -> tuple[PathRequest, ...]:
+def _python_requests(command: shell.Command) -> PathRead:
     if not PYTHON.fullmatch(command.name or ""):
-        return ()
+        return PathRead()
     words = command.argv()[1:]
     for i, (word, _) in enumerate(words):
         if word == "-c" and i + 1 < len(words):
             code, span = words[i + 1]
-            return tuple(PathRequest(path, span) for path in python_paths(code) if _literal(path))
+            # Bounded Python parsing cannot establish coverage, regardless of
+            # whether the raw source spells a target literally or with escapes.
+            return PathRead(
+                tuple(PathRequest(path, span) for path in python_paths(code) if _literal(path)),
+                complete=False,
+            )
         if word not in {"-u", "-B", "-I", "-S", "-E", "-s"}:
             break  # script/-m arguments are not inline code
-    return ()
+    return PathRead()
 
 
 @lru_cache(maxsize=512)
 def command_paths(text: str) -> PathRead:
     script = shell.parse(text)
     reads = [_read_command(command, text) for command in script.commands]
+    reads.extend(_python_requests(command) for command in script.commands)
     bodies = tuple(
         text[start:end]
         for (start, end), command in zip(script.bodies, script.body_commands, strict=True)
         if (start, end) not in script.file_bodies and command.name not in READERS | NON_READERS
     )
     return PathRead(
-        (
-            *(request for read in reads for request in read.requests),
-            *(request for command in script.commands for request in _python_requests(command)),
-        ),
+        tuple(request for read in reads for request in read.requests),
         (*bodies, *(text for read in reads for text in read.undecidable)),
         script.complete and all(read.complete for read in reads),
     )

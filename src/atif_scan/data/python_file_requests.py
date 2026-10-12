@@ -92,8 +92,10 @@ def _assign(stmt: ast.Assign, literals: dict[str, str], readers: set[str]) -> No
 def _statement_paths(stmt: ast.stmt, literals: dict[str, str], readers: set[str]) -> list[str]:
     paths = []
     for expr in _expressions(stmt):
-        # Assignment expressions can rebind a path/reader inside a call's arguments.
-        if any(isinstance(n, ast.NamedExpr) for n in ast.walk(expr)):
+        # Do not interpret conditional execution, even with constant conditions.
+        # Skip the whole expression: a branch/argument may mutate trusted bindings
+        # before another call in it. Assignment expressions have the same risk.
+        if any(isinstance(n, (ast.BoolOp, ast.IfExp, ast.NamedExpr)) for n in ast.walk(expr)):
             literals.clear()
             readers.clear()
             continue
