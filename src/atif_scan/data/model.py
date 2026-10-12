@@ -313,6 +313,12 @@ class Trace:
     # Root-only totals after reconciling declared child usage with embedded records.
     root_usage: Usage | None = None
 
+    # Canonical final_metrics.total_steps, unchanged; None when absent/invalid.
+    total_steps: int | None = None
+    # Nonempty root notes only: presence is not validation of a scope explanation.
+    # Never retain the free prose.
+    has_notes: bool = False
+
     @cached_property
     def totals_match_last_call(self) -> bool:
         """final_metrics prompt and completion totals equal the last metered step's own,

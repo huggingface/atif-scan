@@ -373,7 +373,9 @@ def test_cite_hides_low_only_trace_blocks(tmp_path, capsys, fmt):
         for index, entry in enumerate(raw["steps"], 1):
             entry.update(step_id=index, timestamp=f"2026-01-01T00:00:0{index}Z")
         raw["final_metrics"] = {
+            "total_steps": len(raw["steps"]),
             "total_prompt_tokens": 100,
+            "total_cached_tokens": 0,
             "total_completion_tokens": max(1, len(raw["steps"][1]["message"]) // 4),
             "extra": {"total_reasoning_tokens": 0},
             "total_cost_usd": 0.01,

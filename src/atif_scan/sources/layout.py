@@ -1,7 +1,7 @@
 """Cheap layout inspection: what's under an input, from file names and sizes only.
 
-No trace is read. The same listing and selection code as a scan is used, so "would
-scan" is exactly what a scan would read. Harbor markers follow harbor 0.23:
+No trace is read. "Would scan" counts filename-pattern candidates, before any
+receipt-based ALE canonicalization and missing-attempt retention. Harbor markers follow harbor 0.23:
 
     job/   job.log config.json lock.json result.json <trial>/...
     trial/ trial.log config.json lock.json result.json [exception.txt]
@@ -83,7 +83,7 @@ def _folder(path: str) -> str:
 
 @dataclass
 class _View:
-    """One listing as a scan sees it: the entries it would read and the Harbor folders."""
+    """Filename-pattern candidates and Harbor folders, without receipt recognition."""
 
     listing: Listing
     pattern: str
@@ -246,6 +246,7 @@ def inspect_listing(listing: Listing, pattern: str, number: int) -> Doc:
         "bytes": sum(sizes) if len(sizes) == len(entries) else None,
         "layout": _layout(view),
         "harbor": _harbor(view),
+        "selection_basis": "filename_pattern_before_receipt_recognition",
         "would_scan": {"total": len(view.chosen), "by_role": dict(sorted(roles.items()))},
         "anomalies": _anomalies(view, per_trial, by_role),
         "folders": folders,

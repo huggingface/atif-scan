@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from ..access import access_rules
 from ..checks import Context, identifier
+from ..data.ale import BENCHMARK
 from ..data.facts import trial_task
 from ..data.loader import TraceError
 from ..detectors import builtin_detectors
@@ -63,8 +64,19 @@ def _manifest_record(raw: object, manifest: Path) -> Record:
     source = file_source(identifier(raw["id"]), location)
     if "reward" in raw:
         reward = Context(reward=raw["reward"]).reward  # validated number or None
-        source = Source(source.label, source.load, lambda: reward, local=source.local)
-    return source, Context(raw.get("task"), raw.get("partial", False))
+        source = replace(
+            source,
+            reward=lambda: reward,
+            meta={
+                **source.meta,
+                "reward": reward,
+                "reward_source": "manifest",
+            },
+        )
+    context = Context(raw.get("task"), raw.get("partial", False))
+    if context.task is not None:
+        source = replace(source, meta={**source.meta, "task": context.task})
+    return source, context
 
 
 def manifest_inputs(path: Path) -> list[Record]:
@@ -112,6 +124,12 @@ def inputs(args: argparse.Namespace) -> list[Record]:
             jobs = args.selection.replacement_jobs
             args.runs[:] = [r for r in args.runs if r.get("job_name") not in jobs]
         result = [(s, Context(task_for(s, args), args.partial)) for s in found]
+    return _validate_records(result, args)
+
+
+def _validate_records(result: list[Record], args: argparse.Namespace) -> list[Record]:
+    if any(s.meta.get("benchmark") == BENCHMARK for s, _ in result):
+        args.runs.append({"datasets": [BENCHMARK]})
     if not result:
         raise SourceError("no_matching_inputs")
     if len({s.label for s, _ in result}) != len(result):

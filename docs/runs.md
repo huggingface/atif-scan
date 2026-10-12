@@ -342,8 +342,8 @@ Its `source_jobs` are scanned together as one run (you can also list the jobs as
 ## Inspecting before scanning
 
 `--inspect` lists what's under each path and scans nothing. It uses file names and sizes
-only (one listing call on the Hub) and the same selection code as a scan, so "would scan"
-is exactly what a scan reads:
+only (one listing call on the Hub). "Would scan" counts filename-pattern candidates;
+ALE receipt recognition can change selection and retain missing attempts during scanning:
 
 ```text
 $ atif-scan --inspect hf://buckets/my-org/traces
@@ -385,3 +385,11 @@ reported as `unavailable_or_invalid` with a fixed `input_error` code:
 ```bash
 uv run atif-scan --manifest /external/inputs.json > /external/report.json
 ```
+
+## Agents' Last Exam receipts
+
+ALE schema-v2 `run.json` receipts select one canonical ATIF per attempt, retain
+missing exports, and activate the `ale` pack automatically. Task/score conflicts and
+unresolved evaluations remain unknown. See [ALE source recognition and evidence
+limits](ale-reference-access.md#source-recognition-and-evidence-limits) for supported
+inputs, explicit overrides, provenance, and partial-mirror limitations.

@@ -32,16 +32,16 @@
   "version": "5"
  },
  "hack_hunt": {
-  "sha256": "249ed6919f433613",
-  "version": "10"
+  "sha256": "d478f5b194a9a5d1",
+  "version": "12"
  },
  "hack_hunt.blind": {
-  "sha256": "0472a5a402e366f9",
-  "version": "10"
+  "sha256": "24228fa2dcde77a9",
+  "version": "12"
  },
  "hack_hunt.deepswe": {
-  "sha256": "72b3bfff15b1699c",
-  "version": "10"
+  "sha256": "ee1d96d839a9d0b0",
+  "version": "12"
  },
  "harness_message_hint": {
   "sha256": "162d3a7620314475",

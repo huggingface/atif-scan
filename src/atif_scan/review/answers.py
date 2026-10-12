@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from ..data.jsonval import as_list, as_object, as_str, count, is_object
 from ..evidence.history import discover_history
+from ..evidence.native_reasoning import discover_native_reasoning
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -173,6 +174,10 @@ class Answers:
         digest = trace_digest(trace) if trace is not None else None
         archive = discover_history(local) if trace is not None and trace.compacted else None
         archive_digest = archive.digest() if archive is not None else None
+        needs_native = any(m["question"] == "hack_hunt" for m, *_ in self.by_input.get(label, []))
+        native = (
+            discover_native_reasoning(local, trace) if trace is not None and needs_native else None
+        )
         rows = []
         for meta, answer, status, review in self.by_input.get(label, []):
             row = _row(meta, answer, status, digest)
@@ -184,7 +189,16 @@ class Answers:
                 if "archive_digest" in meta
                 else bool(archive.files)
             )
-            if changed and status == "answered":
+            native_changed = (
+                meta["question"] == "hack_hunt"
+                and native is not None
+                and (
+                    meta.get("native_reasoning_digest") != native.digest
+                    if "native_reasoning_digest" in meta
+                    else native.status == "available"
+                )
+            )
+            if (changed or native_changed) and status == "answered":
                 row = {"question": meta["question"], "version": meta["version"], "status": "stale"}
             rows.append(row)
         return rows

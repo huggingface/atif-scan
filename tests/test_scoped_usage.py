@@ -138,6 +138,81 @@ def test_step_split_zero_and_copied_unmetered_context():
     assert ratio and ratio.answer_only and ratio.tokens == 100
 
 
+def test_system_copy_of_tool_output_cannot_repair_authored_output_ratio():
+    trace = parse_trace(
+        {
+            "steps": [
+                {
+                    "source": "agent",
+                    "message": "Done.",
+                    "observation": {"results": [{"content": "Synthetic tool output."}]},
+                },
+                {"source": "system", "message": "Synthetic tool output." * 100},
+            ],
+            "final_metrics": {"total_completion_tokens": 100},
+        }
+    )
+    ratio = output_ratio(trace)
+    assert ratio and ratio.chars == len("Done.") and ratio.tokens == 100
+    assert not ratio.answer_only
+    assert output_token_ratio(trace).status is Status.UNKNOWN
+
+
+def test_uncached_export_prompt_total_is_not_silently_rewritten():
+    trace = parse_trace(
+        {
+            "steps": [{"source": "agent", "message": "Synthetic response."}],
+            "final_metrics": {
+                "total_prompt_tokens": 100,
+                "total_cached_tokens": 900,
+                "total_completion_tokens": 100,
+            },
+        }
+    )
+    usage = trace_facts(trace)["usage"]
+    assert usage["input_tokens"] == 100
+    assert trace.usage and trace.usage.cached_tokens == 900
+    assert output_token_ratio(trace).status is Status.UNKNOWN
+
+
+def test_final_reasoning_exceeding_completion_cannot_clear_size_check():
+    trace = parse_trace(
+        {
+            "steps": [{"source": "agent", "reasoning_content": "Synthetic reasoning."}],
+            "final_metrics": {
+                "total_completion_tokens": 100,
+                "extra": {"total_reasoning_tokens": 101},
+            },
+        }
+    )
+    assert trace.usage and trace.usage.reasoning_tokens == 101  # preserve the source claim
+    assert output_ratio(trace) is None
+    assert output_token_ratio(trace).status is Status.UNKNOWN
+
+
+def test_zero_usage_with_recorded_activity_is_not_a_clean_size_check():
+    trace = parse_trace(
+        {
+            "steps": [{"source": "agent", "message": "Recorded model activity."}],
+            "final_metrics": {"total_prompt_tokens": 0, "total_completion_tokens": 0},
+        }
+    )
+    assert output_token_ratio(trace).status is Status.UNKNOWN
+
+
+def test_metered_empty_output_with_explicit_split_is_a_recording_candidate():
+    trace = parse_trace(
+        {
+            "steps": [{"source": "agent", "message": ""}],
+            "final_metrics": {
+                "total_completion_tokens": 200,
+                "extra": {"total_reasoning_tokens": 0},
+            },
+        }
+    )
+    assert output_token_ratio(trace).status is Status.MATCH
+
+
 def test_step_reasoning_does_not_repair_unknown_final_split():
     trace = parse_trace(
         {

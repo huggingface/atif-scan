@@ -106,6 +106,7 @@ class Command:
 class Script:
     commands: list[Command] = field(default_factory=list)  # every command, nested included
     bodies: list[Span] = field(default_factory=list)  # heredoc contents (not commands)
+    body_commands: list[Command] = field(default_factory=list)  # owners, parallel to bodies
     # The bodies `cat`/`tee` write to a file (`cat > f <<EOF`): file content, not input
     # to a program. A body fed to an interpreter (`python - <<EOF`) isn't one.
     file_bodies: list[Span] = field(default_factory=list)
@@ -273,6 +274,7 @@ class _Reader:
                 self.nested(command, text[body:end], body, depth)
             else:
                 self.script.bodies.append(self.span(body, end))
+                self.script.body_commands.append(command)
                 if command.name in FILE_WRITERS and (targets := writes(command)):
                     self.script.file_bodies.append(self.span(body, end))
                     self.script.file_targets.append(targets[0][0])
@@ -512,7 +514,7 @@ def runs_script(command: Command) -> bool:
 # --- facts callers use -----------------------------------------------------------------
 
 
-def _operands(
+def operands(
     argv: list[tuple[str, Span]], values: frozenset[str] = frozenset()
 ) -> list[tuple[str, Span]]:
     """Non-option arguments after the command name, skipping the values of `values`
@@ -574,8 +576,8 @@ def _copy_destination(argv: list[tuple[str, Span]]) -> list[tuple[str, Span]]:
             return [words[i + 1]]
         if word.startswith("--target-directory="):
             return [(word.split("=", 1)[1], span)]
-    operands = _operands(argv, COPY_VALUES)
-    return operands[-1:] if len(operands) >= MIN_COPY_OPERANDS else []
+    paths = operands(argv, COPY_VALUES)
+    return paths[-1:] if len(paths) >= MIN_COPY_OPERANDS else []
 
 
 def _dd_output(argv: list[tuple[str, Span]]) -> list[tuple[str, Span]]:
@@ -585,15 +587,15 @@ def _dd_output(argv: list[tuple[str, Span]]) -> list[tuple[str, Span]]:
 def _sed_in_place(argv: list[tuple[str, Span]]) -> list[tuple[str, Span]]:
     if not any(w.startswith(("-i", "--in-place")) for w, _ in argv[1:]):
         return []
-    operands = _operands(argv, SED_SCRIPT)
+    paths = operands(argv, SED_SCRIPT)
     scripted = any(w.split("=", 1)[0] in SED_SCRIPT for w, _ in argv[1:])
-    return operands if scripted else operands[1:]
+    return paths if scripted else paths[1:]
 
 
 # Files a command names as its output, by command name.
 ARGUMENT_WRITES: dict[str, Callable[[list[tuple[str, Span]]], list[tuple[str, Span]]]] = {
-    "tee": _operands,
-    "touch": _operands,
+    "tee": operands,
+    "touch": operands,
     **dict.fromkeys(("cp", "mv", "install", "rsync", "ln"), _copy_destination),
     "dd": _dd_output,
     "sed": _sed_in_place,
