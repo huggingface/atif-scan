@@ -89,7 +89,9 @@ def test_sufficient_telemetry_has_neither_gap():
     for index, step in enumerate(raw["steps"]):
         step["timestamp"] = f"2026-01-01T00:00:0{index}Z"
     raw["final_metrics"] = {
+        "total_steps": 2,
         "total_prompt_tokens": 100,
+        "total_cached_tokens": 0,
         "total_completion_tokens": 8,
         "total_cost_usd": 0.01,
         "extra": {"total_reasoning_tokens": 0},
@@ -201,6 +203,7 @@ def test_partial_recording_with_telemetry_does_not_claim_it_is_absent():
     for index, step in enumerate(raw["steps"]):
         step["timestamp"] = f"2026-01-01T00:00:0{index}Z"
     raw["final_metrics"] = {
+        "total_steps": 2,
         "total_prompt_tokens": 100,
         "total_completion_tokens": 8,
         "total_cost_usd": 0.01,

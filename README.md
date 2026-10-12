@@ -127,3 +127,10 @@ uv run python tools/gold.py list
 Snapshots keep allowlisted fields only (input label, task, reward, check statuses, DQ
 list), in the atif-scan home's `gold/` folder (or `$ATIF_SCAN_GOLD_DIR`). Labels are real
 run identifiers, so never commit them.
+
+### Agents' Last Exam inputs
+
+Recognized ALE directory receipts select canonical ATIFs, retain missing attempts,
+and automatically enable the ALE mounted-reference request pack. Metadata and rewards
+are allowlisted; conflicting evidence stays unknown. See
+[ALE source recognition](docs/ale-reference-access.md).

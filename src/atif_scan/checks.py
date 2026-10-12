@@ -158,6 +158,8 @@ UNREAD_REASONS = frozenset(
         "terminal_screen_only",  # only the visible terminal screen was recorded
         "undecidable",  # the predicate can't judge it statically (`find $(…)`)
         "prompt_names_benchmark",  # the prompt already says what the evidence says
+        "step_count_not_recorded",  # canonical count absent or invalid
+        "step_count_scope_documented",  # notes present, scope not validated
         "usage_not_recorded",  # the trajectory records no token totals to compare
         "no_model_calls_recorded",  # nothing to divide token totals by
         "reasoning_tokens_not_split",  # only the upper bound of a ratio can be checked

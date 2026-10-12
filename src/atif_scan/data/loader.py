@@ -131,6 +131,8 @@ def parse_trace(value: object) -> Trace:
         retry_statuses=retry_statuses,
         usage_calls_complete=calls_complete,
         root_usage=root_usage(value),
+        total_steps=count(as_object(metrics).get("total_steps")),
+        has_notes=bool(as_str(value.get("notes"))),
     )
 
 
@@ -248,7 +250,7 @@ def parse_calls(raw_calls: list[object], copied: bool, details: object = None) -
             ToolCall(
                 call_index,
                 tool,
-                program_fields(args) if inner is not None else call_fields(tool, args),
+                program_fields(args) if inner is not None else call_fields(tool, args, name=name),
                 call_id,
                 name,
                 frozen,
@@ -342,7 +344,7 @@ def _program_call(index: int, k: int, found: ProgramCall) -> ToolCall:
     if args is jslit.UNREAD:
         fields = computed_fields(tool)
     else:
-        fields = call_fields(tool, args if is_object(args) else None)
+        fields = call_fields(tool, args if is_object(args) else None, name=name)
     return ToolCall(
         index,
         tool,

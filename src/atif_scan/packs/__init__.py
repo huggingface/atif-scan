@@ -99,6 +99,11 @@ def _tb4_tasks() -> frozenset[str]:
 
 BUNDLED = (
     Pack(
+        "ale",
+        "atif_scan.packs.ale:checks",
+        datasets=re.compile(r"(?<![\w/-])agents-last-exam(?![\w/-])"),
+    ),
+    Pack(
         "tb21",
         "atif_scan.packs.tb21:checks",
         datasets=re.compile(r"terminal-bench-2-1\b|terminal-bench-2\.1", re.I),

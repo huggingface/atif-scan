@@ -157,7 +157,8 @@ Reply with only a JSON object, no prose around it:
   "steps": {
    "type": "array",
    "items": {
-    "type": "integer"
+    "type": "integer",
+    "minimum": 0
    },
    "maxItems": 20
   },

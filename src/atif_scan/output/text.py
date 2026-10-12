@@ -162,6 +162,8 @@ def inspection_text(doc: Doc, examples: int = 3) -> str:
         lines.append(
             f"    would scan {item['would_scan']['total']}" + (f" ({roles})" if roles else "")
         )
+        if item.get("selection_basis") == "filename_pattern_before_receipt_recognition":
+            lines.append("    filename candidates only; ALE receipts may change scan selection")
         if item["alongside"]:
             names = ", ".join(f"{k} {v}/{item['folders']}" for k, v in item["alongside"].items())
             lines.append(f"    alongside them: {names}")

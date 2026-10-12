@@ -42,6 +42,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .accounting import apply_accounting
+from .ale import BENCHMARK, SOURCE_FIELDS
 from .jsonval import Doc, as_object, as_str, count
 from .model import step_reasoning_tokens
 from .web_gaps import web_gaps
@@ -380,6 +381,8 @@ def run_facts(recorded: Mapping[str, object], traced: Mapping[str, object]) -> D
         recorded = {**recorded, **dict.fromkeys(TOKENS)}
     has_tokens = recorded.get("input_tokens") is not None
     facts: Doc = {k: recorded.get(k) for k in RECORDED}
+    if recorded.get("benchmark") == BENCHMARK:
+        facts["source_metadata"] = {k: recorded.get(k) for k in SOURCE_FIELDS}
     # in_job_result False: the job's own result.json doesn't list this trial (rerun/resume).
     facts["overrides"] = recorded.get("overrides") or []
     facts["cost_usd"] = None  # decided below, independently of the tokens

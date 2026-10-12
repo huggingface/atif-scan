@@ -42,6 +42,8 @@ from ..evidence.extract import (
     step_record,
 )
 from ..evidence.history import HistoryArchive, discover_history
+from ..evidence.native_reasoning import discover_native_reasoning
+from .native_reasoning import register_tools
 from .prompts import frame
 
 if TYPE_CHECKING:
@@ -152,6 +154,7 @@ def serve(path: Path) -> FastMCP:
     ):
         server.add_tool(tool)
     _register_history(server, archive, known)
+    register_tools(server.add_tool, discover_native_reasoning(resolve(path), trace), frame)
     return server
 
 

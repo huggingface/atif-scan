@@ -325,7 +325,7 @@ def test_cli_schema_answers_masking_and_injection(tmp_path, capsys, qid):
     assert overview(before)["disqualification"] == overview(after)["disqualification"]
     reply.write_text('{"answer":"invented","confidence":"high","steps":[2]}')
     assert report()["inputs"][0]["answers"][0]["status"] == "invalid"
-    reply.write_text('{"answer":"unclear","confidence":"low","steps":[2]}')
+    reply.write_text('{"answer":"unclear","confidence":"low","steps":[2],"reason":"synthetic"}')
     meta_path = qdir / "synthetic__a" / f"{qid}.json"
     meta = json.loads(meta_path.read_text())
     meta["version"] = "not-current"

@@ -174,14 +174,20 @@ def _window(
 
 def _surface(step: Step, at: Locator) -> tuple[Content | None, str | None]:
     """The cited surface text and, for tool arguments, the recorded tool name."""
+    if at.call is not None:
+        call = step.calls[at.call]
+        return _call_surface(call, at), call.name
+    return _step_surface(step, at), None
+
+
+def _step_surface(step: Step, at: Locator) -> Content | None:
     if at.channel == Channel.MESSAGE:
-        return step.message, None
+        return step.message
     if at.channel == Channel.REASONING:
-        return step.reasoning, None
+        return step.reasoning
     if at.channel == Channel.OBSERVATION and at.observation is not None:
-        return step.observations[at.observation].content, None
-    call = step.calls[at.call] if at.call is not None else None
-    return (_call_surface(call, at), call.name) if call is not None else (None, None)
+        return step.observations[at.observation].content
+    return None
 
 
 def _call_surface(call: ToolCall, at: Locator) -> Content | None:

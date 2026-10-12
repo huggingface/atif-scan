@@ -268,8 +268,30 @@ ACTION_TOOLS = {
         "search": "web_search",
         "open_page": "web_fetch",
         "find_in_page": "web_fetch",
-    }
+    },
+    # OpenHands exposes read and write operations through one editor tool.
+    "file_editor": {
+        "view": "read",
+        "create": "write",
+        "str_replace": "write",
+        "insert": "write",
+        "undo_edit": "write",
+    },
+    "task_tracker": {"view": "inert", "plan": "inert"},
 }
+ACTION_KEYS = {"file_editor": "command", "task_tracker": "command"}
+# These are model-authored prose, not executable actions. Preserve their text in its
+# own channel rather than dropping it with orchestration arguments. A tool's thought
+# is not evidence that provider-internal reasoning was exported in full.
+PROSE_TOOLS = {
+    "think": ("thought", Channel.REASONING),
+    "finish": ("message", Channel.MESSAGE),
+}
+
+
+def _prose_tool(name: str, args: object) -> bool:
+    key, _ = PROSE_TOOLS[name]
+    return is_object(args) and not (set(args) - {key, "kind"}) and isinstance(args.get(key), str)
 
 
 # Non-JSON ("freeform") tools take raw text rather than an object: Responses custom
@@ -343,9 +365,12 @@ def normalize_tool(name: str, args: object = None) -> str:
 
 
 def _normalize_action(name: str, args: object) -> str:
+    if name in PROSE_TOOLS:
+        return "inert" if _prose_tool(name, args) else "other"
     actions = ACTION_TOOLS.get(name)
     if actions is not None:
-        action = args.get("action_type") if isinstance(args, dict) else None
+        key = ACTION_KEYS.get(name, "action_type")
+        action = args.get(key) if is_object(args) else None
         return actions.get(action, "other") if isinstance(action, str) else "other"
     return ALIASES.get(name, "other")
 
@@ -419,7 +444,40 @@ PATCH_PATHS = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to):
 Field = tuple[Channel, Content]
 
 
-def call_fields(tool: str, args: object) -> tuple[Field, ...]:
+def call_fields(tool: str, args: object, *, name: str = "") -> tuple[Field, ...]:
+    """Generic evidence extraction, with explicit adapters for overloaded tool fields."""
+    if name == "file_editor":
+        return _editor_fields(tool, args)
+    if name in PROSE_TOOLS and tool == "inert":
+        key, channel = PROSE_TOOLS[name]
+        return ((channel, content(as_object(args).get(key))),)
+    fields = _generic_call_fields(tool, args)
+    if name in (PROSE_TOOLS.keys() | ACTION_KEYS.keys()) and tool == "other":
+        return _unknown_action(fields)
+    return fields
+
+
+def _unknown_action(fields: tuple[Field, ...]) -> tuple[Field, ...]:
+    if any(channel == Channel.ARGUMENTS and not value.understood for channel, value in fields):
+        return fields
+    return (*fields, (Channel.ARGUMENTS, Content(understood=False)))
+
+
+def _editor_fields(tool: str, args: object) -> tuple[Field, ...]:
+    if not is_object(args):
+        return _generic_call_fields(tool, args)
+    # `command` is an operation selector, not shell code. Keep unknown selectors as
+    # unclassified evidence, but never infer a read/write from the presence of a path.
+    adapted = {k: v for k, v in args.items() if k not in {"command", "file_text"}}
+    fields = _argument_fields(tool, adapted)
+    payload = tuple(_leaf_fields("content", args.get("file_text")))
+    if tool == "other":
+        selector = tuple(_leaf_fields("action", args.get("command")))
+        return _unknown_action((*fields, *payload, *selector))
+    return (*fields, *payload)
+
+
+def _generic_call_fields(tool: str, args: object) -> tuple[Field, ...]:
     if tool == "inert":
         return ()
     text = raw_input(args)
@@ -444,6 +502,8 @@ def _argument_fields(tool: str, args: JsonObject) -> tuple[Field, ...]:
     required = REQUIRED.get(tool)
     if required is not None and all(channel != required for channel, _ in fields):
         fields.append((required, Content(understood=False)))
+    if tool == "other" and not fields:
+        fields.append((Channel.ARGUMENTS, Content(understood=False)))
     return tuple(fields)
 
 

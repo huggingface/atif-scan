@@ -47,8 +47,10 @@ STYLE = {"critical": "bold red", "high": "red", "medium": "yellow", "low": "cyan
 # behavioural evidence, and detector errors must never be labelled absent telemetry.
 TELEMETRY_CHECKS = frozenset(
     {
+        "integrity.cached_tokens_exceed_prompt",
         "integrity.cost_missing",
         "integrity.output_token_ratio",
+        "integrity.step_count_mismatch",
         "integrity.timestamp_invalid",
         "integrity.timestamp_regression",
         "integrity.timestamp_smearing",
