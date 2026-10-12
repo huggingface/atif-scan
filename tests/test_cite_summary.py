@@ -509,6 +509,9 @@ def test_cite_check_summary_details_cited_low_findings(tmp_path, capsys):
         (["--cite-check", "awarness.*"], "matches no check: awarness.*"),
         (["--cite-check", "bad pattern!"], "expected a check ID or glob"),
         (["--cite-check", "awareness.*", "--brief"], "require detail or summary"),
+        (["--cite-awareness", "--brief"], "require detail or summary"),
+        (["--cite-awareness", "--inspect"], "require detail or summary"),
+        (["--cite-awareness", "--browse"], "cannot be combined"),
     ],
 )
 def test_cite_check_rejects_unusable_selections(tmp_path, capsys, argv, stderr):
@@ -554,3 +557,28 @@ def test_cite_info_is_never_served_from_the_result_cache(tmp_path, capsys, flag)
         assert item["citations"]["awareness.benchmark"]
     cached = [f for f in (tmp_path / "cache").rglob("*") if f.is_file()]
     assert all("Terminal-Bench" not in f.read_text() for f in cached)  # no trace text
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [[], ["--cite", "medium"], ["--cite-check", "awareness.verifier"], ["--summary"]],
+)
+def test_cite_awareness_is_equivalent_to_explicit_checks(tmp_path, capsys, extra):
+    path = write(tmp_path, "t.json", AWARE)
+    args = [path, "--format", "json", *extra]
+    checks = (
+        "awareness.benchmark",
+        "awareness.named_benchmark",
+        "recall.benchmark_unprompted",
+    )
+    explicit = [part for check in checks for part in ("--cite-check", check)]
+    assert main([*args, *explicit]) == 0
+    expected = json.loads(capsys.readouterr().out)
+    assert main([*args, "--cite-awareness"]) == 0
+    actual = json.loads(capsys.readouterr().out)
+    assert actual == expected
+    if not extra:
+        (item,) = actual["inputs"]
+        assert "awareness.named_benchmark" in item["citations"]
+        assert "awareness.verifier" not in item["citations"]
+        assert actual["finding_minimum"] == "info"
