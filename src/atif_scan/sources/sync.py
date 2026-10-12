@@ -20,7 +20,9 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 from ..data import paths
+from ..data.ale import LIMIT as ALE_LIMIT
 from ..data.loader import MAX_BYTES
+from .ale import attempts
 from .datacurve import INDEX_BYTES, TRIAL_INDEX
 from .harbor.files import (
     ATTEMPT_COST_BYTES,
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
 # Besides matching trajectories, the small files the scan reads next to them, and the
 # largest size synced for each (exception.txt is only checked for presence).
 SYNC_CAPS = {
+    "eval_result.json": ALE_LIMIT,
     "result.json": RESULT_BYTES,
     "config.json": RESULT_BYTES,
     "reward.txt": REWARD_BYTES,
@@ -170,11 +173,14 @@ def sync_stamp(path: Path) -> str | None:
 def _wanted(listing: Listing, dest: Path, single: str | None, pattern: str) -> list[Wanted]:
     """The listed files a scan reads, with their confined local paths."""
     wanted = []
+    ale_paths = {a.trajectory for a in attempts(listing)} if pattern == DEFAULT_PATTERN else set()
     for entry in listing.entries:
         relative = single if single is not None else entry.path
         name = PurePosixPath(relative).name
         cap = (
-            MAX_BYTES if not listing.directory or fnmatchcase(name, pattern) else sync_cap(relative)
+            MAX_BYTES
+            if not listing.directory or fnmatchcase(name, pattern) or entry.path in ale_paths
+            else sync_cap(relative)
         )
         if cap is None:
             continue

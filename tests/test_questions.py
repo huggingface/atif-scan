@@ -4,6 +4,7 @@ Synthetic traces only; no model is called (a stub stands in for fast-agent)."""
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import shutil
 import stat
@@ -878,7 +879,7 @@ def test_blind_hunts_show_no_scanner_findings_and_ask_any_reward(job, tmp_path, 
     assert json.loads((qdir / "demo-task__aB1" / f"{question}.json").read_text())["blind"]
     assert json.loads((qdir / "selection.json").read_text())["blind"] is True
     assert "## Scanner findings" not in prompt
-    assert "lookup." not in prompt and "access." not in prompt
+    assert not re.search(r"\b(?:lookup|access)\.[a-z_]", prompt)
     assert "no scanner findings are shown" in prompt
     assert "Timeline from the start" in prompt
     # Asked without --blind, the same question lists them.

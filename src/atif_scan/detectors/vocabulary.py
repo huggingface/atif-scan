@@ -103,8 +103,9 @@ ENCODED_REDIRECT = re.compile(
 )
 # Search endpoints fetched from a shell or script (`curl 'https://www.bing.com/search?q=…'`,
 # `requests.get("https://html.duckduckgo.com/html/", params=…)`): the response is a search
-# result page whatever tool requested it. Hosts and paths only, never queries; each is a
-# public web or code search seen in reviewed trajectories or a widely used search API.
+# result page whatever tool requested it. Match endpoint structure, not query topics.
+# Hub catalogue APIs also list repositories without searching, so require a nonempty
+# search parameter there; ordinary repository pages and downloads are not searches.
 SEARCH_ENDPOINT = re.compile(
     r"https?://(?:[\w-]+\.)*(?:"
     r"bing\.com/(?:search|news/search)|google\.[a-z.]{2,7}/search|"
@@ -112,7 +113,9 @@ SEARCH_ENDPOINT = re.compile(
     r"api\.duckduckgo\.com/|search\.brave\.com/search|api\.search\.brave\.com/|"
     r"search\.yahoo\.com/search|yandex\.[a-z.]{2,7}/search|startpage\.com/(?:do/|sp/)?search|"
     r"kagi\.com/search|ecosia\.org/search|api\.github\.com/search/|github\.com/search\b|"
-    r"archive\.org/advancedsearch|s\.jina\.ai/|serpapi\.com/search|googleapis\.com/customsearch/"
+    r"archive\.org/advancedsearch|s\.jina\.ai/|serpapi\.com/search|googleapis\.com/customsearch/|"
+    r"huggingface\.co/api/(?:datasets|models)/?\?"
+    r"(?:[^#\s\"'<>]*&)?search=[^&#\s\"'<>]+"
     r")",
     re.I,
 )

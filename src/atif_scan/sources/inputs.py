@@ -24,7 +24,7 @@ import json
 import os
 import re
 import stat
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from functools import cached_property
 from pathlib import Path, PurePosixPath
@@ -34,6 +34,7 @@ from urllib.parse import unquote, urlsplit
 from ..data.facts import listed_facts
 from ..data.jsonval import Doc, count, identifier
 from ..data.loader import MAX_BYTES, TraceError, load_bytes, load_trace
+from .ale import Attempt, attempts
 from .harbor.runs import (
     REWARD_BYTES,
     SavedRun,
@@ -553,7 +554,21 @@ def file_source(label: str, location: str, fs: RemoteFS | None = None) -> Source
     if location.startswith(HF_PREFIX):
         fs = fs or hf_filesystem()
         return Source(label, _remote_load(fs, location[len(HF_PREFIX) :], None))
-    return Source(label, lambda: load_trace(Path(location)), local=Path(location))
+    return _local_file_source(label, Path(location))
+
+
+def _local_file_source(label: str, path: Path) -> Source:
+    source = Source(label, lambda: load_trace(path), local=path)
+    if path.name not in {"atif.json", "trajectory.json"} or not path.parent.is_dir():
+        return source
+    root = path.parent
+    if root.name == "fast_agent" and root.parent.name == "origin_log":
+        root = root.parent.parent
+    found = [a for a in attempts(_list_local(str(root))) if not a.folder]
+    if found:
+        meta = {**found[0].metadata, "trajectory_source": "explicit_file"}
+        source = replace(source, meta=meta)
+    return source
 
 
 def _trial_source(
@@ -563,6 +578,7 @@ def _trial_source(
     label: str,
     saved: dict[str, SavedRun],
     membership: Mapping[str, bool],
+    ale_meta: Doc | None = None,
 ) -> Source:
     """One selected trajectory with the run files beside it (see harbor_runs, facts)."""
     meta = listed_facts(
@@ -572,14 +588,18 @@ def _trial_source(
     fingerprint = (
         local_fingerprint(local) if local is not None and not entry.failed else _no_fingerprint
     )
+    if local is not None and not listing.directory:
+        explicit = _local_file_source(label, local)
+        if explicit.meta:
+            return replace(explicit, fingerprint=fingerprint)
     return Source(
         label,
         listing.opener(entry),
-        reward_lookup(listing, entry, value),
+        _no_reward if ale_meta is not None else reward_lookup(listing, entry, value),
         "/".join(p for p in (value.rstrip("/"), entry.path) if p),
-        meta,
+        ale_meta if ale_meta is not None else meta,
         fingerprint,
-        trial_details(listing, entry, value),
+        _no_details if ale_meta is not None else trial_details(listing, entry, value),
         local,
     )
 
@@ -594,6 +614,39 @@ def _untraced(label: str, facts: Doc) -> Source:
     return Source(label, load, meta=facts)
 
 
+def _ale_sources(listing: Listing, found: list[Attempt], before: int) -> list[Source]:
+    entries = {e.path: e for e in listing.entries}
+    sources = []
+    for attempt in found:
+        label = (
+            label_for(Entry(attempt.folder, None), "") or f"input-{before + len(sources) + 1:04d}"
+        )
+        entry = entries.get(attempt.trajectory)
+        if entry is None:
+            sources.append(_untraced(label, attempt.metadata))
+            continue
+        local = listing.local_path(entry) if listing.local_path else None
+        sources.append(
+            Source(
+                label,
+                listing.opener(entry),
+                meta=attempt.metadata,
+                local=local,
+                fingerprint=local_fingerprint(local)
+                if local and not entry.failed
+                else _no_fingerprint,
+            )
+        )
+    return sources
+
+
+def _explicit_ale_meta(entry: Entry, known: list[Attempt]) -> Doc | None:
+    for attempt in known:
+        if entry.path == attempt.trajectory:
+            return {**attempt.metadata, "trajectory_source": "explicit_pattern"}
+    return None
+
+
 def _listing_sources(
     listing: Listing,
     value: str,
@@ -606,7 +659,10 @@ def _listing_sources(
     without one (unavailable, as a harbor:// scan reports them). `before` counts the
     sources already resolved, for positional labels."""
     entries = selected(listing, pattern)
-    if not entries:
+    known = attempts(listing)
+    ale = known if pattern == DEFAULT_PATTERN else []
+    entries = [e for e in entries if not any(a.contains(e.path) for a in ale)]
+    if not entries and not ale:
         raise SourceError("no_files_match_pattern")
     sources = [
         _trial_source(
@@ -616,9 +672,11 @@ def _listing_sources(
             label_for(entry, pattern) or f"input-{before + n + 1:04d}",
             saved,
             membership,
+            _explicit_ale_meta(entry, known),
         )
         for n, entry in enumerate(entries)
     ]
+    sources += _ale_sources(listing, ale, before + len(sources))
     if pattern == DEFAULT_PATTERN:
         sources += [
             _untraced(label, facts) for label, facts in listed_without_trajectory(saved, entries)

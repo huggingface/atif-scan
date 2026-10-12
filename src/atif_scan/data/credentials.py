@@ -166,6 +166,7 @@ _LOOKUP_PARTS = frozenset(
         "routing",
         "merge",
         "foreign",
+        "match",  # record-matching selectors, not authentication keys
         # Scoped registries, plugin registries, object handles and map selectors.
         # Match components, not particular task identifiers or adjacent word pairs.
         "scope",

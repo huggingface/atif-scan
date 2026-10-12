@@ -241,6 +241,40 @@ def subagent_unrecorded(trace: Trace) -> Detection:
 NO_USAGE = (Unread("usage_not_recorded"),)
 
 
+def step_count_mismatch(trace: Trace) -> Detection:
+    """Recording-review signal, not a malformed-ATIF verdict.
+
+    Notes may document a schema-permitted scope difference, or be unrelated.
+    Presence cannot clear a mismatch; never interpret their free prose.
+    """
+    declared = trace.total_steps
+    recorded = len(trace.steps)
+    measure: Measure = (("declared_steps", declared), ("recorded_steps", recorded))
+    reason = None
+    if declared is None:
+        reason = "step_count_not_recorded"
+    elif declared != recorded and trace.has_notes:
+        reason = "step_count_scope_documented"
+    if reason is not None:
+        return Detection(Status.UNKNOWN, complete=False, unread=(Unread(reason),), measure=measure)
+    return replace(_result([], complete=True, matched=declared != recorded), measure=measure)
+
+
+def cached_tokens_exceed_prompt(trace: Trace) -> Detection:
+    """Final cached input cannot exceed the same scope's inclusive prompt total.
+
+    This flags incompatible accounting, not a provider billing error or a repair.
+    Do not compare step sums: missing token kinds can give them different scopes.
+    """
+    usage = trace.usage
+    prompt = usage.prompt_tokens if usage else None
+    cached = usage.cached_tokens if usage else None
+    measure: Measure = (("prompt_tokens", prompt), ("cached_tokens", cached))
+    if prompt is None or cached is None:
+        return Detection(Status.UNKNOWN, complete=False, unread=NO_USAGE, measure=measure)
+    return replace(_result([], complete=True, matched=cached > prompt), measure=measure)
+
+
 def cost_missing(trace: Trace) -> Detection:
     """Positive final token counts without ATIF cost; other records may carry cost."""
     usage = trace.usage
@@ -407,6 +441,14 @@ def integrity_detectors() -> list[Detector]:
     return [
         TraceCheck(
             CheckSpec(
+                "integrity.step_count_mismatch",
+                Severity.LOW,
+                title="Declared step count differs from recorded steps",
+            ),
+            step_count_mismatch,
+        ),
+        TraceCheck(
+            CheckSpec(
                 "integrity.incomplete_tool_generation",
                 Severity.INFO,
                 title="Incomplete tool generation failed",
@@ -567,6 +609,15 @@ def integrity_detectors() -> list[Detector]:
                 "integrity.agent_steps_missing", Severity.LOW, title="No agent steps recorded"
             ),
             agent_steps_missing,
+        ),
+        TraceCheck(
+            CheckSpec(
+                "integrity.cached_tokens_exceed_prompt",
+                Severity.LOW,
+                version="1",
+                title="Cached tokens exceed inclusive prompt total",
+            ),
+            cached_tokens_exceed_prompt,
         ),
         TraceCheck(
             CheckSpec(

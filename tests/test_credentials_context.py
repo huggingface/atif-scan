@@ -34,6 +34,9 @@ LOOKUP_NAMES = [
     "recordMergeKey",
     "tableForeignKey",
     "widgetDescriptionKey",
+    "match_key",
+    "recordMatchKey",
+    "MATCH_KEY",
 ]
 OPAQUE = "OpaqueSynthetic8274"
 
@@ -74,6 +77,8 @@ def test_lookup_names_are_not_exposure_but_still_masked(name, template):
         "recordMapAccessKey",
         "mapping_key",  # substrings are not structural components
         "scoped_key",
+        "match_api_key",
+        "matching_key",
     ],
 )
 def test_explicit_authentication_and_unknown_names_remain_candidates(name):
@@ -181,7 +186,7 @@ def test_existing_code_and_reference_exclusions(text):
 
 def test_exposure_detector_version_invalidates_old_results():
     spec = CredentialExposure().spec
-    assert spec.version == "6"
+    assert spec.version == "7"
     assert spec.severity == Severity.LOW
     assert spec.title == "Possible credential-like value"
 

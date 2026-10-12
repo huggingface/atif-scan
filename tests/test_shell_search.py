@@ -14,8 +14,9 @@ from urllib.parse import quote
 import pytest
 
 from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
+from atif_scan.access import access_rules
 from atif_scan.cli import main
-from atif_scan.detectors.lookup import surfaced_source
+from atif_scan.detectors.lookup import search_queries, shell_search, surfaced_source
 from atif_scan.detectors.vocabulary import SEARCH_ENDPOINT
 
 if TYPE_CHECKING:
@@ -182,3 +183,67 @@ def test_non_benchmark_renderings_are_not_sources(rendering):
 )
 def test_search_endpoints(url, endpoint):
     assert bool(SEARCH_ENDPOINT.search(url)) is endpoint
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://huggingface.co/api/datasets?search=synthetic+demo",
+        "https://huggingface.co/api/models?search=synthetic%20demo",
+        "https://huggingface.co/api/datasets?limit=5&search=synthetic+demo&full=true",
+        "https://huggingface.co/api/models/?search=synthetic+demo",
+    ],
+)
+@pytest.mark.parametrize("fetch", ["curl -s '{url}'", "wget -qO- '{url}'"])
+def test_hub_catalogue_searches_preserve_queries_and_inspect_results(url, fetch):
+    command = fetch.format(url=url)
+    trace = parse_trace(raw_trace(command, said(TITLE)))
+    (_, call) = next(trace.agent_calls())
+    assert shell_search(call)
+    assert search_queries(command) == ["synthetic demo"]
+    found = results(command, said(TITLE))
+    assert found[SURFACED].status == Status.MATCH
+
+
+@pytest.mark.parametrize(
+    "url, candidate",
+    [
+        ("https://huggingface.co/api/datasets", False),
+        ("https://huggingface.co/api/models?limit=5", False),
+        ("https://huggingface.co/api/models?search=", False),
+        ("https://huggingface.co/api/models?search=&limit=5", False),
+        ("https://huggingface.co/api/models?other_search=synthetic", False),
+        ("https://huggingface.co/api/datasets#search=synthetic", False),
+        ("https://huggingface.co/api/models?limit=5#fragment&search=synthetic", False),
+        ("https://huggingface.co/api/models/example/demo?search=synthetic", True),
+        ("https://huggingface.co/datasets/example/demo?search=synthetic", True),
+        ("https://huggingface.co/example/demo/resolve/main/config.json?search=synthetic", True),
+        ("https://huggingface.co.evil.example/api/datasets?search=synthetic", True),
+    ],
+)
+def test_hub_pages_downloads_and_unfiltered_listings_are_not_known_searches(url, candidate):
+    assert not SEARCH_ENDPOINT.search(url)
+    trace = parse_trace(raw_trace(f"curl -s '{url}'", said(TITLE)))
+    (_, call) = next(trace.agent_calls())
+    assert shell_search(call) is candidate
+
+
+def test_hub_catalogue_search_does_not_imply_answers_obtained():
+    command = "curl 'https://huggingface.co/api/datasets?search=synthetic'"
+    found = results(command, said("[]"))
+    assert found[SURFACED].status == Status.NO_MATCH
+    assert found[SURFACED].complete
+    assert results(command, None)[SURFACED].status == Status.UNKNOWN
+    trace = parse_trace(raw_trace(command, said("[]")))
+    assessments = Engine([*builtin_detectors(), *access_rules()]).evaluate(
+        trace, Context("synthetic-demo")
+    )
+    received = next(item for item in assessments if item.spec.id == RECEIVED)
+    assert received.result.status == Status.NO_MATCH
+
+
+def test_hub_catalogue_url_only_printed_is_not_a_search():
+    command = "echo 'https://huggingface.co/api/models?search=synthetic'"
+    trace = parse_trace(raw_trace(command, said(TITLE)))
+    (_, call) = next(trace.agent_calls())
+    assert not shell_search(call)
