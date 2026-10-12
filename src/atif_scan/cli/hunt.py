@@ -9,8 +9,11 @@ question's JSON Schema for structured output. With --inspect-tool the model also
 read-only tools over that one trace and its local companion archives
 (atif_scan.review.inspect_server): they mask secrets and run nothing. The reply goes to
 <input>/<question>.answer.json and the answering run's own ATIF trajectory to
-<input>/<question>.review.atif.json. Existing answers are kept unless --force; atif-scan
-validates replies when it reads them (--answers). fast-agent runs `--isolated`
+<input>/<question>.review.atif.json. Valid existing answers are kept unless --force.
+Completion requires a reply validated
+against metadata for a known question, its current version and a string input_id.
+Invalid cached replies are retried on the next invocation; invalid new replies are not saved.
+Trace freshness is still checked when answers are ingested (--answers). fast-agent runs `--isolated`
 (atif_scan.cli.fast_agent): prompts aren't saved in its home and no plugins load.
 
 Prompts contain masked trace text and are sent to the model's provider: only run this
@@ -31,7 +34,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ..data.jsonval import as_object, as_str
+from ..data.jsonval import JsonObject, as_object, as_str
+from ..review.answers import MAX_READ, parse_answer
+from ..review.catalogue import BY_ID
 from .fast_agent import run_go
 
 MCP = "mcp>=1.2,<2"
@@ -80,8 +85,32 @@ def pending(bundle: Path, questions: list[str], force: bool) -> list[Path]:
 
 
 def _answered(meta: Path) -> bool:
-    answer = meta.with_suffix(".answer.json")
-    return answer.is_file() and answer.stat().st_size > 0
+    try:
+        metadata = _metadata(meta)
+        return parse_answer(_read(meta.with_suffix(".answer.json")), metadata) is not None
+    except (OSError, ValueError, RecursionError):
+        return False
+
+
+def _read(path: Path) -> str:
+    """Bound metadata and cached replies to the same byte limit as --answers."""
+    with path.open("rb") as stream:
+        data = stream.read(MAX_READ + 1)
+    if len(data) > MAX_READ:
+        raise ValueError("file too large")
+    return data.decode("utf-8")
+
+
+def _metadata(path: Path) -> JsonObject:
+    meta = as_object(json.loads(_read(path)))
+    question = BY_ID.get(as_str(meta.get("question")) or "")
+    if (
+        question is None
+        or meta.get("version") != question.version
+        or not isinstance(meta.get("input_id"), str)
+    ):
+        raise ValueError("invalid question metadata")
+    return meta
 
 
 def server_command(trace: str) -> str:
@@ -93,11 +122,11 @@ def server_command(trace: str) -> str:
     return shlex.join([*uv, "python", "-m", SERVER, trace])
 
 
-def _command(args: argparse.Namespace, meta: Path) -> list[str] | str:
+def _command(args: argparse.Namespace, meta: Path, metadata: JsonObject) -> list[str] | str:
     """`fast-agent go`'s arguments for one question, or why it can't be asked."""
     extra: list[str] = []
     if args.inspect_tool:
-        trace = as_str(as_object(json.loads(meta.read_text())).get("trace_path"))
+        trace = as_str(metadata.get("trace_path"))
         if not trace or not Path(trace).is_file():
             return "no local trajectory for --inspect-tool"
         # Keep the inspection tools available beyond the first tool round.
@@ -114,7 +143,7 @@ def _command(args: argparse.Namespace, meta: Path) -> list[str] | str:
 
 def _reply(out: str) -> str:
     """fast-agent can print a tool-status line before the JSON even with --quiet: keep the
-    last line that is a JSON object (--answers validates it either way)."""
+    last line that looks like a JSON object (validated before saving)."""
     objects = [line for line in out.splitlines() if line.startswith("{")]
     return objects[-1] + "\n" if objects else out
 
@@ -127,19 +156,40 @@ def _reason(text: str) -> str:
 
 
 def answer(args: argparse.Namespace, meta: Path) -> bool:
-    command = _command(args, meta)
+    try:
+        metadata = _metadata(meta)
+    except (OSError, ValueError, RecursionError):
+        return _failed(args.questions, meta, "invalid question metadata")
+    return _answer(args, meta, metadata)
+
+
+def _answer(args: argparse.Namespace, meta: Path, metadata: JsonObject) -> bool:
+    command = _command(args, meta, metadata)
     if isinstance(command, str):
         return _failed(args.questions, meta, command)
     run = run_go(shlex.split(args.fast_agent), command)
     failed = any(line.startswith("Error:") for line in run.stdout.splitlines())
     if run.returncode != 0 or not run.stdout.strip() or failed:
         return _failed(args.questions, meta, _reason(run.stdout + "\n" + run.stderr))
+    reply = _validated_reply(run.stdout, metadata)
+    if reply is None:
+        return _failed(args.questions, meta, "invalid answer")
     target = meta.with_suffix(".answer.json")
     tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}.{threading.get_ident()}")
-    tmp.write_text(_reply(run.stdout))
+    tmp.write_text(reply, encoding="utf-8")
     tmp.replace(target)
     print(f"answered  {meta}", file=sys.stderr)
     return True
+
+
+def _validated_reply(stdout: str, metadata: JsonObject) -> str | None:
+    # Bound the full output before extraction; saved replies must be readable by --answers.
+    if len(stdout.encode("utf-8")) > MAX_READ:
+        return None
+    for candidate in (_reply(stdout), stdout):
+        if len(candidate.encode("utf-8")) <= MAX_READ and parse_answer(candidate, metadata):
+            return candidate
+    return None
 
 
 def _failed(bundle: Path, meta: Path, why: str) -> bool:
@@ -177,4 +227,4 @@ def main(argv: list[str]) -> int:
         results = list(pool.map(lambda meta: answer(args, meta), todo))
     print(f"answered {sum(results)} · failed {results.count(False)}", file=sys.stderr)
     print(f"next: atif-scan <same inputs> --answers {args.questions} --brief", file=sys.stderr)
-    return 0
+    return 1 if not all(results) else 0

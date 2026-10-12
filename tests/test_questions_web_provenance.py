@@ -128,6 +128,8 @@ def test_separate_use_enum_and_allowlisted_answer_ingestion(tmp_path):
         "reason": "PRIVATE SYNTHETIC REASON",
         "arbitrary": "must not enter report",
     }
+    assert parse_answer(json.dumps(reply), meta) is None
+    reply.pop("arbitrary")
     parsed = parse_answer(json.dumps(reply), meta)
     assert parsed is not None
     assert parsed["mechanism"] == "unknown"
