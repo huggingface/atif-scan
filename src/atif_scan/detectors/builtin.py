@@ -28,6 +28,7 @@ from .lookup import (
     benchmark_task_files,
     destinations,
 )
+from .lures import lure_detectors
 from .priming import instruction_detectors
 from .provenance import DownstreamSourceReference
 from .recall import PROSE_AND_INPUT, UnprimedDetector, regex_candidates
@@ -325,6 +326,7 @@ def builtin_detectors() -> list[Detector]:
         *side_channel_detectors(),
         *account_id_detectors(),
         *install_detectors(),
+        *lure_detectors(),
         *tamper_detectors(),
         *harness_detectors(),
         *integrity_detectors(),

@@ -228,6 +228,13 @@ def recorded_script_failure(content: Content) -> bool:
     return bool(texts) and SCRIPT_FAILURE.fullmatch("\n".join(texts).strip()) is not None
 
 
+def recorded_text(content: Content) -> str:
+    """A result's readable text with a serialized block envelope (a JSON or Python repr
+    list of text blocks, as Codex code mode records) unwrapped, so its line breaks are
+    real ones. Parsed as syntax only; "" when the result isn't readable."""
+    return "\n".join(_recorded_texts(content))
+
+
 def runner_status_only(content: Content) -> bool:
     """Known empty runner acknowledgements, not arbitrary statuses or errors."""
     texts = _recorded_texts(content)

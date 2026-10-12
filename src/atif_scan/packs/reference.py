@@ -51,7 +51,7 @@ from urllib.parse import urlsplit
 from ..checks import CheckSpec, Context, Detection, Severity, Status
 from ..data import credentials
 from ..data.model import Channel, Locator, Surface, Trace
-from ..detectors.installs import _task_name
+from ..detectors.installs import task_name
 from ..detectors.lookup import looks_up_benchmark
 from ..detectors.recall import PROSE_AND_INPUT, UnprimedDetector, unrecorded_web_result, walk
 from ..detectors.vocabulary import CANARY, NETWORK, TASK_FILES, URL
@@ -202,7 +202,7 @@ def digest(base: str | None) -> str:
 # files) for this task": both are `unknown`. Detection carries no reason field, so the two
 # aren't told apart in reports; the report schema is deliberately left unchanged.
 def _reference(base: str | None, context: Context) -> TaskReference | None:
-    task = _task_name(context)
+    task = task_name(context)
     return load(base, task) if base and task else None
 
 
