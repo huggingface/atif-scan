@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from . import shell
+from .python_file_requests import PYTHON, python_paths
 
 READERS = frozenset({"cat", "head", "tail", "wc", "md5sum", "sha256sum", "diff", "cmp"})
 # Options consuming a value rather than a file operand. cat -n is a flag, whereas
@@ -75,10 +76,29 @@ def _read_command(command: shell.Command, text: str) -> PathRead:
     return PathRead(requests, tuple(unknown), all(_literal(path) for path, _ in targets))
 
 
+def _python_requests(command: shell.Command) -> PathRead:
+    if not PYTHON.fullmatch(command.name or ""):
+        return PathRead()
+    words = command.argv()[1:]
+    for i, (word, _) in enumerate(words):
+        if word == "-c" and i + 1 < len(words):
+            code, span = words[i + 1]
+            # Bounded Python parsing cannot establish coverage, regardless of
+            # whether the raw source spells a target literally or with escapes.
+            return PathRead(
+                tuple(PathRequest(path, span) for path in python_paths(code) if _literal(path)),
+                complete=False,
+            )
+        if word not in {"-u", "-B", "-I", "-S", "-E", "-s"}:
+            break  # script/-m arguments are not inline code
+    return PathRead()
+
+
 @lru_cache(maxsize=512)
 def command_paths(text: str) -> PathRead:
     script = shell.parse(text)
     reads = [_read_command(command, text) for command in script.commands]
+    reads.extend(_python_requests(command) for command in script.commands)
     bodies = tuple(
         text[start:end]
         for (start, end), command in zip(script.bodies, script.body_commands, strict=True)
