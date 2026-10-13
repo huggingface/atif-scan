@@ -27,6 +27,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -148,9 +149,18 @@ def _reply(out: str) -> str:
     return objects[-1] + "\n" if objects else out
 
 
+# An exception summary (`BadRequestError: ...`), not a traceback frame that happens to
+# mention an error class (rich tracebacks quote source lines such as `except FooError`).
+_EXCEPTION_LINE = re.compile(r"^(?:[A-Za-z_][\w.]*\.)?[A-Z]\w*(?:Error|Exception)\b[^\n]*:")
+
+
 def _reason(text: str) -> str:
-    """The first error line only: fast-agent may otherwise echo prompt text."""
+    """One error line only: fast-agent may otherwise echo prompt text. Prefer the last
+    exception summary, which names the actual failure, over traceback frames."""
     lines = [line for line in text.splitlines() if line.strip()]
+    summaries = [line for line in lines if _EXCEPTION_LINE.match(line.strip())]
+    if summaries:
+        return summaries[-1].strip()[:REASON_CHARS]
     errors = [line for line in lines if "error" in line.lower()]
     return ((errors or lines or ["no output"])[0])[:REASON_CHARS]
 

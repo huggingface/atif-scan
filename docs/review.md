@@ -167,7 +167,9 @@ The bundle directory holds:
 - `<input>/<question>.md`: the prompt
 - `<input>/<question>.json`: its metadata (question, version, blind, input, a digest of
   the parsed trace, allowed answers, the local trajectory path for the inspector)
-- `schemas/<question>.json`: a JSON Schema for structured output
+- `schemas/<question>.json`: a JSON Schema for structured output. It is one flat object
+  (no `anyOf`), which strict structured-output modes require; the answer/mechanism
+  contract is stated in the prompt and enforced when answers are read
 - `index.jsonl`: metadata only, no trace text and no paths
 - `manifest.json`: the reviewable selected inputs (task and reward preserved). This is the
   review subset, not the scoring population
