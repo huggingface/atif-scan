@@ -50,6 +50,7 @@ LIMITING = frozenset(
         "integrity.tool_results_not_recorded",
         "integrity.actions_not_recorded",
         "integrity.subagent_unrecorded",
+        "integrity.final_calls_unanswered",
     }
 )
 

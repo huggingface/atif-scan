@@ -26,6 +26,7 @@ from ..data.web_results import (
     web_outcomes_recorded,
     web_result_state,
 )
+from .text import unrecorded_results
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -212,6 +213,23 @@ def redacted_values(trace: Trace) -> Detection:
     """The file carried bare `[REDACTED]` values (invalid JSON, read as unknown): a
     publisher redaction defect, e.g. token counts in TB4 trajectories on the Harbor Hub."""
     return _result([], complete=True, matched=trace.redacted_values > 0)
+
+
+def final_calls_unanswered(trace: Trace) -> Detection:
+    """Tool calls in the last step with no recorded result: the run stopped after issuing
+    them (a timeout, a killed agent process or a lost connection), so what they did or
+    returned isn't in the trace. Seen in a fast-agent DeepSWE trial whose agent process
+    was SIGKILLed while six commands were in flight. Checks reading those results are
+    already unknown there (`run_ended`); this makes the cut-off itself visible.
+
+    Results the loader couldn't pair leave the step unknown, never cleared."""
+    if not trace.steps or not (last := trace.steps[-1]).authored or not last.calls:
+        return _result([], complete=True)
+    if any(o.pairing_unresolved for o in last.observations):
+        gap = Unread("result_not_recorded", _meta(last))
+        return Detection(Status.UNKNOWN, complete=False, unread=(gap,))
+    ended = [u.at for u in unrecorded_results(trace) if u.reason == "run_ended" and u.at]
+    return _result(ended, complete=True)
 
 
 def trace_head_missing(trace: Trace) -> Detection:
@@ -569,6 +587,14 @@ def integrity_detectors() -> list[Detector]:
                 title="Trace starts without the prompt",
             ),
             trace_head_missing,
+        ),
+        TraceCheck(
+            CheckSpec(
+                "integrity.final_calls_unanswered",
+                Severity.INFO,
+                title="Trace ends on tool calls with no recorded result",
+            ),
+            final_calls_unanswered,
         ),
         TraceCheck(
             CheckSpec(
