@@ -4,6 +4,14 @@
   auth and env files out of Git. Use only synthetic fixtures, and never copy benchmark
   solutions into this repository.
 - Built-ins never execute commands, visit URLs, run models or fetch files.
+- **`tools/regrade.py`** is the one tool that runs agent code: it applies a trial's
+  submitted patch and runs the task's own verifier on it, to test whether part of the
+  patch earned the reward. It is opt-in (`--yes`), never invoked by the scanner, and runs
+  each variant in a fresh Docker container with `--network none`, no volume mounts,
+  `no-new-privileges`, a pid limit and the task's CPU/memory limits. Containers share
+  the host kernel: use a machine you would run untrusted code on. Its outputs (reward
+  files, test reports, verifier logs) name real trials and hidden test ids: they are
+  written to a private `0700` folder in the atif-scan home and stay out of Git.
 - **`--image-model MODEL`** is the scan's one model call, and it is opt-in. It sends
   only the images in trials where an image leaves a check unknown (decoded from the
   trajectory, written to a `0700` temporary folder and deleted afterwards) to MODEL for
