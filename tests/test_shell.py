@@ -72,6 +72,26 @@ def test_file_bodies_are_heredocs_written_to_a_file(text, written):
     assert script.file_bodies == ([body] if written else [])
 
 
+def test_heredocs_nested_in_a_shell_heredoc_keep_their_owners():
+    """Regression: a DeepSWE (Datacurve, DeepSeek V4 Flash) trial ran `python3 - <<PY` and
+    `cat > f <<EOF` inside `bash <<SH`; the nested bodies were merged without their owner
+    commands or write targets, so every check zipping them raised and reported an error."""
+    text = (
+        "bash <<'SH'\n"
+        "python3 - <<'PY'\nimport urllib.request\nurllib.request.urlopen('https://example.com/q')\nPY\n"
+        "cat > /app/notes.md <<'EOF'\nsee https://example.com\nEOF\n"
+        "SH\n"
+        "node <<'JS'\nfetch(u)\nJS"
+    )
+    script = shell.parse(text)
+    assert script.complete
+    assert [c.name for c in script.body_commands] == ["python3", "cat", "node"]
+    assert len(script.bodies) == len(script.body_commands)
+    (written,) = script.file_bodies
+    assert text[written[0] : written[1]] == "see https://example.com\n"
+    assert script.file_targets == ["/app/notes.md"]
+
+
 def test_names_skip_assignments_keywords_and_wrappers():
     assert names("A=1 sudo -E env B=2 timeout -s 9 5 nice -n 3 /usr/bin/curl x") == ["curl"]
     assert names("if true; then curl x; fi") == ["curl", "fi", "true"]

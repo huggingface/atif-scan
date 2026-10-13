@@ -41,7 +41,6 @@ import hashlib
 import ipaddress
 import os
 import re
-import warnings
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
@@ -51,6 +50,7 @@ from urllib.parse import urlsplit
 from ..checks import CheckSpec, Context, Detection, Severity, Status
 from ..data import credentials
 from ..data.model import Channel, Locator, Surface, Trace
+from ..data.pysource import parse_module
 from ..detectors.installs import task_name
 from ..detectors.lookup import looks_up_benchmark
 from ..detectors.recall import PROSE_AND_INPUT, UnprimedDetector, unrecorded_web_result, walk
@@ -145,9 +145,7 @@ def _test_names(sources: Iterable[str]) -> set[str]:
     names: set[str] = set()
     for source in sources:
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")  # e.g. invalid escapes in the task's tests
-                tree = ast.parse(source)
+            tree = parse_module(source)  # quietly: e.g. invalid escapes in the tests
         except (SyntaxError, ValueError):
             names.update(TEST_NAME.findall(source))
             continue

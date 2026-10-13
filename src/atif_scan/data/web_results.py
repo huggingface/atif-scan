@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from .content import content as parse_content
 from .jsonval import as_object, as_str
+from .pysource import parse_expression
 
 if TYPE_CHECKING:
     from .model import Content, Step, ToolCall
@@ -159,7 +160,7 @@ def _serialized_blocks(text: str) -> list[dict[str, object]]:
     if len(text) > MAX_WRAPPER_BYTES:
         return []
     try:
-        tree = ast.parse(text, mode="eval")
+        tree = parse_expression(text)
     except (SyntaxError, ValueError, RecursionError):
         return []
     if not isinstance(tree.body, ast.List):

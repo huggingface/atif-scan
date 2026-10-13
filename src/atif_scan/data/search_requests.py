@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from . import shell
+from .pysource import parse_module
 
 QUERY_NAMES = frozenset({"q", "query", "p", "search", "text", "keywords"})
 # Options whose value is not a request URL (headers, output files, request bodies, etc.).
@@ -137,7 +138,7 @@ def _read_targets(targets: list[str]) -> RequestRead:
 
 def _python_targets(code: str) -> RequestRead:
     try:
-        tree = ast.parse(code)
+        tree = parse_module(code)
     except (SyntaxError, ValueError, RecursionError):
         return RequestRead(complete=False)
     reads = [

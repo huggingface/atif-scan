@@ -291,7 +291,12 @@ class _Reader:
         reader = _Reader(text, inner, self.pipelines, self.base + offset)
         reader.commands(depth + 1, None)
         self.script.complete &= inner.complete
+        # Spans are already absolute (`base`). The four lists are parallel pairs: merge
+        # all of them, or a heredoc nested in `bash <<EOF` misaligns bodies and owners.
         self.script.bodies += inner.bodies
+        self.script.body_commands += inner.body_commands
+        self.script.file_bodies += inner.file_bodies
+        self.script.file_targets += inner.file_targets
         (command.substituted if substituted else command.nested).extend(inner.commands)
         self.script.commands += inner.commands
         return None

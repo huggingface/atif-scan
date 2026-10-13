@@ -11,6 +11,8 @@ from __future__ import annotations
 import ast
 import re
 
+from .pysource import parse_module
+
 PYTHON = re.compile(r"python(?:[23](?:\.\d+)?)?$")
 READ_MODES = frozenset({"r", "rb", "rt", "r+", "rb+", "r+b", "rt+", "r+t"})
 MAX_CODE = 256 * 1024
@@ -144,7 +146,7 @@ def python_paths(code: str) -> tuple[str, ...]:
     if len(code) > MAX_CODE:
         return ()
     try:
-        tree = ast.parse(code)
+        tree = parse_module(code)
         return tuple(_statements(tree.body, {}, {"open"}))
     except (SyntaxError, ValueError, RecursionError):
         return ()

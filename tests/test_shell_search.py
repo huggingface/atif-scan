@@ -86,6 +86,10 @@ def test_scan_reports_the_shell_search_as_benchmark_material_received(tmp_path, 
         "wget -qO- 'https://www.google.com/search?q=synthetic+demo'",
         "python3 -c \"import requests; print(requests.get('https://api.github.com/search/repositories?q=demo').text)\"",
         "curl -s 'https://search.brave.com/search?q=synthetic'",
+        # A search script nested in a shell heredoc beside a written file (regression: the
+        # misaligned nested bodies made this check, and its siblings, report an error).
+        "bash <<'SH'\ncat > /app/n.md <<'EOF'\nnotes\nEOF\npython3 - <<'PY'\nimport requests\n"
+        "print(requests.get('https://www.bing.com/search?q=synthetic+demo').text)\nPY\nSH",
     ],
 )
 def test_other_engines_and_script_fetches_are_searches(command):

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..data.model import Channel, Locator
+from ..data.pysource import parse_module
 from ..evidence.cite import mask, trace_secrets
 from ..packs.reference import ENV, VISIBLE, task_files
 
@@ -80,7 +81,7 @@ def _graded_nodes(tree: ast.AST) -> list[ast.AST]:
 
 def _module_values(path: str, source: str) -> list[HiddenValue]:
     try:
-        tree = ast.parse(source)
+        tree = parse_module(source)
     except (SyntaxError, ValueError, RecursionError):
         return []
     lines = source.splitlines()
