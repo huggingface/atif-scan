@@ -97,6 +97,12 @@ def _tb4_tasks() -> frozenset[str]:
     return TASK_NAMES
 
 
+def _tblite_tasks() -> frozenset[str]:
+    from .tblite import TASK_NAMES  # noqa: PLC0415 - lazy: only when tasks are compared
+
+    return TASK_NAMES
+
+
 BUNDLED = (
     Pack(
         "ale",
@@ -122,6 +128,12 @@ BUNDLED = (
         datasets=re.compile(r"deep[-_ ]?swe", re.I),
         tasks=_deepswe_tasks,
         review_note=DEEPSWE_NOTE,
+    ),
+    Pack(
+        "tblite",
+        "atif_scan.packs.tblite:checks",
+        datasets=re.compile(r"(?<![\w-])openthoughts[-_]?tb[-_]?lite(?![\w-])", re.I),
+        tasks=_tblite_tasks,
     ),
     Pack("reference", "atif_scan.packs.reference:checks", env="ATIF_SCAN_REFERENCE"),
 )
