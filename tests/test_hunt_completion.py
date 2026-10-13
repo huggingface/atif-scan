@@ -281,3 +281,18 @@ def test_integrated_contract_rejects_prior_bundle_versions(
     assert Answers.load(root).annotate("synthetic", None)[0]["status"] == "stale"
     assert hunt.pending(root, [], False) == [meta]
     assert run(bundle, monkeypatch, json.dumps(reply), extra=extra) == (1, [])
+
+
+def test_error_log_names_the_exception_not_a_traceback_frame():
+    """Regression: a rich traceback quoting `except (AgentConfigError, ...)` was logged
+    instead of the provider's 400, hiding the real cause of every failure."""
+    out = "\n".join(
+        [
+            "│   581 │   except (AgentConfigError, EnvironmentStartupError) as exc:  │",
+            "│ ❱ 1838 │   raise self._make_status_error_from_response(err.response)   │",
+            "BadRequestError: Error code: 400 - invalid_json_schema",
+        ]
+    )
+    assert hunt._reason(out) == "BadRequestError: Error code: 400 - invalid_json_schema"
+    assert hunt._reason("Error: nothing else\nmore") == "Error: nothing else"
+    assert hunt._reason("") == "no output"

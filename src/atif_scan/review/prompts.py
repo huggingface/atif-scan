@@ -110,23 +110,32 @@ def answer_mechanisms(question: Question, answer: str) -> list[str]:
     return mechanisms
 
 
-def _mechanism_schema(question: Question) -> Doc:
+def _either(answers: list[str]) -> str:
+    return " or ".join(f"`{a}`" for a in answers)
+
+
+def mechanism_contract(question: Question) -> list[str]:
+    """The answer/mechanism contract as reply-format lines. It is stated in the prompt and
+    enforced by `parse_answer`, not by the schema: strict structured-output providers
+    (OpenAI Responses) refuse a root `anyOf`, so the schema stays one flat object."""
     if question.id not in MECHANISM_CONTRACTS:
-        return {}
-    return {
-        "anyOf": [
-            {
-                "properties": {
-                    "answer": {"enum": [answer]},
-                    "mechanism": {"enum": answer_mechanisms(question, answer)},
-                }
-            }
-            for answer in question.answers
-        ]
-    }
+        return []
+    negative = [a for a in question.answers if answer_mechanisms(question, a) == ["none"]]
+    positive = [
+        a
+        for a in question.answers
+        if a not in negative and "none" not in answer_mechanisms(question, a)
+    ]
+    return [
+        f"`mechanism` must be `none` when the answer is {_either(negative)}, and must not be "
+        f"`none` when it is {_either(positive)}. A reply that breaks this is rejected.",
+        "",
+    ]
 
 
 def schema(question: Question) -> Doc:
+    """A flat object schema that strict structured-output modes accept: no root
+    composition keywords, every property required, no additional properties."""
     extra = {"mechanism": {"type": "string", "enum": list(question.mechanisms)}}
     return {
         "type": "object",
@@ -144,7 +153,6 @@ def schema(question: Question) -> Doc:
             "reason": {"type": "string", "maxLength": REASON_CHARS},
             **(extra if question.mechanisms else {}),
         },
-        **_mechanism_schema(question),
     }
 
 
@@ -635,6 +643,7 @@ def _closing(question: Question) -> list[str]:
         + '"steps": [<step numbers you relied on>], "reason": "<at most 60 words>"}',
         "```",
         "",
+        *mechanism_contract(question),
     ]
     return out
 
