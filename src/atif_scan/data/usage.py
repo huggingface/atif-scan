@@ -245,6 +245,20 @@ def _reasoning_tokens(extra: JsonObject) -> int | None:
     return count(extra.get("reasoning_output_tokens") if value is None else value)
 
 
+def _pi_reasoning_tokens(found: Usage, extra: JsonObject) -> int | None:
+    """pi records its run total as `final_metrics.extra.reasoning_tokens` (the per-step
+    key), included in `total_completion_tokens`. This is the pi harness's convention, not
+    a general alias: the canonical field still wins when present, and a split larger than
+    the completion total stays unknown rather than being subtracted."""
+    if found.reasoning_tokens is not None or extra.get("total_reasoning_tokens") is not None:
+        return found.reasoning_tokens
+    reasoning = count(extra.get("reasoning_tokens"))
+    completion = found.completion_tokens
+    if reasoning is None or completion is None or reasoning > completion:
+        return None
+    return reasoning
+
+
 def usage(
     metrics: object,
     agent: tuple[str | None, str | None, str | None] = (None, None, None),
@@ -262,6 +276,8 @@ def usage(
     )
     if found == Usage():
         return None
+    if agent[0] == "pi":
+        found = replace(found, reasoning_tokens=_pi_reasoning_tokens(found, extra))
     # Grok Build exports visible output and reasoning separately. This is a
     # harness convention, not a model-name or harness-version heuristic.
     if agent[0] == "grok-build":
