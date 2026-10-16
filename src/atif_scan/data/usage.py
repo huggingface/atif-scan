@@ -187,6 +187,20 @@ def retry_outcomes(raw_steps: list[object]) -> tuple[int, tuple[int, ...]]:
     return before, tuple(sorted(statuses))
 
 
+def final_retry_statuses(raw_steps: list[object]) -> tuple[int, ...]:
+    """The HTTP statuses of the last agent step's failed provider attempts (fast-agent
+    retry/v1), sorted and unique: the attempts behind a final call that failed."""
+    for raw in reversed(raw_steps):
+        if not is_object(raw) or raw.get("source") != "agent":
+            continue
+        retry = as_object(as_object(raw.get("extra")).get("retry"))
+        if as_str(retry.get("schema")) != FAST_AGENT_RETRY_SCHEMA:
+            return ()
+        found = (_retry_status(as_object(a)) for a in as_list(retry.get("retries")))
+        return tuple(sorted({s for s in found if s is not None}))
+    return ()
+
+
 # How the report names each step token kind (usage fields: input, output, cache).
 TOKEN_KIND_NAMES = ("input", "output", "cached")
 STEP_TOKEN_KINDS = ("prompt_tokens", "completion_tokens", "cached_tokens")

@@ -349,6 +349,54 @@ def to_json(doc: Doc) -> str:
     return json.dumps(doc, indent=2)
 
 
+# How each kind of unexpected ending (`ending.unexpected`) reads.
+ENDING_LABELS = {
+    "model_call_failed": "model call failed",
+    "output_limit": "output limit hit",
+    "empty_reply": "empty final reply",
+    "safety_stop": "safety stop",
+    "interrupted": "cancelled or timed out",
+    "stopped_mid_loop": "stopped with tool calls outstanding",
+}
+
+
+def _ending_notes(m: Doc) -> list[str]:
+    notes = [ENDING_LABELS.get(str(m.get("kind")), str(m.get("kind")))]
+    if m.get("http_status") is not None:
+        notes.append(f"HTTP {m['http_status']}")
+    if m.get("reasoning_only"):
+        notes.append("reasoning only")
+    if not m.get("usage_recorded"):
+        notes.append("no usage recorded")
+    if m.get("media_items"):
+        notes.append(f"{m['media_items']} inline media items before it")
+    return notes
+
+
+def ending_note(item: Doc) -> str | None:
+    """One line on a trial whose agent loop didn't end normally, or whose ending isn't
+    known; None for a normal ending. Codes and counts from the measure only."""
+    found = next((a for a in item.get("assessments", []) if a["id"] == "ending.unexpected"), None)
+    if found is None:
+        return None
+    m = found.get("measure") or {}
+    if found["status"] == Status.UNKNOWN and m.get("kind") == "undetermined":
+        return "ending not known: the harness does not record model stop reasons"
+    if found["status"] != Status.MATCH:
+        return None
+    notes = _ending_notes(m)
+    at = _steps(found.get("evidence") or [])
+    return f"ended unexpectedly: {', '.join(notes)}" + (f" ({at})" if at else "")
+
+
+def _steps(evidence: Sequence[Doc]) -> str:
+    """`step 4`: the steps an assessment points at (ATIF step numbers when known)."""
+    steps = dict.fromkeys(
+        e["step_id"] if e.get("step_id") is not None else e["step"] + 1 for e in evidence
+    )
+    return ", ".join(f"step {s}" for s in steps)
+
+
 def sections(item: Doc) -> dict[str, list[Doc]]:
     """Group a per-input report for display. Findings sort by severity, then ID."""
     checks = [a for a in item["assessments"] if a["kind"] in ("detector", "rule")]

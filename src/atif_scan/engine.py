@@ -169,9 +169,10 @@ class Engine:
                 else _evaluate(check, trace, context, results)
             )
         if context.partial and result.status == Status.NO_MATCH:
-            return Detection(Status.UNKNOWN, complete=False)
+            return Detection(Status.UNKNOWN, complete=False, measure=result.measure)
         if context.partial and result.status == Status.MATCH:
-            return Detection(Status.MATCH, result.evidence, complete=False)
+            # Its figures still describe the match (a measure is codes and counts only).
+            return Detection(Status.MATCH, result.evidence, complete=False, measure=result.measure)
         return result
 
     def evaluate(

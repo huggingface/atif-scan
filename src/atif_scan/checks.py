@@ -167,6 +167,7 @@ UNREAD_REASONS = frozenset(
         "step_metrics_may_be_cumulative",  # per-step usage only rises: may be running totals
         "submission_not_recorded",  # no submitted patch beside the trajectory to inspect
         "submission_unreadable",  # the patch was too large or partly not a git diff
+        "stop_reason_not_recorded",  # a final reply, but nothing says the turn completed
     }
 )
 # Places listed per assessment; the first few say where, all of them only add volume.

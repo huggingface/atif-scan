@@ -10,7 +10,7 @@ from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
-from .document import STYLE, sections
+from .document import STYLE, ending_note, sections
 from .document import filter_notice as _filter_notice
 from .summary import (
     detail_heading,
@@ -85,6 +85,8 @@ def _print_heading(console: Console, item: Doc) -> None:
     console.print(Text(item["input_id"], style="bold"), Text(headline(item), style=style))
     if shape := counts(item):
         console.print(Text(shape, style="dim"))
+    if note := ending_note(item):
+        console.print(Text(note, style="yellow"))
 
 
 def _print_citations(console: Console, item: Doc, group: dict[str, list[Doc]]) -> None:

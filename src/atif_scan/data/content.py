@@ -49,14 +49,14 @@ def content(value: object) -> Content:
         parts = [content(part) for part in as_list(value)]
         media = [p for p in parts if p.media]
         # Identified only when every media part is: one placeholder leaves it unknown.
-        ids = (
-            tuple(i for p in media for i in p.media_ids) if all(p.media_ids for p in media) else ()
-        )
+        identified = all(p.media_ids for p in media)
+        ids = tuple(i for p in media for i in p.media_ids) if identified else ()
         return Content(
             "\n".join(p.text for p in parts),
             all(p.understood for p in parts),
             bool(media),
             ids,
+            media_bytes=sum(p.media_bytes for p in media) if identified else 0,
         )
     return _block_content(value)
 
@@ -67,9 +67,15 @@ def _text_content(value: str) -> Content:
     if not MEDIA_INLINE.search(value[:4096]):
         return Content(value)
     # Identified when the media it holds are data URIs (a Codex `view_image` repr) only.
-    unidentified = MEDIA_UNIDENTIFIED.search(value) is not None
-    ids = () if unidentified else tuple(m.digest for m in text_media(value))
-    return Content(value, media=True, media_ids=ids)
+    if MEDIA_UNIDENTIFIED.search(value) is not None:
+        return Content(value, media=True)
+    found = text_media(value)
+    return Content(
+        value,
+        media=True,
+        media_ids=tuple(m.digest for m in found),
+        media_bytes=sum(len(m.data) for m in found),
+    )
 
 
 def _block_content(value: object) -> Content:
@@ -77,6 +83,11 @@ def _block_content(value: object) -> Content:
     payloads (an inline payload is kept as its digest only)."""
     block = as_object(value)
     if block.get("type") in MEDIA_BLOCKS:
-        return Content(media=True, media_ids=tuple(m.digest for m in block_media(block)))
+        found = block_media(block)
+        return Content(
+            media=True,
+            media_ids=tuple(m.digest for m in found),
+            media_bytes=sum(len(m.data) for m in found),
+        )
     text = as_str(block.get("text"))
     return Content(text) if text is not None else Content(understood=False)

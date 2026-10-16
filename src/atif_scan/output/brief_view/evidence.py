@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...data.jsonval import Doc
+from ..document import ENDING_LABELS
 from .words import (
     ERROR_KINDS_SHOWN,
     INFO,
@@ -218,12 +219,18 @@ def _overlapping_recording_texts(b: Doc) -> Lines:
     ]
 
 
-def _recording_texts(b: Doc) -> Lines:
-    n = _present(b)
-    texts: Lines = [c] if (c := _compacted_text(b["missing_activity"], n)) else []
-    texts += _overlapping_recording_texts(b)
-    for check, count in b["recording"].items():
-        if check in ("integrity.history_compacted", *USAGE_CHECKS, *COST_CHECKS) or (
+UNANSWERED = "integrity.final_calls_unanswered"
+
+
+def _recording_line_shown(b: Doc, check: str, count: int, told: int) -> bool:
+    """Recording checks shown elsewhere (usage, cost, recording-gap totals) or already
+    told: calls left without results by a run that stopped mid-loop are on the
+    unexpected-endings line, for the same trials."""
+    if check == UNANSWERED and count <= told:
+        return False
+    return not (
+        check in ("integrity.history_compacted", *USAGE_CHECKS, *COST_CHECKS)
+        or (
             b.get("recording_gaps")
             and check
             in {
@@ -231,13 +238,23 @@ def _recording_texts(b: Doc) -> Lines:
                 "integrity.observation_pairing_unresolved",
                 "integrity.web_results_not_recorded",
             }
-        ):
+        )
+    )
+
+
+def _recording_texts(b: Doc) -> Lines:
+    n = _present(b)
+    texts: Lines = [c] if (c := _compacted_text(b["missing_activity"], n)) else []
+    texts += _overlapping_recording_texts(b)
+    told = (b.get("endings") or {}).get("calls_unanswered", 0)
+    for check, count in b["recording"].items():
+        if not _recording_line_shown(b, check, count, told):
             continue
         mark = WARN if check in LIMITING else INFO
         texts.append(
             f"{mark} {plural(count, 'trial')} ({pct(count, n)}): {_title_inline(b, check)}"
         )
-    if not texts:
+    if not texts and not told:
         texts.append(f"{OK} no recording defect detected")
     if (cc := b.get("context_compactions") or {}).get("trials"):
         # Not a gap: the steps stay in the file; the agent worked from a summary after it.
@@ -298,11 +315,88 @@ def _job_texts(b: Doc) -> Lines:
     return texts
 
 
+HTTP_MEANING = {"413": "request too large", "429": "rate limited"}
+
+
+def _size(n: int) -> str:
+    """Decimal units, one decimal place above a kilobyte: `304 B`, `4.2 kB`, `5.0 MB`."""
+    for unit, scale in (("MB", 1_000_000), ("kB", 1_000)):
+        if n >= scale:
+            return f"{n / scale:.1f} {unit}"
+    return f"{n:,} B"
+
+
+def _ending_kind_text(kind: str, n: int, detail: Doc) -> str:
+    text = f"{ENDING_LABELS.get(kind, kind)} {n:,}"
+    notes: list[str] = []
+    if kind == "model_call_failed":
+        notes += [
+            f"HTTP {code}{' ' + HTTP_MEANING[code] if code in HTTP_MEANING else ''} {k:,}"
+            for code, k in detail["http_status"].items()
+        ]
+    if kind in ("output_limit", "empty_reply") and (k := detail["reasoning_only"].get(kind)):
+        notes.append(f"{k:,} reasoning only")
+    if kind == "empty_reply" and (k := detail["usage_missing"].get(kind)):
+        notes.append(f"{k:,} with no usage recorded")
+    if kind == "stopped_mid_loop" and (k := detail.get("calls_unanswered")):
+        notes.append(f"{k:,} with no results recorded for them")
+    return text + (f" ({', '.join(notes)})" if notes else "")
+
+
+def _ending_texts(b: Doc) -> Lines:
+    """Trials whose agent loop stopped before the agent concluded: not a recording defect,
+    but evidence something unexpected happened (the client or provider cut the run short)."""
+    e = b.get("endings")
+    if not e:
+        return []
+    n = e["checked"]
+    texts: Lines = []
+    if e["trials"]:
+        detail = {**e["detail"], "calls_unanswered": e.get("calls_unanswered", 0)}
+        kinds = " · ".join(_ending_kind_text(k, v, detail) for k, v in e["kinds"].items())
+        texts.append(
+            f"{WARN} {plural(e['trials'], 'trial')} ({pct(e['trials'], n)}) didn't end"
+            f" normally (the agent loop stopped before the agent concluded): {kinds}"
+        )
+        harbor = (
+            f"; Harbor recorded an error for {e['harbor_errors_total']:,}"
+            f" ({counts(list(e['harbor_errors'].items())[:ERROR_KINDS_SHOWN])})"
+            if e["harbor_errors"]
+            else "; Harbor recorded no error for them"
+        )
+        texts.append(f"{INFO} {e['rewarded']:,} of them {was(e['rewarded'])} rewarded{harbor}")
+        d = e["detail"]
+        if d["failed_with_media"]:
+            texts.append(
+                f"{INFO} {plural(d['failed_with_media'], 'failed call')} carried inline media"
+                f" in the conversation: up to {plural(d['media_items_max'], 'item')} and"
+                f" {_size(d['media_bytes_max'])} decoded"
+                f" (~{_size(d['media_bytes_max'] * 4 // 3)} as base64)"
+            )
+    unknown = e["undetermined"] + e["unjudged"]
+    if not e["trials"] and e["checked"] > unknown:
+        every = "every trial" if not unknown else "every judged trial"
+        texts.append(f"{OK} {every} ended with the agent's reply")
+    if k := e["no_stop_reason"]:
+        some = "" if k == e["checked"] else f" for {plural(k, 'trial')}"
+        texts.append(
+            f"{INFO} Harness does not record model stop reasons{some}: only endings the final"
+            " step shows (calls without results, no reply at all) are judged"
+        )
+    if e["unjudged"]:
+        texts.append(
+            f"{INFO} {plural(e['unjudged'], 'trial')}: ending not judged (partial recording or"
+            " check error)"
+        )
+    return texts
+
+
 def evidence_section(b: Doc) -> Lines:
     return wrap(
         "EVIDENCE",
         [
             *_trial_texts(b),
+            *_ending_texts(b),
             *_job_texts(b),
             *_retry_texts(b["overview"].get("retries")),
             *_rerun_texts(b["overview"].get("reruns")),
