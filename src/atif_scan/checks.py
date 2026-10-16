@@ -168,6 +168,7 @@ UNREAD_REASONS = frozenset(
         "submission_not_recorded",  # no submitted patch beside the trajectory to inspect
         "submission_unreadable",  # the patch was too large or partly not a git diff
         "stop_reason_not_recorded",  # a final reply, but nothing says the turn completed
+        "sample_too_small",  # too few tokens for the comparison to mean anything
     }
 )
 # Places listed per assessment; the first few say where, all of them only add volume.
