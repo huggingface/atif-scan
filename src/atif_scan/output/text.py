@@ -13,6 +13,7 @@ from .document import (
     coverage_counts,
     coverage_gaps,
     coverage_summary,
+    ending_note,
     filter_notice,
     sections,
 )
@@ -102,16 +103,21 @@ def footer(doc: Doc) -> str:
     )
 
 
+def _heading(item: Doc) -> list[str]:
+    """The item's headline, its shape and how its agent loop ended, when unusual."""
+    lines = [f"== {item['input_id']}: {headline(item)}"]
+    lines += [f"   {line}" for line in (counts(item), ending_note(item)) if line]
+    return lines
+
+
 def to_text(doc: Doc) -> str:
     """Plain-text view (no optional dependencies)."""
     lines = [f"atif-scan {doc['scanner_version']}", ""]
     if notice := filter_notice(doc):
         lines += [notice, ""]
     for item in doc["inputs"]:
-        group, shape = sections(item), counts(item)
-        lines.append(f"== {item['input_id']}: {headline(item)}")
-        if shape:
-            lines.append(f"   {shape}")
+        group = sections(item)
+        lines += _heading(item)
         for a in group["findings"]:
             lines.append(f"   {a['severity']:<8} {a['id']:<36} {where(a['evidence'])}")
             if explanation := a.get("explanation"):

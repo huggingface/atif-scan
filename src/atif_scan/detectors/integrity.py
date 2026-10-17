@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from ..checks import CheckSpec, Context, Detection, Detector, Measure, Severity, Status, Unread
-from ..data.facts import output_ratio
+from ..data.facts import OutputRatio, output_ratio
 from ..data.model import Channel, Locator, Trace
 from ..data.web_inputs import web_input
 from ..data.web_results import (
@@ -382,6 +382,27 @@ def totals_are_last_call(trace: Trace) -> Detection:
 # visible text / total completion tokens only supports the upper-bound check.
 MIN_CHARS_PER_TOKEN = 1.0
 MAX_CHARS_PER_TOKEN = 8.0
+# Fewer answer tokens than this can't support the lower bound: each tool call's fixed
+# framing (name, JSON, special tokens) outweighs a few dozen characters of arguments.
+# Regression: 5 fast-agent DeepSeek V4.1 Flash traces that reasoned for 131k tokens and
+# answered with one or two calls (32-347 characters for 45-438 tokens) read 0.71-0.81.
+# Overhead only lowers the ratio, so the upper bound still judges small samples, and a
+# small sample at or above the lower bound clears it. The run-level spread leaves out
+# the same small traces (`output.brief.MIN_RATIO_TOKENS`).
+MIN_LOW_SIDE_TOKENS = 1000
+
+
+def _low_side_gap(ratio: OutputRatio) -> str | None:
+    """Why the lower bound can't be checked: opaque reasoning tokens in the denominator,
+    or a ratio under it from too few answer tokens for call framing not to dominate.
+    Framing only lowers the ratio, so a small sample that clears the bound clears it.
+    None when it can be checked."""
+    if not ratio.low_verifiable:
+        return "reasoning_tokens_not_split"
+    # Some text is needed for framing to explain it: tokens with none recorded at all
+    # stay a recording candidate however few there are.
+    small = ratio.tokens < MIN_LOW_SIDE_TOKENS and 0 < ratio.value < MIN_CHARS_PER_TOKEN
+    return "sample_too_small" if small else None
 
 
 def output_token_ratio(trace: Trace) -> Detection:
@@ -400,13 +421,10 @@ def output_token_ratio(trace: Trace) -> Detection:
     )
     if ratio.value > MAX_CHARS_PER_TOKEN:
         return replace(_result([], complete=True, matched=True), measure=measure)
-    if not ratio.low_verifiable:  # upper bound passed; lower bound can't be checked
-        return Detection(
-            Status.UNKNOWN,
-            complete=False,
-            unread=(Unread("reasoning_tokens_not_split"),),
-            measure=measure,
-        )
+    if (gap := _low_side_gap(ratio)) is not None:  # upper bound passed; lower can't be
+        if gap == "sample_too_small":
+            measure = (*measure, ("min_tokens", MIN_LOW_SIDE_TOKENS))
+        return Detection(Status.UNKNOWN, complete=False, unread=(Unread(gap),), measure=measure)
     # A plausible metered subset cannot clear attempts whose usage is unknown, except
     # provider attempts the harness recorded as failed and retried (fast-agent retry/v1):
     # their tokens are never in the metered count, so they can't make text look
@@ -671,7 +689,7 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec(
                 "integrity.output_token_ratio",
                 Severity.LOW,
-                version="4",
+                version="5",
                 title="Agent text doesn't fit reported output tokens",
             ),
             output_token_ratio,

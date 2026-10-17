@@ -203,6 +203,39 @@ def test_ratio_below_bound_flags_when_reasoning_is_accounted_for():
     assert ratio_status(raw) == Status.MATCH  # 300 chars for 5,000 answer tokens
 
 
+def test_ratio_low_side_unknown_on_a_tiny_answer_sample():
+    """Regression (fast-agent, DeepSeek V4.1 Flash): 131k reasoning tokens then one tool
+    call, 32 characters of arguments for 45 answer tokens (0.71). Call framing dominates
+    a sample that small: the lower bound is unknown, never a match."""
+    raw = trace(
+        [said(32, reasoning="routing…")],
+        {"total_completion_tokens": 131_686, "extra": {"total_reasoning_tokens": 131_086}},
+    )
+    assert (r := output_ratio(parse_trace(raw))) is not None and r.value < 1  # 600 tokens
+    result = results(raw)[RATIO].result
+    assert result.status == Status.UNKNOWN
+    assert [u.reason for u in result.unread] == ["sample_too_small"]
+    assert dict(result.measure)["min_tokens"] == 1000
+    # The upper bound still judges a small sample: text the tokens couldn't encode.
+    raw = trace(
+        [said(900, reasoning="r")],
+        {"total_completion_tokens": 1_100, "extra": {"total_reasoning_tokens": 1_000}},
+    )
+    assert ratio_status(raw) == Status.MATCH  # 9 chars/token
+    # A small sample that clears the lower bound clears it: framing only lowers the ratio.
+    raw = trace(
+        [said(300, reasoning="r")],
+        {"total_completion_tokens": 1_100, "extra": {"total_reasoning_tokens": 1_000}},
+    )
+    assert ratio_status(raw) == Status.NO_MATCH  # 3 chars/token over 100 tokens
+    # At the floor the lower bound is checked again.
+    raw = trace(
+        [said(500, reasoning="r")],
+        {"total_completion_tokens": 2_000, "extra": {"total_reasoning_tokens": 1_000}},
+    )
+    assert ratio_status(raw) == Status.MATCH  # 0.5 chars/token over 1,000 tokens
+
+
 def test_ratio_low_side_unknown_when_history_compacted():
     steps = [*GROK_SHAPE[:4], said(300)]
     raw = trace(steps, {"total_completion_tokens": 6_000, "extra": {"total_reasoning_tokens": 0}})

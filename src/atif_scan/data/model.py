@@ -86,6 +86,9 @@ class Content:
     # checks of what the agent wrote or what the trace holds read those instead (see
     # `jslit.program_strings`).
     computed: bool = False
+    # Decoded size of the identified inline payloads (`media_ids`), in bytes: how much
+    # media a request carried, never the media itself.
+    media_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -308,6 +311,14 @@ class Trace:
     # The last agent step's recorded stop reason as a lowercase code (fast-agent
     # `extra.stop_reason: "LlmStopReason.SAFETY"` -> "safety"); None when absent.
     final_stop_reason: str | None = None
+    # HTTP statuses of the failed provider attempts recorded on that same last agent step
+    # (fast-agent retry/v1), sorted and unique: why its model call failed, when it did.
+    final_retry_statuses: tuple[int, ...] = ()
+    # The HTTP status fast-agent recorded for that step's failed call itself
+    # (`extra.provider_error`), when it was the last agent step and failed.
+    final_error_status: int | None = None
+    # Replies that ended the turn with nothing in it, asked again by the harness.
+    empty_completion_retries: int = 0
     # final_metrics.extra.llm_usage_calls_complete as the harness recorded it (None: absent).
     usage_calls_complete: bool | None = None
     # Root-only totals after reconciling declared child usage with embedded records.
