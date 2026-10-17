@@ -36,6 +36,7 @@ from .provenance import DownstreamSourceReference
 from .recall import PROSE_AND_INPUT, UnprimedDetector, regex_candidates
 from .search import SearchCandidates
 from .side_channel import side_channel_detectors
+from .sweeps import sweep_detectors
 from .tamper import tamper_detectors
 from .text import (
     ObservationDetector,
@@ -333,6 +334,7 @@ def builtin_detectors() -> list[Detector]:
         *lure_detectors(),
         *tamper_detectors(),
         *harness_detectors(),
+        *sweep_detectors(),
         *integrity_detectors(),
         *context_checks(),
     ]
