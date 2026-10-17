@@ -31,6 +31,8 @@ from .tools import (
 from .usage import (
     COMPACTED,
     agent_info,
+    empty_completion_retries,
+    final_error_status,
     final_retry_statuses,
     last_call,
     model_label,
@@ -119,6 +121,8 @@ def parse_trace(value: object) -> Trace:
         termination_error=termination_error(value),
         final_stop_reason=final_stop_reason(raw_steps),
         final_retry_statuses=final_retry_statuses(raw_steps),
+        final_error_status=final_error_status(raw_steps),
+        empty_completion_retries=empty_completion_retries(raw_steps),
         llm_calls=_llm_calls(raw_steps),
         agent=agent_info(value.get("agent")),
         step_usage=per_step,

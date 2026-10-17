@@ -127,7 +127,11 @@ def ending(trace: Trace) -> EndingFacts | None:
     kind = decided if decided is not None else _from_structure(step, reply)
     failed = kind is Ending.MODEL_CALL_FAILED
     items, size = _media_before(trace, step.index) if failed else (0, 0)
-    statuses = trace.final_retry_statuses
+    # The failed call's own status, else its retried attempts' (before HTTP 413s
+    # stopped being retried, fast-agent recorded the status only there).
+    status = trace.final_error_status or (
+        trace.final_retry_statuses[-1] if trace.final_retry_statuses else None
+    )
     return EndingFacts(
         kind,
         step.index,
@@ -137,7 +141,7 @@ def ending(trace: Trace) -> EndingFacts | None:
         calls=len(step.calls),
         reasoning_only=not reply and not step.calls and bool(step.reasoning.text.strip()),
         usage_recorded=step.completion_tokens is not None,
-        http_status=statuses[-1] if failed and statuses else None,
+        http_status=status if failed else None,
         media_items=items,
         media_bytes=size,
     )

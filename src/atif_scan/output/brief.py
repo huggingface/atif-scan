@@ -671,6 +671,10 @@ def endings(items: Sequence[Doc]) -> Doc | None:
         "detail": _unexpected_detail([m for _, m in hits]),
         # Stopped with calls outstanding whose results the trace also lacks
         # (`integrity.final_calls_unanswered`): one event, told once.
+        # Empty replies the harness asked again (fast-agent): turns that would have ended
+        # the run, whether or not the second attempt recovered.
+        "empty_retries": sum(count(i.get("empty_completion_retries")) or 0 for i in items),
+        "empty_retry_trials": sum(bool(count(i.get("empty_completion_retries"))) for i in items),
         "calls_unanswered": sum(
             m.get("kind") == "stopped_mid_loop" and _matched(i, UNANSWERED_CHECK) for i, m in hits
         ),

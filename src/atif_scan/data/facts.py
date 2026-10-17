@@ -149,6 +149,7 @@ TRACE_FACTS = (
     "stream_retry_attempts",
     "retry_before_output",
     "retry_statuses",
+    "empty_completion_retries",
     "termination_error",
     "final_stop_reason",
     "step_kinds_partial",
@@ -272,6 +273,8 @@ def trace_facts(trace: Trace | None) -> Doc:
         "stream_retry_attempts": trace.stream_retry_attempts,
         "retry_before_output": trace.retry_before_output,
         "retry_statuses": list(trace.retry_statuses) or None,
+        # Empty end_turn replies the harness asked again (fast-agent `empty_completion`).
+        "empty_completion_retries": trace.empty_completion_retries,
         # How the trajectory says it ended, when in error (a code; never the message).
         "termination_error": trace.termination_error,
         # Why the last model turn stopped (a code, e.g. "safety"): how a run ended.

@@ -343,36 +343,42 @@ def _ending_kind_text(kind: str, n: int, detail: Doc) -> str:
     return text + (f" ({', '.join(notes)})" if notes else "")
 
 
-def _ending_texts(b: Doc) -> Lines:
-    """Trials whose agent loop stopped before the agent concluded: not a recording defect,
-    but evidence something unexpected happened (the client or provider cut the run short)."""
-    e = b.get("endings")
-    if not e:
-        return []
+def _unexpected_texts(e: Doc) -> Lines:
+    """The trials that didn't end normally, by kind, and what else is known of them."""
     n = e["checked"]
-    texts: Lines = []
-    if e["trials"]:
-        detail = {**e["detail"], "calls_unanswered": e.get("calls_unanswered", 0)}
-        kinds = " · ".join(_ending_kind_text(k, v, detail) for k, v in e["kinds"].items())
+    detail = {**e["detail"], "calls_unanswered": e.get("calls_unanswered", 0)}
+    kinds = " · ".join(_ending_kind_text(k, v, detail) for k, v in e["kinds"].items())
+    harbor = (
+        f"; Harbor recorded an error for {e['harbor_errors_total']:,}"
+        f" ({counts(list(e['harbor_errors'].items())[:ERROR_KINDS_SHOWN])})"
+        if e["harbor_errors"]
+        else "; Harbor recorded no error for them"
+    )
+    texts: Lines = [
+        f"{WARN} {plural(e['trials'], 'trial')} ({pct(e['trials'], n)}) didn't end"
+        f" normally (the agent loop stopped before the agent concluded): {kinds}",
+        f"{INFO} {e['rewarded']:,} of them {was(e['rewarded'])} rewarded{harbor}",
+    ]
+    d = e["detail"]
+    if d["failed_with_media"]:
         texts.append(
-            f"{WARN} {plural(e['trials'], 'trial')} ({pct(e['trials'], n)}) didn't end"
-            f" normally (the agent loop stopped before the agent concluded): {kinds}"
+            f"{INFO} {plural(d['failed_with_media'], 'failed call')} carried inline media"
+            f" in the conversation: up to {plural(d['media_items_max'], 'item')} and"
+            f" {_size(d['media_bytes_max'])} decoded"
+            f" (~{_size(d['media_bytes_max'] * 4 // 3)} as base64)"
         )
-        harbor = (
-            f"; Harbor recorded an error for {e['harbor_errors_total']:,}"
-            f" ({counts(list(e['harbor_errors'].items())[:ERROR_KINDS_SHOWN])})"
-            if e["harbor_errors"]
-            else "; Harbor recorded no error for them"
+    return texts
+
+
+def _ending_context_texts(e: Doc) -> Lines:
+    """What qualifies the count: empty replies asked again, endings not known."""
+    texts: Lines = []
+    if k := e.get("empty_retries"):
+        texts.append(
+            f"{INFO} the harness asked again after {plural(k, 'empty reply', 'empty replies')}"
+            f" (turn ended with no content and no tool call) in"
+            f" {plural(e['empty_retry_trials'], 'trial')}; endings above are after that"
         )
-        texts.append(f"{INFO} {e['rewarded']:,} of them {was(e['rewarded'])} rewarded{harbor}")
-        d = e["detail"]
-        if d["failed_with_media"]:
-            texts.append(
-                f"{INFO} {plural(d['failed_with_media'], 'failed call')} carried inline media"
-                f" in the conversation: up to {plural(d['media_items_max'], 'item')} and"
-                f" {_size(d['media_bytes_max'])} decoded"
-                f" (~{_size(d['media_bytes_max'] * 4 // 3)} as base64)"
-            )
     unknown = e["undetermined"] + e["unjudged"]
     if not e["trials"] and e["checked"] > unknown:
         every = "every trial" if not unknown else "every judged trial"
@@ -389,6 +395,15 @@ def _ending_texts(b: Doc) -> Lines:
             " check error)"
         )
     return texts
+
+
+def _ending_texts(b: Doc) -> Lines:
+    """Trials whose agent loop stopped before the agent concluded: not a recording defect,
+    but evidence something unexpected happened (the client or provider cut the run short)."""
+    e = b.get("endings")
+    if not e:
+        return []
+    return [*(_unexpected_texts(e) if e["trials"] else []), *_ending_context_texts(e)]
 
 
 def evidence_section(b: Doc) -> Lines:

@@ -14,6 +14,7 @@ import pytest
 from atif_scan import Engine, Status, builtin_detectors, parse_trace, report
 from atif_scan.data.content import content
 from atif_scan.data.ending import ending
+from atif_scan.data.facts import trace_facts
 from atif_scan.output.brief import brief, brief_text
 from atif_scan.output.overview import finding_index
 
@@ -207,6 +208,7 @@ def item(raw, label, reward=0.0, error_type=None):
     doc = report(Engine(builtin_detectors()).evaluate(trace), trace.step_numbers)
     return {
         **doc,
+        **trace_facts(trace),
         "input_id": label,
         "input_status": "available",
         "task": "demo",
@@ -309,3 +311,73 @@ def test_a_terminal_batch_with_one_shared_result_is_not_left_unanswered():
     found = check(trajectory(step))
     assert found.result.status == Status.UNKNOWN
     assert dict(found.result.measure)["kind"] == "undetermined"
+
+
+def provider_error(status=413, error_type="APIStatusError", schema=None):
+    return {
+        "schema": schema or "fast-agent.provider-error/v1",
+        "error_type": error_type,
+        "status": status,
+    }
+
+
+def failed(error=None, retry=None):
+    step = agent(
+        "I hit an internal error while calling the model", stop="ERROR", usage=False, retry=retry
+    )
+    if error is not None:
+        step["extra"]["provider_error"] = error
+    return step
+
+
+def test_a_413_that_was_not_retried_still_reports_its_status():
+    """fast-agent stopped retrying 413s (resending the body can't help), so no retry
+    record holds the status: it is in `extra.provider_error` (ATIF has no error
+    field), read as a code only."""
+    m = measure(trajectory(failed(provider_error())))
+    assert m["kind"] == "model_call_failed" and m["http_status"] == 413
+
+
+def test_the_failed_calls_own_status_wins_over_earlier_retried_attempts():
+    retried_429 = {
+        "schema": "fast-agent.retry/v1",
+        "provider_attempts": 2,
+        "retries": [{"attempt": 1, "error_message": "Error code: 429 - slow down"}],
+    }
+    assert measure(trajectory(failed(provider_error(500), retried_429)))["http_status"] == 500
+    # Older traces: the status only in the retried attempts.
+    assert measure(trajectory(failed(retry=retry_413())))["http_status"] == 413
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        provider_error(schema="someone-else/v1"),
+        provider_error(status=999),
+        provider_error(status="413"),
+        provider_error(status=None, error_type="EmptyCompletionError"),
+    ],
+)
+def test_an_unrecognised_or_absent_status_is_left_unknown(error):
+    m = measure(trajectory(failed(error)))
+    assert m["kind"] == "model_call_failed" and m["http_status"] is None
+
+
+def test_empty_replies_asked_again_are_counted_in_the_brief():
+    """The harness asks once more after an empty end_turn (`reason: empty_completion`):
+    recovered ones no longer end the run, so the brief says how many there were."""
+    retry = {
+        "schema": "fast-agent.retry/v1",
+        "provider_attempts": 2,
+        "retries": [
+            {"attempt": 1, "reason": "empty_completion", "error_type": "EmptyCompletionError"}
+        ],
+    }
+    recovered = item(trajectory(agent("done", stop="END_TURN", retry=retry)), "recovered")
+    assert recovered["empty_completion_retries"] == 1
+    b = summary(recovered, item(trajectory(agent("done", stop="END_TURN")), "ok"))
+    assert b["endings"]["empty_retries"] == 1 and b["endings"]["empty_retry_trials"] == 1
+    text = evidence(b)
+    assert "the harness asked again after 1 empty reply" in text
+    assert "in 1 trial; endings above are after that" in text
+    assert "✓ every trial ended with the agent's reply" in text

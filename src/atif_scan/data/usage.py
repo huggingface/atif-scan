@@ -187,6 +187,41 @@ def retry_outcomes(raw_steps: list[object]) -> tuple[int, tuple[int, ...]]:
     return before, tuple(sorted(statuses))
 
 
+PROVIDER_ERROR_SCHEMA = "fast-agent.provider-error/v1"
+HTTP_STATUS_RANGE = range(100, 600)
+
+
+def final_error_status(raw_steps: list[object]) -> int | None:
+    """The HTTP status fast-agent recorded for the last agent step's failed call
+    (`extra.provider_error`, `fast-agent.provider-error/v1`): ATIF has no error field.
+    A request it didn't retry (HTTP 413) leaves no retry record to read it from."""
+    for raw in reversed(raw_steps):
+        if not is_object(raw) or raw.get("source") != "agent":
+            continue
+        error = as_object(as_object(raw.get("extra")).get("provider_error"))
+        status = count(error.get("status"))
+        if as_str(error.get("schema")) != PROVIDER_ERROR_SCHEMA or status not in HTTP_STATUS_RANGE:
+            return None
+        return status
+    return None
+
+
+EMPTY_COMPLETION = "empty_completion"
+
+
+def empty_completion_retries(raw_steps: list[object]) -> int:
+    """Model calls fast-agent asked again because the reply ended the turn with no
+    content and no tool call (`reason: empty_completion` retries)."""
+    return sum(
+        as_str(as_object(attempt).get("reason")) == EMPTY_COMPLETION
+        for raw in raw_steps
+        if is_object(raw) and raw.get("source") == "agent"
+        for retry in [as_object(as_object(raw.get("extra")).get("retry"))]
+        if as_str(retry.get("schema")) == FAST_AGENT_RETRY_SCHEMA
+        for attempt in as_list(retry.get("retries"))
+    )
+
+
 def final_retry_statuses(raw_steps: list[object]) -> tuple[int, ...]:
     """The HTTP statuses of the last agent step's failed provider attempts (fast-agent
     retry/v1), sorted and unique: the attempts behind a final call that failed."""
