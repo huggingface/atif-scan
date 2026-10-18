@@ -36,6 +36,7 @@ from ..data.jsonval import Doc, count, identifier
 from ..data.loader import MAX_BYTES, TraceError, load_bytes, load_trace
 from .ale import Attempt, attempts
 from .harbor.runs import (
+    EXCEPTION_MARKER,
     REWARD_BYTES,
     SavedRun,
     errored,
@@ -46,6 +47,8 @@ from .harbor.runs import (
     saved_hub_listings,
     trial_details,
     trial_folder,
+    untraced_details,
+    untraced_trials,
 )
 
 if TYPE_CHECKING:
@@ -136,6 +139,9 @@ class Source:
     # Whether this trial counts (`role`: canonical, replaced, not_selected) and its
     # replacement lineage (codes and trial names), from --run/--release; {} otherwise.
     selection: Mapping[str, object] = field(default_factory=dict, repr=False)
+    # The local trial folder of a trial without a trajectory (never reported; used only
+    # to match it to its job for --run/--release selection).
+    trial_dir: Path | None = field(default=None, repr=False)
 
 
 def local_fingerprint(path: Path) -> Callable[[], str | None]:
@@ -614,6 +620,33 @@ def _untraced(label: str, facts: Doc) -> Source:
     return Source(label, load, meta=facts)
 
 
+# Fixed input_error codes of a Harbor job's trial folder without a trajectory.
+NO_TRAJECTORY_ERRORED = "no_trajectory_errored"  # its result.json records an exception
+NO_TRAJECTORY = "no_trajectory"
+
+
+def _job_trial_source(
+    listing: Listing, folder: str, saved: dict[str, SavedRun], membership: Mapping[str, bool]
+) -> Source:
+    """A Harbor job's trial folder with a result.json but no trajectory (see
+    harbor.runs.untraced_trials): unavailable, with its result.json facts read afresh
+    each scan (never cached). Labelled as Harbor lays out traced trials: `<trial>/agent`."""
+    entry = Entry(f"{folder}/agent/{DEFAULT_PATTERN}", None)
+    meta = listed_facts(
+        hub_trial(saved, entry),
+        f"{folder}/{EXCEPTION_MARKER}" in listing.paths,
+        membership.get(folder),
+    )
+    details = untraced_details(listing, folder)
+
+    def load() -> Trace:
+        errored = details().get("error_type") or meta.get("error_type")
+        raise TraceError(NO_TRAJECTORY_ERRORED if errored else NO_TRAJECTORY)
+
+    local = listing.local_path(Entry(folder, None)) if listing.local_path else None
+    return Source(f"{folder}/agent", load, meta=meta, details=details, trial_dir=local)
+
+
 def _ale_sources(listing: Listing, found: list[Attempt], before: int) -> list[Source]:
     entries = {e.path: e for e in listing.entries}
     sources = []
@@ -654,10 +687,12 @@ def _listing_sources(
     saved: dict[str, SavedRun],
     membership: Mapping[str, bool],
     before: int,
+    jobs: Sequence[str] = (),
 ) -> list[Source]:
     """One input's selected trajectories, then the trials its saved Hub listing names
-    without one (unavailable, as a harbor:// scan reports them). `before` counts the
-    sources already resolved, for positional labels."""
+    without one (unavailable, as a harbor:// scan reports them), then the trial folders
+    of its Harbor job folders (`jobs`) that have none. `before` counts the sources
+    already resolved, for positional labels."""
     entries = selected(listing, pattern)
     known = attempts(listing)
     ale = known if pattern == DEFAULT_PATTERN else []
@@ -680,6 +715,12 @@ def _listing_sources(
     if pattern == DEFAULT_PATTERN:
         sources += [
             _untraced(label, facts) for label, facts in listed_without_trajectory(saved, entries)
+        ]
+        labels = {s.label for s in sources}
+        sources += [
+            _job_trial_source(listing, folder, saved, membership)
+            for folder in untraced_trials(listing, jobs)
+            if f"{folder}/agent" not in labels
         ]
     return sources
 
@@ -707,11 +748,11 @@ def resolve(
         if sync_failures is not None:
             sync_failures.append(listing.sync_failed)
         saved = saved_hub_listings(listing)
-        found_runs, membership = job_folders(listing)
+        found_runs, membership, jobs = job_folders(listing)
         if runs is not None:
             runs.extend(found_runs)
             runs.extend(run for run, _ in saved.values() if run)
-        sources += _listing_sources(listing, value, pattern, saved, membership, len(sources))
+        sources += _listing_sources(listing, value, pattern, saved, membership, len(sources), jobs)
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

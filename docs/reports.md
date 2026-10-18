@@ -153,6 +153,15 @@ title (from the check's `CheckSpec.title`) above their check ID.
   task: accuracy counts every scored trial, while task counts and the per-task SE use
   the trials with a known task (the brief says how many), and trials without one are
   never grouped as a stand-in task.
+- **Trials without a trajectory are trials.** A Harbor job's trial folder
+  (`<task>__<id>`) with a `result.json` but no trajectory (typically it errored before
+  the agent ran: a provider connection error) is an input like any other, reported
+  unavailable with `input_error` `no_trajectory_errored` (its `result.json` records an
+  exception) or `no_trajectory`. Its task, error type, reward, tokens and timings come
+  from `result.json`, read afresh each scan and never cached; exception text and
+  `trial.log` are never read. It counts as present (never missing) and errored, and is
+  scored: errored without a reward = 0, as Harbor's own mean counts it. Such inputs
+  don't make the scan exit 2.
 - **Reruns** are scored but called out. A job's `result.json` names the trials it
   accounts for. A trial folder it doesn't name usually comes from another execution of
   the same job: a rerun or resume writing into the folder, possibly while the first one

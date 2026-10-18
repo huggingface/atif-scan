@@ -37,6 +37,7 @@ from ..sources.sync import sync_remote, sync_target
 
 if TYPE_CHECKING:
     import argparse
+    from collections.abc import Sequence
 
     from ..checks import Detector
     from ..data.jsonval import Doc
@@ -149,10 +150,15 @@ def resolve_local(values: list[str], args: argparse.Namespace) -> list[Source]:
 
 
 def _trial_key(source: Source, jobs: set[Path]) -> tuple[str, str] | None:
-    """(job folder, trial folder) of a local trajectory under one of `jobs`."""
-    if source.local is None:
+    """(job folder, trial folder) of a local trajectory, or of a trial folder without
+    one, under one of `jobs`."""
+    if source.local is not None:
+        folders: Sequence[Path] = source.local.parents
+    elif source.trial_dir is not None:
+        folders = [source.trial_dir]
+    else:
         return None
-    for folder in source.local.parents:
+    for folder in folders:
         if folder.parent in jobs:
             return folder.parent.name, folder.name
     return None

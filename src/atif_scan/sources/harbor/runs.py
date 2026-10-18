@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path, PurePath, PurePosixPath
 from typing import TYPE_CHECKING, TypeVar
 
@@ -268,8 +269,9 @@ def _job_trials(present: Iterable[str], prefix: str) -> tuple[set[str], set[str]
     return trials, traced
 
 
-def job_folders(listing: Listing) -> tuple[list[Doc], dict[str, bool]]:
-    """(run facts per Harbor job folder, {trial folder: listed in its job's result.json}).
+def job_folders(listing: Listing) -> tuple[list[Doc], dict[str, bool], list[str]]:
+    """(run facts per Harbor job folder, {trial folder: listed in its job's result.json},
+    the job folders' path prefixes: "" for the listing's root, else "<folder>/").
 
     A job folder has config.json and at least one subfolder with a result.json (its
     trials); trial folders' own agent/ and verifier/ subfolders never do, so trial
@@ -281,10 +283,11 @@ def job_folders(listing: Listing) -> tuple[list[Doc], dict[str, bool]]:
     job's own listing is missing or incomplete, membership is unknown (not recorded).
     """
     if not listing.directory or listing.reader is None:
-        return [], {}
+        return [], {}, []
     present = listing.paths
     runs: list[Doc] = []
     membership: dict[str, bool] = {}
+    folders: list[str] = []
     for folder in _job_candidates(present):
         prefix = "" if folder == "." else folder + "/"
         config = listing.read(prefix + "config.json", RESULT_BYTES)
@@ -305,7 +308,42 @@ def job_folders(listing: Listing) -> tuple[list[Doc], dict[str, bool]]:
             run["unlisted_with_trajectory"] = len(unlisted & traced)
             membership.update({prefix + t: t in listed for t in trials})
         runs.append(run)
-    return runs, membership
+        folders.append(prefix)
+    return runs, membership, folders
+
+
+# Harbor names trial folders `<task>__<short id>`.
+TRIAL_NAME = re.compile(r"[A-Za-z0-9][\w.-]*__[A-Za-z0-9]+")
+
+
+def untraced_trials(listing: Listing, jobs: Iterable[str]) -> list[str]:
+    """Trial folders (`<job prefix><trial>`) of recognised Harbor job folders (`jobs`, as
+    job_folders returns them) that hold a result.json but no trajectory: usually a trial
+    that errored before the agent ran (a provider connection error). They are trials of
+    the run all the same: counted as present and errored, and scored (errored without a
+    reward = 0), never treated as missing."""
+    present = listing.paths
+    out: list[str] = []
+    for prefix in jobs:
+        trials, traced = _job_trials(present, prefix)
+        out += [
+            prefix + t
+            for t in sorted(trials - traced)
+            if TRIAL_NAME.fullmatch(t) and f"{prefix}{t}/result.json" in present
+        ]
+    return out
+
+
+def untraced_details(listing: Listing, folder: str) -> Callable[[], Doc]:
+    """Lazy reader of an untraced trial's result.json facts (as for a traced trial: same
+    allowlist, plus harbor-hf's attempt cost). Never cached: each scan reads it afresh, so
+    a trial that finishes between scans is reported as it is now."""
+    path = f"{folder}/result.json"
+
+    def details() -> Doc:
+        return with_attempt_cost(listing, path, trial_result(listing.read(path, RESULT_BYTES)))
+
+    return details
 
 
 def trial_folder(entry: Entry) -> str:

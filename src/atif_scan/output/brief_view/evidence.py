@@ -60,11 +60,11 @@ def _trial_texts(b: Doc) -> Lines:
     t, k, n = b["overview"]["trials"], b["overview"]["tasks"], _present(b)
     texts: Lines = []
     if t["planned"] is not None:
-        folder = any(r.get("source") == "harbor_job_folder" for r in b["runs"])
-        what = "have a trajectory" if folder else "are present"
+        # Present: every trial folder or listed trial, with or without a trajectory
+        # (those without are counted on their own line below), never "missing".
         over = t["present"] > t["planned"]  # more than planned: retries, reruns, merges
         mark = WARN if t["missing"] or over else OK
-        texts.append(f"{mark} {n:,} of {plural(t['planned'], 'planned trial')} {what}")
+        texts.append(f"{mark} {n:,} of {plural(t['planned'], 'planned trial')} are present")
     if k["expected_tasks"]:
         mark = WARN if k["missing_tasks"] else OK
         texts.append(f"{mark} {k['count']:,} of {plural(k['expected_tasks'], 'expected task')}")

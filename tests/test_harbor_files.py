@@ -148,7 +148,7 @@ def test_local_job_folder_uses_recorded_facts(tmp_path, capsys):
     out = capsys.readouterr().out
     flat = " ".join(out.split())  # unwrapped: phrases may span lines
     assert "RUN        job 1d6abb23 · my-run" in out and "3 trials of 2 tasks, 1–2 per task" in out
-    assert "⚠ 3 of 4 planned trials have a trajectory" in out
+    assert "⚠ 3 of 4 planned trials are present" in out
     assert (
         "⚠ overrides that change the agent's time or resources (leaderboards require defaults):"
         " agents[].override_timeout_sec"
@@ -285,22 +285,29 @@ def test_trials_missing_from_the_jobs_result_are_scored_and_flagged_as_a_rerun(t
     items = {i["input_id"]: i for i in json.loads(capsys.readouterr().out)["inputs"]}
     assert items["alpha__a2/agent"]["in_job_result"] is False
     assert items["alpha__a1/agent"]["in_job_result"] is True
+    # The trial that died before a trajectory is a trial all the same (errored, scored 0).
+    dead = items["gamma__g2/agent"]
+    assert (dead["input_error"], dead["error_type"]) == (
+        "no_trajectory_errored",
+        "RemoteProtocolError",
+    )
+    assert dead["in_job_result"] is False
     main([str(job), "--brief", "--format", "json"])
     b = json.loads(capsys.readouterr().out)
     rr = b["overview"]["reruns"]
     assert (rr["unlisted_trials"], rr["unlisted_with_trajectory"], rr["tasks_rerun"]) == (2, 1, 1)
     assert rr["listed"] == {"trials": 2, "scored": 2, "rewarded": 1, "cost_usd": 3.0}
-    assert rr["unlisted"] == {"trials": 1, "scored": 1, "rewarded": 0, "cost_usd": 4.0}
+    assert rr["unlisted"] == {"trials": 2, "scored": 2, "rewarded": 0, "cost_usd": 4.0}
     main([str(job), "--format", "text"])
     out = capsys.readouterr().out
     flat = " ".join(out.split())  # unwrapped: phrases may span lines
-    assert "SCORE      33.3% ± 25.0 · 1 of 3 scored trials rewarded" in out  # all seen are scored
-    assert "⚠ 3 of 2 planned trials have a trajectory" in out
+    assert "SCORE      25.0% ± 16.7 · 1 of 4 scored trials rewarded" in out  # all are scored
+    assert "⚠ 4 of 2 planned trials are present" in out
     assert "⚠ 2 trial folders not listed in the job's result.json (1 with a trajectory)" in flat
     assert "; 1 task ran again: likely a rerun or resume" in flat
     assert (
         "· all are scored above · listed trials 1 of 2 rewarded (50.0%), $3.00"
-        " · other trials 0 of 1 rewarded (0.0%), $4.00"
+        " · other trials 0 of 2 rewarded (0.0%), $4.00"
     ) in flat
 
 

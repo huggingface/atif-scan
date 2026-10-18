@@ -26,6 +26,8 @@ from ..output.document import assemble, document, report
 from ..review.answers import Answers
 from ..sources.harbor.runs import submission_near
 from ..sources.inputs import (
+    NO_TRAJECTORY,
+    NO_TRAJECTORY_ERRORED,
     Source,
     SourceError,
 )
@@ -43,15 +45,17 @@ if TYPE_CHECKING:
 
 # TraceError messages are fixed codes; anything else is reported as unreadable.
 ERROR_CODE = re.compile(r"[a-z_]{1,64}")
+# A trial without a trajectory is a recorded run fact (e.g. it errored before the agent
+# ran), not bad input: a Hub trial with none to download, or a Harbor job's trial folder.
+RUN_FACT_ERRORS = frozenset({"no_trajectory_downloaded", NO_TRAJECTORY, NO_TRAJECTORY_ERRORED})
 
 
 def outcome(item: Doc, threshold: Severity | None) -> tuple[bool, bool]:
-    """(invalid, failed) for one report item. A Hub trial without a trajectory (e.g. it
-    errored first) is a reported run fact, not bad input; unreadable files exit 2."""
+    """(invalid, failed) for one report item. A trial recorded without a trajectory is a
+    reported run fact, not bad input (RUN_FACT_ERRORS); unreadable files exit 2."""
     assessments = item["assessments"]
     invalid = any(a["status"] == Status.ERROR for a in assessments) or (
-        item["input_status"] != "available"
-        and item.get("input_error") != "no_trajectory_downloaded"
+        item["input_status"] != "available" and item.get("input_error") not in RUN_FACT_ERRORS
     )
     failed = threshold is not None and any(
         a.get("score") is not None and a["score"] >= int(threshold) for a in assessments

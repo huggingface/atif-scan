@@ -258,7 +258,8 @@ atif-scan --inspect harbor://jobs/<id>      # listing only: nothing downloaded
   `--no-sync` uses temporary downloads, incompatible with durable judge bundles.
 - Harbor is run without a shell, with a validated job ID. Its stderr is never echoed.
 - A trial without a trajectory (e.g. it errored first) is reported, not treated as bad
-  input.
+  input. The same holds for a local or synced Harbor job folder: see *Trials without a
+  trajectory are trials* in [reports.md](reports.md).
 - **Retries.** Harbor re-runs an errored trial as `<trial>__retry_<id>` and keeps every
   attempt in the job (the suffix-free name may be any attempt, not the first). atif-scan
   groups each chain by name, orders it by start time, and scores only its last attempt:
