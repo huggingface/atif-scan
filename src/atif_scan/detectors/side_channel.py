@@ -192,7 +192,8 @@ def environment_dump(surface: Surface) -> Hit:
 CREDENTIALS_EXPOSED = CheckSpec(
     "observation.credentials_exposed",
     Severity.LOW,
-    "7",
+    # v8: values of token-named headers (`X-Sandbox-Token:`) and bearer authorization.
+    "8",
     title="Possible credential-like value",
 )
 

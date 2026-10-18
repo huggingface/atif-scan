@@ -59,12 +59,16 @@ _ENV = re.compile(
 _KEYED = re.compile(
     r"(?<![\w-])(?P<nq>['\"]?)(?P<name>[A-Za-z_][\w-]*)(?P=nq)\]?\s*[:=]\s*(?P<q>['\"])(?P<value>[^'\"\s]+)(?P=q)"
 )
-# --api-key VALUE / --token=VALUE / x-api-key: VALUE (headers, CLI flags).
+# --api-key VALUE / --token=VALUE / x-api-key: VALUE / X-Sandbox-Token: VALUE /
+# Authorization: Bearer VALUE (headers, CLI flags). Header values are collected like any
+# other secret, so the same token printed bare elsewhere in the trace is masked too
+# (hf-sandbox's `X-Sandbox-Token`, a Kubernetes service-account bearer token).
 _FLAG = re.compile(
     # Not inside a hyphenated word: "per-token probabilities", "multi-token approach".
-    # The lookahead (first characters of both alternatives) only speeds up scanning.
-    r"(?i)(?=[-xa])(?:(?<![\w-])--?(?P<flag>api[_-]?key|token|password|secret)[= ]\s*|"
-    r"\b(?P<header>x-api-key|api-key)\s*:\s*)(?P<q>['\"]?)(?P<value>[^\s'\"]+)"
+    # The lookahead (first characters of all alternatives) only speeds up scanning.
+    r"(?i)(?=[-xap])(?:(?<![\w-])--?(?P<flag>api[_-]?key|token|password|secret)[= ]\s*|"
+    r"\b(?P<header>x-api-key|api-key|x-[a-z0-9-]*token)\s*:\s*|"
+    r"\b(?:proxy-)?authorization\s*:\s*bearer\s+)(?P<q>['\"]?)(?P<value>[^\s'\"]+)"
 )
 _SECRET_PART = re.compile(
     r"(?:^|_)(?:api_?key|apikey|secret|token|password|passwd|pwd|credentials?|"
