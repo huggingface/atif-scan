@@ -56,6 +56,7 @@ from .vocabulary import (
     TEST_PATH,
     fold_benchmark_name,
 )
+from .watchers import watcher_detectors
 
 
 def builtin_detectors() -> list[Detector]:
@@ -333,6 +334,7 @@ def builtin_detectors() -> list[Detector]:
         *install_detectors(),
         *lure_detectors(),
         *tamper_detectors(),
+        *watcher_detectors(),
         *harness_detectors(),
         *sweep_detectors(),
         *integrity_detectors(),

@@ -1,7 +1,7 @@
 """Static reader for shell command text (stdlib only; nothing is ever executed).
 
 `parse(text)` splits a shell tool's command into simple commands: their words (quotes
-removed), redirections, which pipeline they belong to, and the commands nested in them
+removed), redirections, pipeline membership, background/repeated scopes, and nested commands
 (`$(…)`, `<(…)`, backticks, subshells, `sh -c '…'`, a heredoc fed to a shell). Heredoc
 bodies given to any other program are file contents, returned as `bodies` spans: they are
 not commands (a Python heredoc's `if a > b:` isn't a redirect).
@@ -67,6 +67,10 @@ class Command:
     substituted: list[Command] = field(default_factory=list)
     pipeline: int = 0
     span: Span = (0, 0)
+    # Syntactic scopes, not proof of runtime duration/iterations. False means no
+    # recognized scope, not proof that execution is foreground or bounded.
+    background: bool = False
+    repeated: bool = False
 
     def argv(self) -> list[tuple[str, Span]]:
         """(word, span) from the command name on: assignments, keywords and wrappers
@@ -124,7 +128,30 @@ def parse(text: str) -> Script:
         _Reader(text, script, count(1)).commands(0, None)
     except (IndexError, ValueError, RecursionError):
         script.complete = False
+    _propagate_scope(script.commands)
     return script
+
+
+def _mark_scope(
+    commands: list[Command], *, background: bool = False, repeated: bool = False
+) -> None:
+    for command in commands:
+        command.background |= background
+        command.repeated |= repeated
+
+
+def _propagate_scope(commands: list[Command]) -> None:
+    """Children can precede their parent, or be read later (shell heredocs)."""
+    pending = list(commands)
+    while pending:
+        parent = pending.pop()
+        for child in (*parent.nested, *parent.substituted):
+            background = parent.background and not child.background
+            repeated = parent.repeated and not child.repeated
+            if background or repeated:
+                child.background |= background
+                child.repeated |= repeated
+                pending.append(child)
 
 
 class _Reader:
@@ -144,18 +171,19 @@ class _Reader:
         self.script.complete = False
         self.pos = len(self.text)
 
-    def commands(self, depth: int, stop: str | None) -> None:
-        """Read commands up to `stop` (")" for a substitution/subshell) or the end."""
+    def commands(self, depth: int, stop: str | None, pipeline: int | None = None) -> bool:
+        """Read a list, returning whether its closing token (or EOF) was reached."""
         if depth > MAX_DEPTH:
-            return self.fail()
-        pending = _Pending(next(self.pipelines), self.pos)
+            self.fail()
+            return False
+        pending = _Pending(next(self.pipelines) if pipeline is None else pipeline, self.pos)
         while self.pos < len(self.text):
             if not self.command_part(pending, depth, stop):
-                return None
+                return self.script.complete
         self.finish(pending, True)
-        if stop is not None:
+        if stop is not None or pending.needs_command:
             self.fail()
-        return None
+        return self.script.complete
 
     def finish(self, pending: _Pending, new_pipeline: bool) -> None:
         """Record the command being read (if it has anything) and start the next one."""
@@ -163,8 +191,11 @@ class _Reader:
         if command.words or command.redirects:
             command.span = self.span(pending.start, self.pos)
             self.script.commands.append(command)
+            pending.members.append(command)
         if new_pipeline:
             pending.pipeline = next(self.pipelines)
+            pending.members = []
+        pending.grouped = False
         pending.command = Command(pipeline=pending.pipeline)
         pending.start = self.pos
 
@@ -172,11 +203,190 @@ class _Reader:
         """Read one blank, separator or token at `pos`; False when `commands` is done."""
         if self.blank(pending) or self.separator(pending, depth):
             return True
-        if stop is not None and self.text[self.pos] == stop:
-            self.finish(pending, True)
-            self.pos += 1
+        if self.at_stop(pending, stop):
+            if pending.needs_command:
+                self.fail()
+            else:
+                self.finish(pending, True)
+                self.pos += len(stop or "")
+            return False
+        read = self.compound_part(pending, depth)
+        pending.needs_command = False
+        return read
+
+    def keyword(self, word: str) -> bool:
+        """An unquoted, whole reserved word at the current token boundary."""
+        end = self.pos + len(word)
+        return self.text.startswith(word, self.pos) and (
+            end == len(self.text) or self.text[end] in WORD_END
+        )
+
+    def at_stop(self, pending: _Pending, stop: str | None) -> bool:
+        if stop is None:
+            return False
+        if stop == ")":
+            return self.text[self.pos] == stop
+        return pending.empty and self.keyword(stop)
+
+    def compound_part(self, pending: _Pending, depth: int) -> bool:
+        """Keep compound commands together for a following pipeline or `&`."""
+        if self.compound_start(pending):
+            if self.text[self.pos] == "(" or self.keyword("{"):
+                return self.group(pending, depth)
+            for kind in ("while", "until", "for"):
+                if self.keyword(kind):
+                    return self.loop(pending, depth, kind)
+        if self.misplaced_token(pending):
+            self.fail()
             return False
         return self.token(pending.command, depth)
+
+    def compound_start(self, pending: _Pending) -> bool:
+        """Reserved prefixes can introduce compounds, but quoted words cannot."""
+        command = pending.command
+        return not (pending.grouped or command.redirects) and all(
+            word in {"if", "then", "else", "elif", "!", "time"}
+            and self.text[start - self.base : end - self.base] == word
+            for word, (start, end) in zip(command.words, command.spans, strict=True)
+        )
+
+    def misplaced_token(self, pending: _Pending) -> bool:
+        if pending.empty and any(self.keyword(word) for word in ("do", "done", "}")):
+            return True
+        return pending.grouped and REDIRECT.match(self.text, self.pos) is None
+
+    def group(self, pending: _Pending, depth: int) -> bool:
+        stop = ")" if self.text[self.pos] == "(" else "}"
+        before = len(self.script.commands)
+        self.pos += 1
+        # The group's first pipeline shares its surrounding pipe, not substitutions.
+        closed = self.commands(depth + 1, stop, pending.pipeline)
+        pending.command = Command(pipeline=pending.pipeline)
+        pending.members.extend(self.script.commands[before:])
+        pending.grouped = True
+        return closed
+
+    def loop(self, pending: _Pending, depth: int, kind: str) -> bool:
+        """Structure loop headers/bodies; only exact constant headers are unbounded."""
+        before = len(self.script.commands)
+        self.pos += len(kind)
+        repeated = self.loop_header(depth, kind)
+        if repeated is None:
+            self.fail()
+            return False
+        body = len(self.script.commands)
+        closed = self.commands(depth + 1, "done")
+        members = self.script.commands[before:]
+        # A following redirect belongs to the loop, even though it has no command name.
+        pending.command = Command(pipeline=pending.pipeline, repeated=closed and repeated)
+        if closed:
+            _mark_scope(self.script.commands[body:], repeated=repeated)
+        pending.members.extend(members)
+        pending.grouped = True
+        return closed
+
+    def loop_header(self, depth: int, kind: str) -> bool | None:
+        """Whether the header is unbounded; None means unsupported/incomplete."""
+        if kind == "for":
+            start = self.pos - len(kind)
+            self.header_space()
+            if self.text.startswith("((", self.pos):
+                return True if self.arithmetic_loop_header() else None
+            return False if self.word_loop_header(depth, start) else None
+        before = len(self.script.commands)
+        if not self.commands(depth + 1, "do") or len(self.script.commands) == before:
+            return None
+        return self.constant_condition(self.script.commands[before:], kind)
+
+    def word_loop_header(self, depth: int, start: int) -> bool:
+        """Keep the existing `for name [in words]` header and its nested expansions."""
+        pending = _Pending(next(self.pipelines), start)
+        command = pending.command
+        command.words.append("for")
+        command.spans.append(self.span(start, start + len("for")))
+        if not self.word_loop_words(pending, depth):
+            return False
+        if self.word_loop_continuation(command) and not self.word_loop_words(pending, depth):
+            return False
+        if not self.valid_word_loop(command):
+            return False
+        self.finish(pending, True)
+        self.pos += 1  # the required semicolon/newline before `do`
+        return self.loop_do()
+
+    def word_loop_continuation(self, command: Command) -> bool:
+        """Only a newline after the variable may precede the optional `in` clause."""
+        if len(command.words[1:]) != 1 or not self.text.startswith("\n", self.pos):
+            return False
+        start = self.pos
+        self.header_space()
+        if self.keyword("in"):
+            return True
+        self.pos = start
+        return False
+
+    def word_loop_words(self, pending: _Pending, depth: int) -> bool:
+        command = pending.command
+        while self.pos < len(self.text) and self.text[self.pos] not in ";\n":
+            if self.blank(pending):
+                continue
+            if self.text[self.pos] in WORD_END:
+                return False
+            word = self.word(depth, command, operand=False)
+            if word is None:
+                return False
+            command.words.append(word[0])
+            command.spans.append(word[1])
+        return True
+
+    def valid_word_loop(self, command: Command) -> bool:
+        words = command.words[1:]
+        if not words or re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", words[0]) is None:
+            return False
+        if words[1:] and words[1] != "in":
+            return False
+        return all(
+            self.text[start - self.base : end - self.base] == word
+            for word, (start, end) in zip(words[:2], command.spans[1:3], strict=True)
+        )
+
+    def constant_condition(self, commands: list[Command], kind: str) -> bool:
+        if len(commands) != 1:
+            return False
+        command = commands[0]
+        expected = {("false",)} if kind == "until" else {("true",), (":",), ("[", "1", "]")}
+        literal = all(
+            self.text[start - self.base : end - self.base] == word
+            for word, (start, end) in zip(command.words, command.spans, strict=True)
+        )
+        return literal and not command.redirects and tuple(command.words) in expected
+
+    def header_space(self, *, comments: bool = True) -> None:
+        """Layout in the deliberately narrow `for ((;;))` header."""
+        pending = _Pending(next(self.pipelines), self.pos)
+        while self.pos < len(self.text):
+            if self.text[self.pos] == "\n":
+                self.pos += 1
+            elif (not comments and self.text[self.pos] == "#") or not self.blank(pending):
+                break
+
+    def arithmetic_loop_header(self) -> bool:
+        for token in ("((", ";", ";", "))"):
+            self.header_space(comments=False)
+            if not self.text.startswith(token, self.pos):
+                return False
+            self.pos += len(token)
+        self.header_space()
+        if self.text.startswith(";", self.pos):
+            self.pos += 1
+        return self.loop_do()
+
+    def loop_do(self) -> bool:
+        self.header_space()
+        if not self.keyword("do"):
+            return False
+        self.pos += len("do")
+        return True
 
     def blank(self, pending: _Pending) -> bool:
         """Skip a space/tab, line continuation or comment at `pos`."""
@@ -199,17 +409,36 @@ class _Reader:
         """A newline (then the heredoc bodies it opens) or a control operator at `pos`."""
         text = self.text
         if text[self.pos] == "\n":
-            self.finish(pending, True)
-            self.pos += 1
-            self.read_heredocs(depth)
-            pending.start = self.pos
+            self.newline(pending, depth)
             return True
         op = OPERATOR.match(text, self.pos)
         if op is None or text.startswith("&>", self.pos):
             return False
+        if pending.needs_command or op[0] == ";;":
+            self.fail()
+            return True
         self.pos = op.end()
-        self.finish(pending, op[0] not in ("|", "|&"))
+        self.finish(pending, False)
+        self.end_operator(pending, op[0])
         return True
+
+    def newline(self, pending: _Pending, depth: int) -> None:
+        if not pending.needs_command:
+            self.finish(pending, True)
+        self.pos += 1
+        self.read_heredocs(depth)
+        pending.start = self.pos
+
+    def end_operator(self, pending: _Pending, op: str) -> None:
+        if op == "&":
+            _mark_scope(pending.members, background=True)
+        pending.needs_command = op in ("|", "|&", "&&", "||")
+        if op not in ("|", "|&"):
+            # An asynchronous AND/OR list also belongs to the same `&`.
+            if op not in ("&&", "||"):
+                pending.members = []
+            pending.pipeline = next(self.pipelines)
+            pending.command.pipeline = pending.pipeline
 
     def token(self, command: Command, depth: int) -> bool:
         """A process substitution, redirection, subshell or word of `command`."""
@@ -225,23 +454,13 @@ class _Reader:
             self.redirect(command, redirect[0].lstrip("0123456789"), redirect.start(), depth)
             return True
         if c in "()":
-            return self.subshell(command, depth)
+            self.fail()  # a function, case pattern, or misplaced parenthesis
+            return False
         word = self.word(depth, command)
         if word is not None:
             command.words.append(word[0])
             command.spans.append(word[1])
         return word is not None
-
-    def subshell(self, command: Command, depth: int) -> bool:
-        if self.text[self.pos] == ")":  # a `case` pattern or unbalanced input
-            self.fail()
-            return False
-        self.pos += 1
-        if command.words:  # `f() {…}` or a stray paren: not something we structure
-            self.fail()
-            return False
-        self.commands(depth + 1, ")")
-        return True
 
     def redirect(self, command: Command, op: str, at: int, depth: int) -> None:
         while self.pos < len(self.text) and self.text[self.pos] in " \t":
@@ -481,6 +700,13 @@ class _Pending:
     pipeline: int
     start: int
     command: Command = field(init=False)
+    members: list[Command] = field(default_factory=list)  # current AND/OR list, groups included
+    grouped: bool = False
+    needs_command: bool = False  # after a pipeline or AND/OR operator
+
+    @property
+    def empty(self) -> bool:
+        return not (self.command.words or self.command.redirects or self.grouped)
 
     def __post_init__(self) -> None:
         self.command = Command(pipeline=self.pipeline)
