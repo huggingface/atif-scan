@@ -122,3 +122,17 @@ def test_run_selection_stamps_untraced_trials_without_duplicating_them(tmp_path,
         ["--run", "demo", "--bench-root", str(tmp_path), "--as-run", "--no-cache"], capsys
     )
     assert len(as_run["inputs"]) == 3
+
+
+def test_highlights_export_accepts_a_job_with_an_untraced_trial(tmp_path, capsys):
+    """Regression (0.8.6-0.8.7): --highlights/--viewer refused any job folder holding a
+    trial without a trajectory ("needs local traces"), since that trial has no local file."""
+    job = job_folder(tmp_path)
+    out = tmp_path / "highlights"
+    assert main([str(job), "--highlights", str(out), "--no-cache"]) in (0, 1)
+    err = capsys.readouterr().err
+    assert "needs local traces" not in err
+    assert (out / "data.js").exists()
+    viewer = tmp_path / "viewer"
+    assert main([str(job), "--viewer", str(viewer), "--no-cache"]) in (0, 1)
+    assert "needs local traces" not in capsys.readouterr().err

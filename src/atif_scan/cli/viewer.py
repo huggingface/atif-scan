@@ -22,8 +22,13 @@ if TYPE_CHECKING:
 
 def _pinned(records: list[Record]) -> list[str | None] | None:
     """Digests of local traces before scanning, or None (reported) when unavailable."""
-    # Replaced trials that left no trajectory are evidence-only items, not missing inputs.
-    if any(source.local is None and not source.selection for source, _ in records):
+    # Trials that left no trajectory (a Harbor trial folder with only result.json, or a
+    # replaced trial under --run/--release) are evidence-only items, not missing inputs:
+    # they have no trace to pin or export. Any other input without a local file is remote.
+    if any(
+        source.local is None and not source.selection and source.trial_dir is None
+        for source, _ in records
+    ):
         print("atif-scan: --viewer needs local traces (details withheld)", file=sys.stderr)
         return None
     try:
