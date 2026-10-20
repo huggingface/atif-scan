@@ -31,6 +31,7 @@ from .lookup import (
 )
 from .lures import lure_detectors
 from .network import network_command
+from .orchestrator import orchestrator_detectors
 from .priming import instruction_detectors
 from .provenance import DownstreamSourceReference
 from .recall import PROSE_AND_INPUT, UnprimedDetector, regex_candidates
@@ -329,6 +330,7 @@ def builtin_detectors() -> list[Detector]:
             benchmark_source,
         ),
         *side_channel_detectors(),
+        *orchestrator_detectors(),
         CodingAgentDelegation(),
         *account_id_detectors(),
         *install_detectors(),
