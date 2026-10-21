@@ -50,6 +50,7 @@ TELEMETRY_CHECKS = frozenset(
         "integrity.cached_tokens_exceed_prompt",
         "integrity.cost_missing",
         "integrity.output_token_ratio",
+        "integrity.reasoning_tokens_exceed_completion",
         "integrity.step_count_mismatch",
         "integrity.timestamp_invalid",
         "integrity.timestamp_regression",

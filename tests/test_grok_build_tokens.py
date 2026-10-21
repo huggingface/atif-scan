@@ -1,4 +1,8 @@
-"""Synthetic exporter-specific completion semantics; never normalize recorded usage."""
+"""Synthetic exporter-specific completion semantics; never normalize recorded usage.
+
+Harbor's grok-build export wrote visible output only as completion until
+harbor-framework/harbor#3805, then visible + reasoning. Only reasoning above completion
+proves the old export; other splits leave the basis unresolved."""
 
 import json
 
@@ -25,7 +29,7 @@ def payload(reasoning=2000, completion=1000, name="grok-build", version="1.0.34"
     }
 
 
-@pytest.mark.parametrize("reasoning", [0, None, 900, 2000, True, -1, 1.5, "2000"])
+@pytest.mark.parametrize("reasoning", [0, 2000])
 def test_separate_visible_denominator_and_raw_counts(reasoning):
     trace = parse_trace(payload(reasoning))
     ratio = output_ratio(trace)
@@ -35,9 +39,7 @@ def test_separate_visible_denominator_and_raw_counts(reasoning):
     assert output_token_ratio(trace).status == Status.NO_MATCH
     assert trace.usage is not None
     assert trace.usage.completion_tokens == 1000
-    assert trace.usage.reasoning_tokens == (
-        reasoning if type(reasoning) is int and reasoning >= 0 else None
-    )
+    assert trace.usage.reasoning_tokens == reasoning
     assert trace.usage.cost_usd == 0.25
     facts = trace_facts(trace)
     assert facts["trajectory_completion_token_basis"] == "separate_visible"
@@ -45,10 +47,37 @@ def test_separate_visible_denominator_and_raw_counts(reasoning):
     assert facts["usage"]["output_tokens"] == 1000
 
 
+@pytest.mark.parametrize("reasoning", [None, 900, True, -1, 1.5, "2000"])
+def test_unresolved_basis_subtracts_nothing_and_claims_no_lower_bound(reasoning):
+    trace = parse_trace(payload(reasoning))
+    assert trace.usage and trace.usage.completion_basis == "unresolved"
+    ratio = output_ratio(trace)
+    assert ratio is not None
+    assert (ratio.tokens, ratio.chars) == (1000, 3000)
+    assert not (ratio.answer_only or ratio.low_verifiable or ratio.separate_visible)
+    result = output_token_ratio(trace)
+    assert result.status == Status.UNKNOWN
+    assert [u.reason for u in result.unread] == ["reasoning_tokens_not_split"]
+    assert trace.usage.completion_tokens == 1000
+    assert trace.usage.reasoning_tokens == (
+        reasoning if type(reasoning) is int and reasoning >= 0 else None
+    )
+    facts = trace_facts(trace)
+    assert facts["trajectory_completion_token_basis"] == "unresolved"
+    assert facts["output_ratio_basis"] == "visible_only"
+
+
+def test_fixed_export_is_not_read_as_visible_only():
+    # completion = visible + reasoning: dividing visible text by it would fall below 1.
+    trace = parse_trace(payload(reasoning=176_000, completion=219_000))
+    assert trace.usage and trace.usage.completion_basis == "unresolved"
+    assert output_token_ratio(trace).status == Status.UNKNOWN
+
+
 def test_absent_reasoning_and_compaction():
     raw = payload()
     del raw["final_metrics"]["extra"]
-    assert output_token_ratio(parse_trace(raw)).status == Status.NO_MATCH
+    assert output_token_ratio(parse_trace(raw)).status == Status.UNKNOWN
     raw["steps"].insert(0, {"source": "system", "message": "[COMPACTED HISTORY]"})
     raw["steps"][1]["message"] = "small"
     trace = parse_trace(raw)
@@ -112,7 +141,7 @@ def test_report_brief_and_cache_signature(tmp_path, capsys):
     assert ratios["separate_visible"]["median"] == 3
     assert "not billed completion" in RATIO_BASIS["separate_visible"]
     signature = checks_signature(Engine(builtin_detectors()))
-    assert next(s for s in signature if s[0] == "integrity.output_token_ratio")[1] == "5"
+    assert next(s for s in signature if s[0] == "integrity.output_token_ratio")[1] == "6"
 
 
 def test_missing_final_completion_and_repeat_parse():

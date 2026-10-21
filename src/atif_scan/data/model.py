@@ -226,7 +226,8 @@ class Usage:
     # the prompt tokens: final_metrics.extra.total_cache_creation_input_tokens.
     cache_write_tokens: int | None = None
     # Recorded counts are never normalized. Only verified exporter versions override this.
-    completion_basis: Literal["includes_reasoning", "separate_visible"] = field(
+    # `unresolved`: the exporter has used both conventions and these counts can't tell.
+    completion_basis: Literal["includes_reasoning", "separate_visible", "unresolved"] = field(
         default="includes_reasoning", kw_only=True
     )
 

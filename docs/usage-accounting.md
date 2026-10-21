@@ -96,6 +96,11 @@ checked separately from successful streamed messages and ordinary tool-result st
 its inclusive prompt count. It does not infer or apply a corrected accounting convention.
 Missing or invalid operands are unknown, and step sums are not substituted.
 
+`integrity.reasoning_tokens_exceed_completion` flags final reasoning tokens larger than
+the completion total that should contain them: the completion total is then visible output
+only, so output totals and any cost derived from them omit reasoning. It does not correct
+the totals. Missing or invalid operands are unknown, and step sums are not substituted.
+
 `integrity.step_count_mismatch` compares `final_metrics.total_steps` against the root
 trajectory's recorded steps. Folding environment steps into observations can leave an
 exporter's old count behind. The schema permits documented scope differences in root

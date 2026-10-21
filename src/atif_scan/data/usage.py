@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from itertools import pairwise
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from .jsonval import JsonObject, as_list, as_object, as_str, count, is_object, number
 from .model import Usage
@@ -327,11 +327,22 @@ def usage(
         return None
     if agent[0] == "pi":
         found = replace(found, reasoning_tokens=_pi_reasoning_tokens(found, extra))
-    # Grok Build exports visible output and reasoning separately. This is a
-    # harness convention, not a model-name or harness-version heuristic.
     if agent[0] == "grok-build":
-        return replace(found, completion_basis="separate_visible")
+        return replace(found, completion_basis=_grok_build_basis(found))
     return found
+
+
+def _grok_build_basis(found: Usage) -> Literal["separate_visible", "unresolved"]:
+    """Harbor's grok-build exports wrote visible output only as completion until
+    harbor-framework/harbor#3805, then visible + reasoning. Neither version is recorded in
+    the trajectory: only reasoning above completion proves the old export (zero reasoning
+    reads the same either way); anything else stays unresolved."""
+    reasoning, completion = found.reasoning_tokens, found.completion_tokens
+    if reasoning == 0 or (
+        reasoning is not None and completion is not None and reasoning > completion
+    ):
+        return "separate_visible"
+    return "unresolved"
 
 
 # A JSON string (skipped as a whole) or a bare `[REDACTED]` token outside any string.

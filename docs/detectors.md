@@ -144,6 +144,7 @@ doesn't make a report incomplete, but rules and allowances can use them.
 | `integrity.subagent_unrecorded` | low | A subagent launcher (`Agent`, `Task`, `explore`, …) returned only a status stub (`success`, "Async agent launched"): the subagent's own calls, and anything it fetched, aren't in the trace |
 | `integrity.final_calls_unanswered` | info | The last step is the agent's and some of its tool calls have no recorded result: the run stopped after issuing them (agent timeout, a killed agent process, a lost connection), so what they did or returned isn't in the trace. Seen in AgentTimeoutError trials of several harnesses and a fast-agent trial SIGKILLed while six commands ran. Results that couldn't be paired leave it `unknown` |
 | `integrity.trace_head_missing` | info | The first recorded step is the agent's (no prompt). Prompt-relative checks (`recall.*`, `lookup.instruction_phrase_search`) become `unknown` |
+| `integrity.reasoning_tokens_exceed_completion` | medium | `final_metrics.extra.total_reasoning_tokens` exceeds `total_completion_tokens`. Reasoning is part of the completion total, so that total is visible output only, and output totals and any cost derived from them omit reasoning (Harbor grok-build before harbor-framework/harbor#3805). Missing or invalid operands are unknown; step sums are not substituted |
 | `integrity.cost_missing` | low | `final_metrics` has positive token counts but no `total_cost_usd`; separate Harbor/trial records may still contain a cost |
 | `integrity.totals_are_last_call` | low | The trajectory's token totals equal its last metered model call's prompt and completion tokens while two or more metered steps sum to more: one call's usage was written as the run's totals (seen in indusagi 0.2.12/0.2.13 trials cut off by a timeout or crash), so totals, Harbor's recorded tokens and cost all undercount. The brief prices what the steps add. Step metrics that only rise may be running totals: unknown (`step_metrics_may_be_cumulative`), not a match |
 | `integrity.tokens_exceed_recorded_calls` | low | More than 2M prompt tokens per recorded LLM call: the totals include activity the steps don't show; for compacted traces, interpreted as calls from before compaction, with only the final context in ATIF |
@@ -213,13 +214,16 @@ when there is no total. When reasoning tokens are reported, they are subtracted
 tokens (`output_ratio_basis: visible_only`): visible characters over total completion
 tokens, not a claim about the token density of visible output. Its lower bound cannot
 be checked. Reasoning text cannot inflate either ratio.
-For the `grok-build` harness, final completion counts are already visible output:
-reasoning is not subtracted
-again (`output_ratio_basis: separate_visible`). `trajectory_completion_token_basis`
-is `separate_visible` for these final totals, `includes_reasoning` for standard totals,
-or null without a usable final completion count. Raw counts and costs are unchanged;
-visible output is not billed completion (visible + reasoning). The rule follows the
-harness name, regardless of version; using a Grok model in fast-agent does not enable it.
+For the `grok-build` harness, Harbor's export wrote visible output only as completion
+until harbor-framework/harbor#3805, then visible + reasoning; neither version is recorded
+in the trajectory. Final reasoning above final completion proves the old export: reasoning
+is not subtracted again (`output_ratio_basis: separate_visible`), and
+`integrity.reasoning_tokens_exceed_completion` flags the totals. Zero reasoning reads the
+same either way. Any other split leaves the basis `unresolved`: nothing is subtracted and
+the lower bound is unknown (`visible_only`). `trajectory_completion_token_basis` is
+`separate_visible`, `unresolved`, `includes_reasoning` for standard totals, or null
+without a usable final completion count. Raw counts and costs are unchanged. Using a
+Grok model in fast-agent does not enable the rule.
 Per-step fallback
 keeps standard semantics. Compacted histories still have an unknown lower bound.
 

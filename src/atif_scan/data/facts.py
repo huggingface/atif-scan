@@ -96,6 +96,10 @@ def output_ratio(trace: Trace) -> OutputRatio | None:
         len(s.message.text) + sum((c.raw_argument_chars or 0) for c in s.calls) for s in steps
     )
     separate = bool(whole and usage and usage.completion_basis == "separate_visible")
+    # An unresolved basis may or may not include reasoning: subtract nothing, claim no
+    # lower bound.
+    if whole and usage and usage.completion_basis == "unresolved":
+        reasoning = None
     answer_only = separate or reasoning is not None
     if not separate and reasoning is not None:
         tokens -= reasoning

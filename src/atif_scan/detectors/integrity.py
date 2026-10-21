@@ -293,6 +293,23 @@ def cached_tokens_exceed_prompt(trace: Trace) -> Detection:
     return replace(_result([], complete=True, matched=cached > prompt), measure=measure)
 
 
+def reasoning_tokens_exceed_completion(trace: Trace) -> Detection:
+    """Final reasoning tokens cannot exceed the completion total that contains them.
+
+    When they do, the completion total is visible output only (Harbor grok-build before
+    harbor-framework/harbor#3805): output totals and any cost derived from them omit the
+    reasoning. Flags the accounting, never repairs it. Step sums are not substituted.
+    """
+    usage = trace.usage
+    completion = usage.completion_tokens if usage else None
+    reasoning = usage.reasoning_tokens if usage else None
+    measure: Measure = (("completion_tokens", completion), ("reasoning_tokens", reasoning))
+    if completion is None or reasoning is None:
+        return Detection(Status.UNKNOWN, complete=False, unread=NO_USAGE, measure=measure)
+    found = _result([], complete=True, matched=reasoning > completion)
+    return replace(found, measure=measure)
+
+
 def cost_missing(trace: Trace) -> Detection:
     """Positive final token counts without ATIF cost; other records may carry cost."""
     usage = trace.usage
@@ -665,6 +682,15 @@ def integrity_detectors() -> list[Detector]:
         ),
         TraceCheck(
             CheckSpec(
+                "integrity.reasoning_tokens_exceed_completion",
+                Severity.MEDIUM,
+                version="1",
+                title="Reasoning tokens exceed completion total",
+            ),
+            reasoning_tokens_exceed_completion,
+        ),
+        TraceCheck(
+            CheckSpec(
                 "integrity.cost_missing", Severity.LOW, title="Token totals without an ATIF cost"
             ),
             cost_missing,
@@ -689,7 +715,7 @@ def integrity_detectors() -> list[Detector]:
             CheckSpec(
                 "integrity.output_token_ratio",
                 Severity.LOW,
-                version="5",
+                version="6",
                 title="Agent text doesn't fit reported output tokens",
             ),
             output_token_ratio,
