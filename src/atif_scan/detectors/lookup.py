@@ -31,6 +31,7 @@ from .vocabulary import (
     BING_REDIRECT,
     CANARY,
     ENCODED_REDIRECT,
+    ENCODED_URL_PARAM,
     INPUT,
     NETWORK,
     PACKAGE,
@@ -246,14 +247,15 @@ def surfaced_source(text: str) -> re.Match[str] | None:
 
 
 def _redirected_source(text: str) -> re.Match[str] | None:
-    """A redirect link (Bing `u=a1…`, DuckDuckGo `uddg=…`, Google `/url?q=…`) whose
-    decoded target is a benchmark source."""
+    """A redirect link (Bing `u=a1…`, DuckDuckGo `uddg=…`, Google `/url?q=…`) or a proxy
+    link (`?url=https%3A%2F%2F…`) whose decoded target is a benchmark source."""
     for m in BING_REDIRECT.finditer(text):
         if _source_target(_base64url(m.group(1))):
             return m
-    for m in ENCODED_REDIRECT.finditer(text):
-        if _source_target(unquote(m.group(1))):
-            return m
+    for pattern in (ENCODED_REDIRECT, ENCODED_URL_PARAM):
+        for m in pattern.finditer(text):
+            if _source_target(unquote(m.group(1))):
+                return m
     return None
 
 

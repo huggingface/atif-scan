@@ -35,6 +35,7 @@ TITLE = (
     "The test suite verifies: synthetic output …"
 )
 REPO_URL = "https://github.com/harbor-framework/terminal-bench-2/blob/main/synthetic-demo/README.md"
+PROXIED = "https://proxy.invalid/web-api/iframe-proxy?url=" + quote(REPO_URL, safe="")
 
 
 def raw_trace(command: str, observations: list[object] | None) -> dict[str, object]:
@@ -149,6 +150,10 @@ def test_non_search_commands_are_not_searches(command):
         + "&ntb=1",
         "https://duckduckgo.com/l/?uddg=" + quote(REPO_URL, safe="") + "&rut=x",
         "https://www.google.com/url?sa=t&q=" + quote(REPO_URL, safe="") + "&usg=x",
+        # GitHub's own page title, with the repository between the branch and "GitHub".
+        "terminal-bench/tasks/synthetic-demo at main · harbor-framework/terminal-bench · GitHub",
+        # A web tool's fetch proxy, the source percent-encoded in its `url` parameter.
+        PROXIED,
     ],
 )
 def test_search_page_renderings_of_a_benchmark_source(rendering):
@@ -165,6 +170,10 @@ def test_search_page_renderings_of_a_benchmark_source(rendering):
         + base64.urlsafe_b64encode(b"https://docs.example.org/demo/readme").decode().rstrip("=")
         + "&ntb=1",
         "https://www.bing.com/ck/a?!&&p=abc&u=a1not-base64!!&ntb=1",
+        "my-terminal-bench-notes/README.md at main · someone/my-terminal-bench-notes · GitHub",
+        "https://proxy.invalid/fetch?url=" + quote("https://docs.example.org/demo", safe=""),
+        "https://proxy.invalid/fetch?url="
+        + quote("https://github.com/harbor-framework/harbor/blob/main/README.md", safe=""),
     ],
 )
 def test_non_benchmark_renderings_are_not_sources(rendering):
@@ -251,3 +260,30 @@ def test_hub_catalogue_url_only_printed_is_not_a_search():
     trace = parse_trace(raw_trace(command, said(TITLE)))
     (_, call) = next(trace.agent_calls())
     assert not shell_search(call)
+
+
+def test_code_mode_search_result_from_a_proxied_benchmark_page_is_surfaced():
+    # Regression (TB4, Codex code mode): a general web search returned a task's solution
+    # explanation and verifier ranges under GitHub's full page title and a fetch-proxy link
+    # with the source percent-encoded. Only the low-priority URL check matched.
+    title = "terminal-bench/tasks/synthetic-demo at main · harbor-framework/terminal-bench · GitHub"
+    page = f"{title} ({PROXIED})\n## Solution explanation\nSynthetic steps."
+    blocks = [
+        {"type": "input_text", "text": "Script completed\nWall time 1.0 seconds\nOutput:\n"},
+        {"type": "input_text", "text": page},
+    ]
+    program = 'await tools.web__run({search_query:[{q:"synthetic demo method"}]});'
+    call = {"tool_call_id": "p", "function_name": "exec", "arguments": {"input": program}}
+    step = {
+        "source": "agent",
+        "message": "",
+        "tool_calls": [call],
+        "observation": {"results": [{"source_call_id": "p", "content": repr(blocks)}]},
+    }
+    raw = {"schema_version": "ATIF-v1.7", "steps": [{"source": "user", "message": "Go."}, step]}
+    engine = Engine([*builtin_detectors(), *access_rules()])
+    found = {
+        i.spec.id: i.result for i in engine.evaluate(parse_trace(raw), Context("synthetic-demo"))
+    }
+    assert found[SURFACED].status == Status.MATCH and found[SURFACED].complete
+    assert found[RECEIVED].status == Status.MATCH
