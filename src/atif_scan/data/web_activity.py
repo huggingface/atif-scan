@@ -104,21 +104,42 @@ def _batch(key: str, value: object) -> WebActivity:
 
 
 def call_activity(call: ToolCall) -> WebActivity:
-    """Read one recognized action envelope, with native normalized-tool fallback."""
-    args = _mapping(call.arguments)
-    if call.name == "web_search_call":
+    """Read one recognized action envelope, with native normalized-tool fallback. A call
+    read from a tool program (Codex code mode) records no arguments: the loader counted
+    its statically read ones (`activity`) when it parsed the program."""
+    if call.web_activity is not None:
+        return call.web_activity
+    return activity(call.name, call.tool, call.arguments)
+
+
+def activity(name: str, tool: str, arguments: object) -> WebActivity:
+    """One call's web actions from its name, normalized tool and (decoded) arguments.
+    Unreadable values (anything not a string, list or object) count as unknown."""
+    args = _mapping(arguments)
+    if name == "web_search_call":
         action = as_str(args.get("action_type"))
         payload = args
         if action is None:
             payload = _mapping(args.get("action"))
             action = as_str(payload.get("type"))
         return _hosted(action, payload)
-    if call.name in ("web__run", "web.run"):
-        keys = tuple(k for k in ("search_query", "open", "click", "find") if k in args)
-        return _sum(_batch(k, args[k]) for k in keys) if keys else WebActivity(unknown_actions=1)
-    if call.tool == "web_search":
+    if name in ("web__run", "web.run"):
+        return _run(args)
+    if tool == "web_search":
         return _search(args)
-    return WebActivity(opens=1) if call.tool == "web_fetch" else WebActivity()
+    return WebActivity(opens=1) if tool == "web_fetch" else WebActivity()
+
+
+def _run(args: Mapping[str, object]) -> WebActivity:
+    keys = tuple(k for k in ("search_query", "open", "click", "find") if k in args)
+    found = _sum(_batch(k, args[k]) for k in keys) if keys else WebActivity(unknown_actions=1)
+    if keys and SPREAD in args:
+        # `{...opts, search_query: [...]}` in a tool program: the spread may add actions.
+        found = _sum((found, WebActivity(unknown_actions=1)))
+    return found
+
+
+SPREAD = "..."  # `jslit`'s key for an object spread (unknown extra keys)
 
 
 def _hosted(action: str | None, args: Mapping[str, object]) -> WebActivity:

@@ -5,6 +5,7 @@ from types import MappingProxyType
 
 import pytest
 
+from atif_scan import parse_trace
 from atif_scan.data.model import Content, Step, ToolCall, Trace
 from atif_scan.data.web_activity import WebActivity, call_activity, web_activity
 from atif_scan.output.brief import brief, brief_text
@@ -115,6 +116,43 @@ def test_derived_alias_not_double_counted_but_code_mode_is_counted():
             call({"query": "one"}, name="web_search", parent="program"),
         )
     ) == WebActivity(searches=1, known_queries=1)
+
+
+def program(source):
+    """A synthetic Codex code-mode step, parsed by the real loader (derived calls carry no
+    `arguments`, unlike hand-built ToolCalls)."""
+    call = {"tool_call_id": "p", "function_name": "exec", "arguments": {"input": source}}
+    obs = {"results": [{"source_call_id": "p", "content": "Script completed\nOutput:\n"}]}
+    step = {"source": "agent", "message": "", "tool_calls": [call], "observation": obs}
+    return parse_trace({"schema_version": "ATIF-v1.7", "steps": [step]})
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # Regression: code-mode web__run calls counted every query as unknown and every
+        # open batch as one open (real Codex 0.159 trace: 8 queries read, 0 counted).
+        (
+            'await tools.web__run({search_query:[{q:"one",domains:["a.invalid"]},{q:"two"}]});'
+            'await tools.web__run({open:[{ref_id:"https://a.invalid/"},'
+            '{ref_id:"https://b.invalid/"}]});',
+            WebActivity(searches=2, opens=2, known_queries=2),
+        ),
+        ("await tools.web__run({search_query:[{q:`${x}`}]});", WebActivity(1, 0, 0, 0, 1)),
+        ("await tools.web__run({search_query:[{q}]});", WebActivity(1, 0, 0, 0, 1)),
+        ("await tools.web__run(opts);", WebActivity(unknown_actions=1)),
+        ("await tools.web__run({search_query: qs});", WebActivity(1, 0, 0, 0, 1)),
+        (
+            'await tools.web__run({...o, search_query:[{q:"one"}]});',
+            WebActivity(searches=1, known_queries=1, unknown_actions=1),
+        ),
+        ('await tools.exec_command({cmd:"ls"});', WebActivity()),
+    ],
+)
+def test_code_mode_web_calls_are_read_through_the_loader(source, expected):
+    parsed = program(source)
+    assert all(c.arguments is None for c in parsed.steps[0].calls[1:])
+    assert web_activity(parsed) == expected
 
 
 def test_absent_trace_is_unknown_not_zero():

@@ -44,6 +44,7 @@ from .usage import (
     stream_retries,
     usage,
 )
+from .web_activity import activity
 from .web_inputs import parse_web_input
 
 if TYPE_CHECKING:
@@ -360,6 +361,7 @@ def _program_call(index: int, k: int, found: ProgramCall) -> ToolCall:
         None,
         result_id=parent,
         web_input=parse_web_input(name, args),
+        web_activity=activity(name, tool, args),
     )
 
 

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from datetime import datetime
 
+    from .web_activity import WebActivity
     from .web_inputs import WebInput
 
 
@@ -113,6 +114,9 @@ class ToolCall:
     # from inside a tool program (Codex code mode), the program call.
     result_id: str | None = field(default=None, repr=False)
     web_input: WebInput | None = field(default=None, repr=False)
+    # Web actions of a call read from a tool program, counted from its statically read
+    # arguments (which, like `web_input`'s, are not kept in `arguments`); None otherwise.
+    web_activity: WebActivity | None = field(default=None, repr=False)
 
     # Validated provider status; absent/unrecognized metadata remains unknown.
     status: Literal["incomplete", "completed", "in_progress", "failed"] | None = None
