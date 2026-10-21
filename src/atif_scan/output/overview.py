@@ -461,6 +461,11 @@ def _disqualification(
         "not_cleared_reasons": uncleared_reasons(
             [i for i in items if i["input_id"] in not_cleared]
         ),
+        # Of those, trials whose programs kept state between calls (code mode's
+        # `store`/`load`): inputs built from it can't be read from any recording.
+        "not_cleared_stateful": sum(
+            1 for i in items if i["input_id"] in not_cleared and (i.get("stateful_programs") or 0)
+        ),
     }
 
 

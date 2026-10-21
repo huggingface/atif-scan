@@ -411,6 +411,33 @@ def tool_calls(program: str) -> list[tuple[str, object]]:
     return calls
 
 
+# Codex code mode's own state helpers: `store(key, value)` keeps a value between programs
+# and `load(key)` reads it back. The value lives in the harness, not the trace (TB4
+# production-planning: 17 table dumps stored, then loaded and printed in parts).
+STATE_HELPERS = ("store", "load")
+_STATE_CALL = re.compile(r"(?<![\w$.])(store|load)\s*\(")
+_STATE_DECLARED = re.compile(
+    r"(?<![\w$.])(?:function\s*\*?|const|let|var|class)\s+(store|load)(?![\w$])"
+)
+
+
+def state_helper_calls(program: str) -> frozenset[str]:
+    """The harness state helpers (`STATE_HELPERS`) this program calls in code (not in a
+    string or comment). A name the program declares itself is its own function, not the
+    harness's. Unlexable programs are searched as text, so a use isn't missed."""
+    try:
+        reader = _Reader(program, _lex(program), {})
+        in_code = reader.code
+    except (ValueError, IndexError, KeyError, RecursionError):
+
+        def in_code(_: int) -> bool:
+            return True
+
+    own: set[str] = {m.group(1) for m in _STATE_DECLARED.finditer(program) if in_code(m.start())}
+    used: set[str] = {m.group(1) for m in _STATE_CALL.finditer(program) if in_code(m.start())}
+    return frozenset(used - own)
+
+
 # Patch text is file content, read through the apply_patch call it feeds (programs build
 # patches from `+`-joined pieces: any piece with an envelope line).
 _PATCH = re.compile(r"^\*\*\* (?:Begin Patch|End Patch|(?:Add|Update|Delete) File:|Move to:)", re.M)

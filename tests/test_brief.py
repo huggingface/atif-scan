@@ -363,3 +363,12 @@ def test_context_compactions_are_context_not_a_defect():
     evidence = section(text, "EVIDENCE")
     assert "agent context compacted in 1 trial (2 compactions)" in " ".join(evidence.split())
     assert "no recording defect detected" in evidence
+
+
+def test_uncleared_trials_keeping_program_state_are_named_as_such():
+    kept = {**item("one", ["unknown"]), "stateful_programs": 2}
+    review = section(brief_text(summary(kept, item("two", ["unknown"]))), "REVIEW")
+    assert "2 rewarded trials can't be cleared" in review
+    assert "· 1 of them ran programs keeping state between calls (store/load)" in review
+    plain = section(brief_text(summary(item("one", ["unknown"]))), "REVIEW")
+    assert "store/load" not in plain

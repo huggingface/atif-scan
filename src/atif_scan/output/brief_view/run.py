@@ -355,6 +355,11 @@ def review_section(b: Doc) -> Lines:
             f"{WARN} {plural(d['rewarded_not_cleared'], more + 'rewarded trial')} can't be"
             f" cleared, as their evidence is incomplete: {why}"
         )
+        if stateful := d.get("not_cleared_stateful"):
+            body.append(
+                f"{INFO} {stateful:,} of them ran programs keeping state between calls"
+                " (store/load), which no recording holds"
+            )
     review = b.get("review")
     if review is not None:
         body += _review_bundle(review)
