@@ -52,6 +52,7 @@ from .files import (
     OVERRIDE,
     PHASES,
     _flatten,
+    late_trials,
     text_label,
     trial_result,
 )
@@ -61,7 +62,9 @@ from .listing import (
     TRIAL_NAME,
     UUID,
     job_datasets,
+    retry_base,
     retry_chains,
+    retry_summary,
     run_meta,
     trial_label,
     trial_meta,
@@ -642,6 +645,56 @@ def _trial_sources(
     ]
 
 
+def _row_task(row: Mapping[str, object]) -> str:
+    """A listed trial's task, as `trial_meta` names it (the dataset prefix dropped)."""
+    return str(row.get("task_name") or "").rsplit("/", 1)[-1]
+
+
+def _in_subset(rows: Sequence[JsonObject], tasks: frozenset[str]) -> list[JsonObject]:
+    # A retry chain's attempts share their task, so a chain is kept or dropped whole.
+    return [r for r in rows if _row_task(r) in tasks]
+
+
+def _subset_facts(
+    run: Doc, kept: Sequence[JsonObject], listed: int, tasks: frozenset[str], *, row: bool
+) -> Doc:
+    """Run facts cut to a task subset (`--task-subset`): the trial counts and cost become
+    the kept trials' own; what the Hub records for the whole job or row (its leaderboard
+    figures) is kept and labelled as such by `task_subset`.
+
+    Planned trials: a row's own trial list is its plan, so its kept trials; a job's are
+    its attempts per task times the subset tasks it ran (so a missing trial still
+    shows), else one per retry chain."""
+    matched = {_row_task(r) for r in kept}
+    attempts = run.get("n_attempts")
+    if row:
+        planned = len(kept)
+    elif attempts:
+        planned = attempts * len(matched)
+    else:
+        planned = len({retry_base(str(r.get("name") or r.get("id"))) for r in kept})
+    costs = [c for r in kept if (c := number(r.get("cost_usd"), 0)) is not None]
+    return {
+        **run,
+        "planned_trials": planned,
+        "total_trials": len(kept),
+        "listed_trials": len(kept),
+        "completed_trials": None,
+        "errored_trials": sum(1 for r in kept if r.get("error_type")),
+        "config_task_names": None,
+        "cost_usd": round(sum(costs), 6) if len(costs) == len(kept) and kept else None,
+        "tasks": sorted(matched),
+        "late_trials": late_trials(kept),
+        "retries": retry_summary(kept),
+        "task_subset": {
+            "tasks": len(tasks),
+            "matched_tasks": len(matched),
+            "trials": len(kept),
+            "of_trials": listed,
+        },
+    }
+
+
 def harbor_sources(
     value: str,
     dest: Path,
@@ -650,12 +703,21 @@ def harbor_sources(
     cli: Harbor | None = None,
     refresh: bool = False,
     progress: Progress = _quiet,
+    tasks: frozenset[str] | None = None,
 ) -> tuple[list[Source], Doc]:
+    """A Hub job's or leaderboard row's trials as sources, with its run facts. With
+    `tasks` (`--task-subset`), only those tasks' trials are listed, downloaded and
+    scanned, and the run's planned trials are cut to them."""
     kind, ref = reference(value)
     cli = cli or HarborCLI.find()
     private_directory(dest)
     if kind == "row":
         run, jobs = row_listing(cli, ref, progress)
+        if tasks is not None:
+            listed = sum(len(rows) for _, rows in jobs)
+            jobs = [(job, _in_subset(rows, tasks)) for job, rows in jobs]
+            kept = [r for _, rows in jobs for r in rows]
+            run = _subset_facts(run, kept, listed, tasks, row=True)
         sources = [
             s
             for job, rows in jobs
@@ -665,11 +727,15 @@ def harbor_sources(
     job = ref
     shows: dict[str, JsonObject] = {}
     run, rows = listing(cli, job, progress, shows=shows)
+    if tasks is not None:
+        listed = len(rows)
+        rows = _in_subset(rows, tasks)
+        run = _subset_facts(run, rows, listed, tasks, row=False)
     sources = _trial_sources(cli, job, rows, dest, full, workers, refresh, progress, shows[job])
     return sources, run
 
 
-def inspect_job(value: str, cli: Harbor | None = None) -> Doc:
+def inspect_job(value: str, cli: Harbor | None = None, tasks: frozenset[str] | None = None) -> Doc:
     """Listing only (no downloads): run facts plus per-trial metadata records."""
     kind, ref = reference(value)
     cli = cli or HarborCLI.find()
@@ -678,6 +744,10 @@ def inspect_job(value: str, cli: Harbor | None = None) -> Doc:
         rows = [r for _, job_rows in jobs for r in job_rows]
     else:
         run, rows = listing(cli, ref)
+    if tasks is not None:
+        listed = len(rows)
+        rows = _in_subset(rows, tasks)
+        run = _subset_facts(run, rows, listed, tasks, row=kind == "row")
     rows = [r for r in rows if valid_row(r)]
     chains = retry_chains(rows)
     trials = [dict(trial_meta(r, chains.get(str(r["id"]))), input_id=trial_label(r)) for r in rows]

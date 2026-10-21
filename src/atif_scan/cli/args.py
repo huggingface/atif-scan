@@ -117,6 +117,14 @@ def _input_arguments(parser: argparse.ArgumentParser) -> None:
         "detectors still scan ATIF only",
     )
     harbor.add_argument("--jobs", type=int, default=16, help="parallel downloads (default 16)")
+    harbor.add_argument(
+        "--task-subset",
+        type=Path,
+        metavar="FILE",
+        help="scan only these tasks' trials of harbor:// jobs and leaderboard rows: a JSON "
+        "list of task names (e.g. a benchmark's task subset). Planned trials are cut to them; "
+        "the row's leaderboard figures still describe the whole row",
+    )
     tasks = parser.add_mutually_exclusive_group()
     tasks.add_argument("--task", help="task identity for task-scoped checks")
     tasks.add_argument(

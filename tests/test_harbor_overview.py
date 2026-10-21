@@ -713,3 +713,100 @@ def test_listed_trials_without_a_trajectory_are_kept_in_every_layout():
     assert listed_without_trajectory({".": (hub, trials)}, complete) == []
     # A trials.jsonl ledger alone may describe trials that were never copied.
     assert listed_without_trajectory({".": (None, trials)}, flat) == []
+
+
+# --task-subset: scan only some tasks' trials of a Hub job or leaderboard row (e.g. a
+# benchmark's task subset), with planned trials cut to them.
+def subset_file(tmp_path, names, name="subset.json"):
+    path = tmp_path / name
+    path.write_text(json.dumps(names))
+    return str(path)
+
+
+def test_job_subset_lists_downloads_and_plans_only_its_tasks(harbor, tmp_path, capsys):
+    tasks = subset_file(tmp_path, ["alpha"])
+    assert main([f"harbor://jobs/{JOB}", "--task-subset", tasks, "--format", "json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert sorted(i["input_id"] for i in doc["inputs"]) == ["alpha__T1", "alpha__T2"]
+    run = doc["runs"][0]
+    # The job's plan is 2 attempts per task: 2 for the one subset task, not the job's 8.
+    assert run["planned_trials"] == 2 and run["listed_trials"] == 2
+    assert run["tasks"] == ["alpha"] and run["cost_usd"] == 1.0
+    assert run["task_subset"] == {"tasks": 1, "matched_tasks": 1, "trials": 2, "of_trials": 6}
+    downloads = calls(harbor, "download")
+    assert len(downloads) == 2 and all(
+        "-000000000001" in d or "-000000000002" in d for d in downloads
+    )
+
+
+def test_job_subset_names_may_carry_the_dataset_prefix(harbor, tmp_path, capsys):
+    tasks = subset_file(tmp_path, ["terminal-bench/beta", "delta"])  # delta: not in the job
+    assert main([f"harbor://jobs/{JOB}", "--task-subset", tasks, "--format", "json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert sorted(i["input_id"] for i in doc["inputs"]) == ["beta__T3", "beta__T4"]
+    run = doc["runs"][0]
+    assert run["task_subset"]["tasks"] == 2 and run["task_subset"]["matched_tasks"] == 1
+    assert run["errored_trials"] == 1  # beta__T4 timed out
+    assert run["cost_usd"] is None  # beta__T4 records no cost: no partial total
+
+
+def test_row_subset_keeps_the_rows_trials_of_those_tasks(row_harbor, tmp_path, capsys):
+    tasks = subset_file(tmp_path, ["beta"])
+    assert main([f"harbor://rows/{ROW}", "--task-subset", tasks, "--format", "json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert sorted(i["input_id"] for i in doc["inputs"]) == ["beta__T10", "beta__T11"]
+    run = doc["runs"][0]
+    assert run["planned_trials"] == 2  # the row's own trials of the subset
+    assert run["task_subset"] == {"tasks": 1, "matched_tasks": 1, "trials": 2, "of_trials": 4}
+    assert run["leaderboard"]["reported_n_trials"] == 5  # still the whole row's figure
+    assert not [c for c in calls(row_harbor, "download") if "-000000000001" in c]
+
+
+def test_row_subset_brief_says_what_was_kept(row_harbor, tmp_path, capsys):
+    tasks = subset_file(tmp_path, ["beta"])
+    main([f"harbor://rows/{ROW}", "--task-subset", tasks, "--format", "text"])
+    out = capsys.readouterr().out
+    flat = " ".join(out.split())
+    assert "task subset: 1 task of 1 listed · 2 trials of 4" in flat
+    assert "over 5 trials (the whole row; 2 trials of a task subset scanned here)" in flat
+    assert "⚠ 2 trials scanned here" not in flat
+    assert "2 trials of 1 task" in " ".join(section(out, "RUN").split())
+
+
+def test_inspect_with_a_subset_counts_only_its_trials(row_harbor, tmp_path, capsys):
+    tasks = subset_file(tmp_path, ["alpha"])
+    assert (
+        main(["--inspect", f"harbor://rows/{ROW}", "--task-subset", tasks, "--format", "json"]) == 0
+    )
+    card = json.loads(capsys.readouterr().out)["harbor_jobs"][0]
+    assert card["trials"]["present"] == 2 and card["trials"]["planned"] == 2
+    assert not calls(row_harbor, "download")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"alpha": 1}',  # not a list
+        "[]",  # empty
+        '["alpha", "../x y"]',  # not a task name
+        '["alpha", 3]',
+        "not json",
+    ],
+)
+def test_unreadable_subsets_are_refused(tmp_path, capsys, content):
+    path = tmp_path / "subset.json"
+    path.write_text(content)
+    with pytest.raises(SystemExit) as stop:
+        main([f"harbor://jobs/{JOB}", "--task-subset", str(path)])
+    assert stop.value.code == 2
+    assert "not a readable JSON list of task names" in capsys.readouterr().err
+
+
+def test_subsets_are_for_hub_inputs_only(tmp_path, capsys):
+    tasks = subset_file(tmp_path, ["alpha"])
+    trace = tmp_path / "trajectory.json"
+    trace.write_text("{}")
+    for argv in ([str(trace)], [f"harbor://jobs/{JOB}", str(trace)]):
+        with pytest.raises(SystemExit):
+            main([*argv, "--task-subset", tasks])
+        assert "applies to harbor:// jobs and leaderboard rows only" in capsys.readouterr().err

@@ -254,6 +254,16 @@ atif-scan --inspect harbor://jobs/<id>      # listing only: nothing downloaded
 
 - The task comes from the Hub record, so `--task-from` isn't needed. `--task` still
   overrides it.
+- **Task subsets.** `--task-subset FILE` (a JSON list of task names, bare or as the Hub
+  records them, `org/task`) keeps only those tasks' trials of every `harbor://` input:
+  the rest are neither downloaded nor scanned. Use it to compare a leaderboard row with
+  runs of a benchmark subset (`--expect-tasks` and `--min-trials` as for the subset).
+  Planned trials are cut to the subset: a row's own trials of those tasks, or a job's
+  attempts per task times the subset tasks it ran. Each run records `task_subset`
+  (subset size, tasks matched, trials kept of those listed), and the brief says so; the
+  row's leaderboard accuracy, trial count and cost stay the whole row's and are labelled
+  that way. Local and `hf://` inputs are refused: their plans come from job files that
+  can't be cut by task.
 - Sync is enabled by default; `--sync-dir DIR` relocates the private copies.
   `--no-sync` uses temporary downloads, incompatible with durable judge bundles.
 - Harbor is run without a shell, with a validated job ID. Its stderr is never echoed.

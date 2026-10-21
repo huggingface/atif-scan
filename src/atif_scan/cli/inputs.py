@@ -117,6 +117,7 @@ def inputs(args: argparse.Namespace) -> list[Record]:
                 workers=args.jobs,
                 refresh=args.refresh,
                 progress=status_line if sys.stderr.isatty() else _quiet,
+                tasks=getattr(args, "task_names", None),
             )
             args.runs.append(run)
             found += hub

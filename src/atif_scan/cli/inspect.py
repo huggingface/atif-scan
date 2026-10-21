@@ -47,7 +47,8 @@ def inspect(args: argparse.Namespace) -> int:
     try:
         local = [p for p in args.paths if not is_harbor(p)]
         doc = inspection([list_input(p) for p in local], args.pattern)
-        jobs = [inspect_job(p) for p in args.paths if is_harbor(p)]
+        tasks = getattr(args, "task_names", None)
+        jobs = [inspect_job(p, tasks=tasks) for p in args.paths if is_harbor(p)]
     except SourceError as error:
         print(f"atif-scan: {error}", file=sys.stderr)
         return 2

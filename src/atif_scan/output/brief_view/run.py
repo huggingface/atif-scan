@@ -57,6 +57,8 @@ def _run_refs(b: Doc) -> Lines:
                 lines.append(tasks)
             if lb := r.get("leaderboard"):
                 lines.append(_leaderboard(lb))
+            if subset := _subset(r):
+                lines.append(subset)
         return lines
     kinds = {RUN_KINDS.get(r.get("source") or "", "job") for r in runs}
     kind = kinds.pop() if len(kinds) == 1 else "job"
@@ -67,7 +69,18 @@ def _run_refs(b: Doc) -> Lines:
     lines.append(f"{len(runs)} {kind}s, trials in each: " + counts(listed))
     sources = {t for r in runs if (t := _tasks_source(r))}
     lines += sorted(sources)
+    lines += [f"job {str(r.get('job_id') or '?')[:8]} · {s}" for r in runs if (s := _subset(r))]
     return lines
+
+
+def _subset(r: Doc) -> str | None:
+    """--task-subset: which of the job's or row's trials this scan kept."""
+    if not (sub := r.get("task_subset")):
+        return None
+    return (
+        f"task subset: {plural(sub['matched_tasks'], 'task')} of {sub['tasks']} listed"
+        f" · {plural(sub['trials'], 'trial')} of {sub['of_trials']:,}"
+    )
 
 
 def _tasks_source(r: Doc) -> str | None:
@@ -142,7 +155,13 @@ def _has_se(b: Doc) -> bool:
     return known and (tasks.get("max_trials") or 0) >= MIN_ATTEMPTS_FOR_SE
 
 
-def _reported(lb: Doc, n: int) -> Lines:
+def _scanned_here(reported: int, n: int, subset: bool) -> str:
+    if subset:  # expected with --task-subset: the row's figures cover all its tasks
+        return f" (the whole row; {plural(n, 'trial')} of a task subset scanned here)"
+    return "" if reported == n else f" ({WARN} {plural(n, 'trial')} scanned here)"
+
+
+def _reported(lb: Doc, n: int, subset: bool = False) -> Lines:
     if lb.get("reported_accuracy") is None:
         return []
     text = f"{INFO} the leaderboard reports {lb['reported_accuracy']:.1f}%"
@@ -152,9 +171,9 @@ def _reported(lb: Doc, n: int) -> Lines:
             f" ({lb['reported_reward_hacks_pct']:.1f}% of trials)"
         )
     if lb.get("reported_n_trials") is not None:
-        same = lb["reported_n_trials"] == n
-        text += f" over {plural(lb['reported_n_trials'], 'trial')}"
-        text += "" if same else f" ({WARN} {plural(n, 'trial')} scanned here)"
+        text += f" over {plural(lb['reported_n_trials'], 'trial')}" + _scanned_here(
+            lb["reported_n_trials"], n, subset
+        )
     if lb.get("reported_cost_usd") is not None:
         text += f" · {usd(lb['reported_cost_usd'])}"
         if lb.get("display_cost") and "partial" in lb["display_cost"]:
@@ -242,7 +261,7 @@ def _leaderboard_texts(b: Doc, n: int) -> Lines:
     texts: Lines = []
     for r in b["runs"]:
         if lb := r.get("leaderboard"):
-            texts += _reported(lb, n)
+            texts += _reported(lb, n, subset=bool(r.get("task_subset")))
             if r.get("unresolved_trials"):
                 texts.append(
                     f"{WARN} {plural(r['unresolved_trials'], 'row trial')} not found in any job"
