@@ -351,17 +351,34 @@ def program_tool(name: str, args: object) -> str:
         if "search_query" in keys:
             return "web_search"
         return "web_fetch" if keys & {"open", "click", "find"} else "other"
+    if name in NO_INPUT_TOOLS and args is None:
+        return "inert"  # `tools.clock__curr_time()`: called with no argument at all
     return normalize_tool(name, args if isinstance(args, dict) else None)
+
+
+# Tools that only read harness state and take no input, so an empty call can carry no
+# command, path, URL or text. Inert only when called with nothing: any argument stays
+# unknown. Codex code mode's clock: 1,540 `tools.clock__curr_time({})` calls in one TB4
+# job each left every input check unknown.
+NO_INPUT_TOOLS = frozenset({"clock__curr_time"})
 
 
 def normalize_tool(name: str, args: object = None) -> str:
     if name in ("web__run", "web.run"):
         return program_tool(name, args)
-    if name == "write_stdin" and isinstance(args, Mapping) and not args.get("chars"):
-        return "inert"  # Codex polling a running session: nothing was typed
-    if name == "background_exec" and isinstance(args, Mapping) and not args.get("command"):
-        return "inert"  # dtcoder waiting on/stopping/listing a background task: nothing ran
-    return _normalize_action(name, args)
+    return "inert" if _idle_call(name, args) else _normalize_action(name, args)
+
+
+def _idle_call(name: str, args: object) -> bool:
+    """A call that, with these arguments, sends nothing anywhere."""
+    if not isinstance(args, Mapping):
+        return False
+    if name == "write_stdin":
+        return not args.get("chars")  # Codex polling a running session: nothing was typed
+    if name == "background_exec":
+        # dtcoder waiting on/stopping/listing a background task: nothing ran
+        return not args.get("command")
+    return name in NO_INPUT_TOOLS and not args
 
 
 def _normalize_action(name: str, args: object) -> str:
