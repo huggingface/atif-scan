@@ -5,7 +5,10 @@ Codex's code mode records one `exec` call whose `input` is a program such as
 finds each `tools.NAME({...})` call in code (not in strings or comments) and parses its
 argument when it is a *literal* (objects, arrays, strings, numbers, true/false/null), or a
 name bound once to a string literal (`const patch = "*** Begin Patch…"; tools.apply_patch
-(patch)`). Nothing is executed. Any other value (a reassigned or shadowed name, `${}`
+(patch)`). A call inside a loop over a fixed list (`for (const id of ids)`,
+`ids.map(id => …)`, with `ids` a never-changed list of strings and integers) is read once
+per element, with `${id}`, `"a" + id` and `{id}` filled in: a superset of what ran.
+Nothing is executed. Any other value (a reassigned or shadowed name, other `${}`
 interpolation, an expression) becomes `UNREAD`, and any other use of `tools` (`tools[k]()`,
 `const t = tools`) adds a `("?", UNREAD)` call, so callers treat it as unknown, not absent.
 """
@@ -13,9 +16,11 @@ interpolation, an expression) becomes `UNREAD`, and any other use of `tools` (`t
 from __future__ import annotations
 
 import re
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from itertools import product
+from math import prod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -44,6 +49,25 @@ _REGEX_AFTER = frozenset("(,=:[!&|?{};+-*%<>~^")  # else `/` is division (stays 
 _PAIRS = {")": "(", "]": "[", "}": "{"}
 
 
+# A template hole naming one variable: `${name}`.
+_HOLE = re.compile(r"\$\{\s*([A-Za-z_$][\w$]*)\s*\}")
+
+
+def _joinable(value: object) -> bool:
+    """A string or integer: what `+` and `${}` turn into text exactly as written here.
+    Floats (JavaScript prints 2.0 as "2") and booleans are left unread."""
+    return isinstance(value, str) or (isinstance(value, int) and not isinstance(value, bool))
+
+
+def _join(left: object, right: object) -> object:
+    """JavaScript's `left + right` for strings and integers: a sum or a concatenation."""
+    if isinstance(left, int) and isinstance(right, int):
+        return left + right
+    return f"{left}{right}"
+
+
+# A name's value from where it is bound: (that position, the value).
+Binding = tuple[int, object]
 # (non-code span starts, their ends, matched bracket positions both ways)
 Lexed = tuple[list[int], list[int], dict[int, int]]
 
@@ -127,7 +151,7 @@ class _Lexer:
 
 
 class _Reader:
-    def __init__(self, text: str, lexed: Lexed, bindings: dict[str, tuple[int, str]]) -> None:
+    def __init__(self, text: str, lexed: Lexed, bindings: dict[str, Binding]) -> None:
         self.text, self.pos, self.bindings = text, 0, bindings
         self.starts, self.ends, self.pairs = lexed
 
@@ -175,10 +199,29 @@ class _Reader:
             if quote != "`" and ch == "\n":
                 break  # quoted strings end at the line
             if quote == "`" and text.startswith("${", self.pos):
+                hole = self.hole()
+                if hole is not None:
+                    out.append(hole)
+                    continue
                 readable = False  # interpolation: the runtime value isn't in the source
             out.append(ch)
             self.pos += 1
         raise ValueError("unterminated string")
+
+    def hole(self) -> str | None:
+        """A template's `${name}` hole at `pos` when `name` is bound here to a string or
+        integer (its text, as JavaScript writes it); moves past it. Else None."""
+        match = _HOLE.match(self.text, self.pos)
+        value = self.bound(match.group(1)) if match else UNREAD
+        if match is None or not _joinable(value):
+            return None
+        self.pos = match.end()
+        return str(value)
+
+    def bound(self, name: str) -> object:
+        """The value `name` is bound to at `pos`, else UNREAD."""
+        binding = self.bindings.get(name)
+        return binding[1] if binding is not None and binding[0] <= self.pos else UNREAD
 
     def escape(self) -> str:
         """What the backslash escape at `pos` stands for; moves past it."""
@@ -196,7 +239,9 @@ class _Reader:
         if depth > MAX_NESTING:
             raise ValueError("too deep")
         value = self.literal(depth)
-        # `"a" + b`, `x.join(" ")`, ternaries...: not a plain literal.
+        if value is not _EXPRESSION and self.peek() == "+":
+            value = self.concat(value)
+        # `"a" + b.c`, `x.join(" ")`, ternaries...: not a plain literal.
         if value is _EXPRESSION or self.peek() not in (",", "}", "]", ")", ""):
             self.expression()
             return UNREAD
@@ -217,6 +262,18 @@ class _Reader:
             return elements
         return self.scalar()
 
+    def concat(self, first: object) -> object:
+        """`first + "b" + name …` from `pos`: strings, integers and bound names, joined
+        left to right as JavaScript does; _EXPRESSION for anything else."""
+        value = first
+        while self.peek() == "+" and not self.text.startswith(("++", "+="), self.pos):
+            self.pos += 1
+            operand = self.string() if self.peek() in QUOTES else self.scalar()
+            if not (_joinable(value) and _joinable(operand)):
+                return _EXPRESSION
+            value = _join(value, operand)
+        return value
+
     def scalar(self) -> object:
         """A number, keyword or bound name at `pos`, else _EXPRESSION."""
         number = _NUMBER.match(self.text, self.pos)
@@ -227,11 +284,8 @@ class _Reader:
         name = ident.group() if ident else None
         if ident is None or name is None:
             return _EXPRESSION
-        if name in _KEYWORDS:
-            value = _KEYWORDS[name]
-        elif name in self.bindings and self.bindings[name][0] <= self.pos:
-            value = self.bindings[name][1]
-        else:
+        value = _KEYWORDS[name] if name in _KEYWORDS else self.bound(name)
+        if value is UNREAD:
             return _EXPRESSION
         self.pos = ident.end()
         return value
@@ -280,7 +334,7 @@ class _Reader:
             self.pos += 1
             out[key] = self.value(depth + 1)
         else:
-            out[key] = UNREAD  # shorthand `{cmd}`: a variable
+            out[key] = self.bound(key)  # shorthand `{cmd}`: a variable, read when bound
 
 
 _DECLARE = re.compile(r"(?<![\w$.])(?:const|let|var)(?![\w$])")
@@ -304,12 +358,14 @@ class _Declarations:
     declared: Counter[str] = field(default_factory=Counter)  # declarations per name
     values: dict[str, tuple[int, object]] = field(default_factory=dict)  # (after, value)
     shadowed: set[str] = field(default_factory=set)  # destructured names
+    sites: dict[str, int] = field(default_factory=dict)  # where each name is declared
 
 
-def _string_bindings(program: str, reader: _Reader) -> dict[str, tuple[int, str]]:
-    """Names declared exactly once, to a string literal, and never reassigned, destructured,
-    or used as a parameter: name -> (position after the binding, value). Strings are
-    immutable, so such a name holds that literal wherever it's in scope. One pass each."""
+def _bindings(program: str, reader: _Reader) -> tuple[dict[str, Binding], dict[str, Binding]]:
+    """Names declared exactly once and never reassigned, destructured, or used as a
+    parameter: (those bound to a string literal, those bound to a list of strings and
+    integers that is only ever read). Strings are immutable and such a list is never
+    changed, so the name holds that literal wherever it's in scope. One pass each."""
     found = _Declarations()
     for match in _DECLARE.finditer(program):
         if not reader.code(match.start()):
@@ -321,14 +377,26 @@ def _string_bindings(program: str, reader: _Reader) -> dict[str, tuple[int, str]
             continue
     assigned = Counter(m[1] for m in _ASSIGN.finditer(program) if reader.code(m.start()))
     shadowed = found.shadowed | _rebound(program, reader)
-    return {
+    once = {
         name: (pos, value)
         for name, (pos, value) in found.values.items()
-        if isinstance(value, str)
-        and found.declared[name] == 1
-        and assigned[name] == 1
-        and name not in shadowed
+        if found.declared[name] == 1 and assigned[name] == 1 and name not in shadowed
     }
+    strings = {name: b for name, b in once.items() if isinstance(b[1], str)}
+    candidates = {
+        name: value
+        for name, (_, value) in once.items()
+        if isinstance(value, list)
+        and 0 < len(value) <= MAX_EXPANSION
+        and all(_joinable(v) for v in value)
+    }
+    uses = _uses(program, reader, set(candidates))
+    lists: dict[str, Binding] = {
+        name: (once[name][0], tuple(value))
+        for name, value in candidates.items()
+        if all(at == found.sites[name] or _only_reads(program, reader, at) for at in uses[name])
+    }
+    return strings, lists
 
 
 def _declaration(program: str, reader: _Reader, found: _Declarations) -> None:
@@ -348,6 +416,7 @@ def _declarator(program: str, reader: _Reader, found: _Declarations) -> bool:
     elif ident := _IDENT.match(program, reader.pos):
         reader.pos, name = ident.end(), ident.group()
         found.declared[name] += 1
+        found.sites[name] = ident.start()
     else:
         return False
     after, value = _initializer(program, reader)
@@ -357,12 +426,17 @@ def _declarator(program: str, reader: _Reader, found: _Declarations) -> bool:
 
 
 def _initializer(program: str, reader: _Reader) -> tuple[int, object]:
-    """(position after the value, the value when it's a string literal, else UNREAD)."""
+    """(position after the value, the value when it's a string or array literal, else
+    UNREAD)."""
     after = reader.pos
     if reader.peek() != "=" or program[reader.pos + 1 : reader.pos + 2] in "=>":
         return after, UNREAD
     reader.pos += 1
-    value = reader.string() if reader.peek() in QUOTES else UNREAD
+    ch, start = reader.peek(), reader.pos
+    try:
+        value = reader.string() if ch in QUOTES else reader.literal(0) if ch == "[" else UNREAD
+    except (ValueError, IndexError, KeyError, RecursionError):
+        reader.pos, value = start, UNREAD  # not a literal: skipped as an expression below
     if not _END_LITERAL.match(program, reader.pos):
         value = UNREAD  # `"a" + b`, `"x".repeat(3)`: an expression
     after = reader.pos
@@ -370,18 +444,248 @@ def _initializer(program: str, reader: _Reader) -> tuple[int, object]:
     return after, value
 
 
-def _rebound(program: str, reader: _Reader) -> set[str]:
-    """Names rebound in code other than by assignment: parameters, catch, function/class
-    names, ++/--, destructuring assignment."""
+def _rebound(program: str, reader: _Reader, start: int = 0, end: int | None = None) -> set[str]:
+    """Names rebound in code (between `start` and `end`) other than by assignment:
+    parameters, catch, function/class names, ++/--, destructuring assignment."""
+    end = len(program) if end is None else end
     shadowed: set[str] = set()
-    for m in _SHADOW.finditer(program):
+    for m in _SHADOW.finditer(program, start, end):
         if reader.code(m.start()):
             for group in filter(None, m.groups()):
                 shadowed.update(_IDENT.findall(group))
-    for m in _DESTRUCTURE.finditer(program):  # `[a, b] = x`, `({a} = x)`
+    for m in _DESTRUCTURE.finditer(program, start, end):  # `[a, b] = x`, `({a} = x)`
         if reader.code(m.start()) and m.start() in reader.pairs:
             shadowed.update(_IDENT.findall(program, reader.pairs[m.start()], m.start()))
     return shadowed
+
+
+# Loops over a list bound in the program: a call inside runs once per element, so it is
+# read once per element (a superset of what ran: `break` or an `if` only run fewer).
+MAX_EXPANSION = 64  # element combinations read per call before leaving it unread
+# `const`/`let` only: a `var` outlives the loop, so a callback made in it could see it
+# reassigned afterwards.
+_FOR_OF = re.compile(r"(?<![\w$.])for\s*\(\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s+of(?![\w$])")
+# Code that can rebind names out of sight: no loop is read in a program using it.
+_DYNAMIC = re.compile(r"(?<![\w$.])(?:eval|Function|with)\s*\(")
+_EACH = re.compile(r"\.\s*(?:map|forEach|flatMap)\s*\(")
+_CALLBACK = re.compile(
+    r"\s*(?:async\s+)?(?:([A-Za-z_$][\w$]*)"
+    r"|\(\s*([A-Za-z_$][\w$]*)\s*(?:,\s*[A-Za-z_$][\w$]*\s*)?\))\s*=>"
+)
+_NAME_BEFORE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\Z")
+_NAME_USE = re.compile(r"(?<![\w$.])[A-Za-z_$][\w$]*")
+_CLOSE_NEXT = re.compile(r"\s*\)")
+LOOKBACK = 256  # characters searched back for a name before `.map(` or `of`
+MAX_LOOPS = 200  # loop forms in one program before none is read (keeps reading linear)
+# Uses of a list that leave it as it is: these methods, `.length`, `xs[i]` reads.
+_READ_USE = re.compile(
+    r"\s*(?:\.\s*(?:(map|forEach|flatMap|filter|some|every|find|findIndex)\s*\("
+    r"|(?:includes|indexOf|join|slice|at|length)(?![\w$])(?!\s*=(?!=)))|(\[))"
+)
+_WRITE = re.compile(r"\s*(?:(?:\*\*|>>>|<<|>>|\?\?|\|\||&&|[-+*/%&|^])?=(?!=)|\+\+|--)")
+_OF_BEFORE = re.compile(r"(?<![\w$])of\s*\Z")
+
+
+def _back(program: str, pos: int) -> int:
+    """Where the code before `pos` ends, past trailing whitespace (bounded by LOOKBACK)."""
+    stop = max(0, pos - LOOKBACK)
+    while pos > stop and program[pos - 1].isspace():
+        pos -= 1
+    return pos
+
+
+def _uses(program: str, reader: _Reader, names: set[str]) -> dict[str, list[int]]:
+    """Where each of `names` occurs in code, in one pass."""
+    found: dict[str, list[int]] = {name: [] for name in names}
+    if names:
+        for m in _NAME_USE.finditer(program):
+            if m.group() in found and reader.code(m.start()):
+                found[m.group()].append(m.start())
+    return found
+
+
+def _only_reads(program: str, reader: _Reader, at: int) -> bool:
+    """The use of a list name at `at` (not its declaration) only reads the list: a loop's
+    source, a non-mutating method, `.length` or an element read. Passing it anywhere else
+    (a function could change it) is not."""
+    name = _NAME_USE.match(program, at)
+    if name is None:
+        return False
+    after = name.end()
+    of = _OF_BEFORE.search(program, max(0, at - LOOKBACK), at)
+    return bool(of and _CLOSE_NEXT.match(program, after)) or _reads(program, reader, after)
+
+
+def _reads(program: str, reader: _Reader, end: int) -> bool:
+    """The use of a list name ending at `end` only reads it."""
+    use = _READ_USE.match(program, end)
+    if use is None:
+        return False
+    if use.group(1) is not None:
+        # A callback is passed the list itself as its third argument: allow only an
+        # inline arrow taking at most two.
+        return _CALLBACK.match(program, use.end()) is not None
+    if use.group(2) is not None:
+        close = reader.pairs.get(use.start(2))
+        return close is not None and not _WRITE.match(program, close + 1)
+    return True
+
+
+@dataclass(frozen=True)
+class _Loop:
+    start: int  # the body: where the element is bound
+    end: int
+    name: str
+    values: tuple[object, ...]
+    uses: tuple[int, ...] = ()  # where `name` occurs in code in the body, ascending
+
+    def used_in(self, start: int, end: int) -> bool:
+        k = bisect_left(self.uses, start)
+        return k < len(self.uses) and self.uses[k] < end
+
+
+def _loops(program: str, reader: _Reader, lists: dict[str, Binding]) -> list[_Loop]:
+    """`for (const x of SOURCE) BODY` and `SOURCE.map(x => BODY)` (also forEach,
+    flatMap) whose SOURCE is a list literal or a bound list and whose BODY never rebinds
+    `x`, outermost first."""
+    forms = [
+        (match, read)
+        for pattern, read in ((_FOR_OF, _for_of), (_EACH, _each))
+        for match in pattern.finditer(program)
+        if reader.code(match.start())
+    ]
+    if len(forms) > MAX_LOOPS:
+        return []
+    found: list[_Loop] = []
+    for match, read in forms:
+        try:
+            loop = read(program, reader, lists, match)
+            if loop is not None and loop.name not in _rebound_in(program, reader, loop):
+                found.append(loop)
+        except (ValueError, IndexError, KeyError, RecursionError):
+            continue
+    uses = _uses(program, reader, {loop.name for loop in found})
+    return sorted(
+        (
+            replace(loop, uses=tuple(u for u in uses[loop.name] if loop.start <= u < loop.end))
+            for loop in found
+        ),
+        key=lambda loop: loop.start,
+    )
+
+
+def _source(reader: _Reader, lists: dict[str, Binding], name: str | None) -> object:
+    """The list a loop runs over: the bound list `name`, or the literal at `reader.pos`."""
+    if name is not None:
+        binding = lists.get(name)
+        return binding[1] if binding is not None and binding[0] <= reader.pos else None
+    value = reader.literal(0) if reader.peek() == "[" else None
+    ok = isinstance(value, list) and 0 < len(value) <= MAX_EXPANSION
+    return tuple(value) if ok and all(_joinable(v) for v in value) else None
+
+
+def _for_of(
+    program: str, reader: _Reader, lists: dict[str, Binding], match: re.Match[str]
+) -> _Loop | None:
+    close = reader.pairs[program.index("(", match.start())]
+    reader.pos = match.end()
+    reader.skip()
+    ident = _IDENT.match(program, reader.pos)
+    if reader.peek() == "[":
+        values = _source(reader, lists, None)
+    elif ident is not None:
+        reader.pos = ident.end()
+        values = _source(reader, lists, ident.group())
+    else:
+        return None
+    if not isinstance(values, tuple) or reader.peek() != ")" or reader.pos != close:
+        return None
+    reader.pos = close + 1
+    if reader.peek() == "{":
+        return _Loop(reader.pos, reader.pairs[reader.pos], match.group(1), values)
+    start = reader.pos
+    reader.expression()
+    return _Loop(start, reader.pos, match.group(1), values)
+
+
+def _each(
+    program: str, reader: _Reader, lists: dict[str, Binding], match: re.Match[str]
+) -> _Loop | None:
+    values = _each_source(program, reader, lists, _back(program, match.start()))
+    callback = _CALLBACK.match(program, match.end())
+    if not isinstance(values, tuple) or callback is None:
+        return None
+    end = reader.pairs[match.end() - 1]
+    return _Loop(callback.end(), end, callback.group(1) or callback.group(2), values)
+
+
+def _each_source(program: str, reader: _Reader, lists: dict[str, Binding], end: int) -> object:
+    """The list the code before `end` ends with, for `.map(…)` after it: a list literal or
+    a bound list name; None for anything else."""
+    if end and program[end - 1] == "]":
+        opening = reader.pairs[end - 1]
+        previous = _back(program, opening)
+        named = _NAME_BEFORE.search(program, max(0, previous - LOOKBACK), previous)
+        if named or (previous and program[previous - 1] in ")]"):
+            return None  # `xs[0].map(…)`, `f()[1].map(…)`: an element, not a literal
+        reader.pos = opening
+        values = _source(reader, lists, None)
+        return values if reader.pos == end else None
+    if named := _NAME_BEFORE.search(program, max(0, end - LOOKBACK), end):
+        reader.pos = named.end()
+        return _source(reader, lists, named.group(1))
+    return None
+
+
+def _rebound_in(program: str, reader: _Reader, loop: _Loop) -> set[str]:
+    """Names a loop's body declares, assigns or rebinds."""
+    assigned: set[str]
+    found = _Declarations()
+    for match in _DECLARE.finditer(program, loop.start, loop.end):
+        if reader.code(match.start()):
+            reader.pos = match.end()
+            _declaration(program, reader, found)
+    assigned = {
+        m[1] for m in _ASSIGN.finditer(program, loop.start, loop.end) if reader.code(m.start())
+    }
+    return (
+        set(found.declared)
+        | found.shadowed
+        | assigned
+        | _rebound(program, reader, loop.start, loop.end)
+    )
+
+
+def _expanded(reader: _Reader, start: int, loops: list[_Loop]) -> list[object]:
+    """The argument of the call whose `(` ends at `start`, once per combination of the
+    elements of the loops around it that it uses; one UNREAD when there are too many."""
+    base = reader.bindings
+    first, end = _argument(reader, start, base)
+    around = [loop for loop in loops if loop.start <= start < loop.end and loop.used_in(start, end)]
+    if not around:
+        return [first]
+    if prod(len(loop.values) for loop in around) > MAX_EXPANSION:
+        return [UNREAD]
+    out: dict[str, object] = {}
+    for combination in product(*(loop.values for loop in around)):
+        bound = dict(base)
+        for loop, value in zip(around, combination, strict=True):
+            bound[loop.name] = (loop.start, value)  # inner loops last: they win
+        value = _argument(reader, start, bound)[0]
+        out.setdefault(repr(value), value)
+    return list(out.values())
+
+
+def _argument(reader: _Reader, start: int, bindings: dict[str, Binding]) -> tuple[object, int]:
+    """(the argument at `start` read with these bindings, where it ends)."""
+    saved, reader.bindings, reader.pos = reader.bindings, bindings, start
+    try:
+        value = None if reader.peek() == ")" else reader.value()
+    except (ValueError, IndexError, KeyError, RecursionError):
+        value = UNREAD
+    finally:
+        reader.bindings = saved
+    return value, reader.pos
 
 
 def tool_calls(program: str) -> list[tuple[str, object]]:
@@ -390,7 +694,9 @@ def tool_calls(program: str) -> list[tuple[str, object]]:
     none; ("?", UNREAD) marks any other use of `tools`. Never raises: unreadable is UNREAD."""
     try:
         reader = _Reader(program, _lex(program), {})
-        reader.bindings = _string_bindings(program, reader)
+        reader.bindings, lists = _bindings(program, reader)
+        dynamic = any(reader.code(m.start()) for m in _DYNAMIC.finditer(program))
+        loops = [] if dynamic else _loops(program, reader, lists)
     except (ValueError, IndexError, KeyError, RecursionError):
         return [("?", UNREAD)] if CALL.search(program) else []
     calls: list[tuple[str, object]] = []
@@ -400,12 +706,7 @@ def tool_calls(program: str) -> list[tuple[str, object]]:
         if match.group(1) is None:
             calls.append(("?", UNREAD))  # `tools[k](…)`, `tools.x?.(…)`, `const t = tools`
             continue
-        reader.pos = match.end()
-        try:
-            argument = None if reader.peek() == ")" else reader.value()
-        except (ValueError, IndexError, KeyError, RecursionError):
-            argument = UNREAD
-        calls.append((match.group(1), argument))
+        calls.extend((match.group(1), a) for a in _expanded(reader, match.end(), loops))
     if not calls and CALL.search(program):
         calls.append(("?", UNREAD))  # `tools` only seen outside code: unsure, so unknown
     return calls

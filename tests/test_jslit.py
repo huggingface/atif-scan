@@ -57,6 +57,11 @@ SIZE = 50_000  # x4 in the linear check: 200 KB programs
         lambda n: "a" * n + " => tools.a(1)",
         lambda n: "/* " * (n // 3),
         lambda n: "x / " * (n // 4) + "tools.a(1)",
+        # Loops over fixed lists: nested loops, many lists, calls nested in a loop.
+        lambda n: "for (const x of [1]) " * (n // 21) + "tools.a({c: `${x}`})",
+        lambda n: "".join(f"const l{i} = [1]; l{i}.map(x => 1);" for i in range(n // 32)),
+        lambda n: "[1].map(x => " + "tools.a(" * (n // 9) + "x" + ")" * (n // 9) + ")",
+        lambda n: "const xs = [1];" + " xs.length;" * (n // 11) + " xs.map(x => tools.a(x))",
     ],
     ids=lambda p: p(40)[:12],
 )
@@ -96,7 +101,6 @@ def test_only_calls_in_code_are_read(program, expected):
 @pytest.mark.parametrize(
     "shadow",
     [
-        'for (const c of ["curl x"]) ',
         "const {c} = obj; ",
         "const [a, c] = xs; ",
         "let a = 1, c; ",
@@ -121,5 +125,15 @@ def test_shadowed_or_rebound_names_are_unread(shadow):
 
 
 def test_a_name_bound_once_is_still_read():
+    # Shorthand `{d}` reads a name bound once, like `cmd: c` does.
     program = 'const c = "ls", d = `x`; if (c) { tools.exec_command({cmd: c, d}) }'
-    assert tool_calls(program) == [("exec_command", {"cmd": "ls", "d": UNREAD})]
+    assert tool_calls(program) == [("exec_command", {"cmd": "ls", "d": "x"})]
+
+
+def test_a_loop_variable_is_the_element_not_an_outer_binding():
+    # A second binding of `c` must never resolve to the outer literal; inside the loop it
+    # is the loop's element.
+    program = 'const c = "ls"; for (const c of ["curl x"]) tools.exec_command({cmd: c})'
+    assert tool_calls(program) == [("exec_command", {"cmd": "curl x"})]
+    after = 'const c = "ls"; for (const c of ["curl x"]) {} tools.exec_command({cmd: c})'
+    assert tool_calls(after) == [("exec_command", {"cmd": UNREAD})]
