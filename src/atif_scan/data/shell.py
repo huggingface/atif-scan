@@ -22,7 +22,7 @@ from itertools import count
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 Span = tuple[int, int]
 
@@ -843,3 +843,203 @@ def later_in_pipeline(script: Script) -> dict[int, list[Command]]:
         for members in by_pipeline.values()
         for i, command in enumerate(members)
     }
+
+
+# grep-family and ripgrep options, for telling a search pattern from a file operand.
+# Per tool: `-E` is a flag to grep but takes an encoding in rg. Pattern options (`-e`)
+# and file options (`-f`) take a value too.
+_GREP_SHORT_FLAGS = frozenset("abcEFGHhIiLlnoPqRrsTUuVvwxyZz")
+_GREP_SHORT_VALUES = frozenset("ABCmdD")
+_GREP_LONG_VALUES = frozenset(
+    {
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--max-count",
+        "--directories",
+        "--devices",
+        "--label",
+        "--binary-files",
+        "--include",
+        "--exclude",
+        "--exclude-dir",
+        "--exclude-from",
+        "--group-separator",
+        "--color",
+        "--colour",
+    }
+)
+_RG_SHORT_FLAGS = frozenset("abcFHhiIlLnNopqsSuUvVwxz0")
+_RG_SHORT_VALUES = frozenset("ABCmMgtTEjdr")
+_RG_LONG_VALUES = frozenset(
+    {
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--max-count",
+        "--max-columns",
+        "--glob",
+        "--iglob",
+        "--type",
+        "--type-not",
+        "--type-add",
+        "--type-clear",
+        "--encoding",
+        "--threads",
+        "--max-depth",
+        "--max-filesize",
+        "--replace",
+        "--pre",
+        "--pre-glob",
+        "--sort",
+        "--sortr",
+        "--colors",
+        "--color",
+        "--context-separator",
+        "--field-match-separator",
+        "--field-context-separator",
+        "--path-separator",
+        "--engine",
+        "--ignore-file",
+    }
+)
+SEARCHERS = {
+    "grep": (_GREP_SHORT_FLAGS, _GREP_SHORT_VALUES, _GREP_LONG_VALUES),
+    "egrep": (_GREP_SHORT_FLAGS, _GREP_SHORT_VALUES, _GREP_LONG_VALUES),
+    "fgrep": (_GREP_SHORT_FLAGS, _GREP_SHORT_VALUES, _GREP_LONG_VALUES),
+    "ggrep": (_GREP_SHORT_FLAGS, _GREP_SHORT_VALUES, _GREP_LONG_VALUES),
+    "rg": (_RG_SHORT_FLAGS, _RG_SHORT_VALUES, _RG_LONG_VALUES),
+}
+_PATTERN_OPTIONS = frozenset({"-e", "--regexp"})
+_NO_PATTERN = frozenset({"--files", "--type-list"})
+_FILE_OPTIONS = frozenset({"-f", "--file"})
+
+
+@dataclass
+class _Search:
+    flags: frozenset[str]
+    values: frozenset[str]
+    long_values: frozenset[str]
+    patterns: list[Span] = field(default_factory=list)
+    operands: list[Span] = field(default_factory=list)
+    given: bool = False  # a pattern or pattern file came from an option
+
+
+def search_patterns(command: Command) -> list[Span] | None:
+    """Spans of the search patterns of a grep-family or rg command (its `-e` values, or
+    its first operand): text matched against, never a file it opens. `-f` files are not
+    patterns. None when the command isn't one, or an option isn't known (it might take
+    the next word, so which word is the pattern is unsure)."""
+    tables = SEARCHERS.get(command.name or "")
+    if tables is None:
+        return None
+    search = _Search(*tables)
+    words = iter(command.argv()[1:])
+    for word, span in words:
+        if word == "--":
+            search.operands.extend(s for _, s in words)
+            break
+        if not _search_word(search, word, span, words):
+            return None
+    if not search.given and search.operands:
+        search.patterns.append(search.operands[0])
+    return search.patterns
+
+
+def _search_word(search: _Search, word: str, span: Span, words: Iterator[tuple[str, Span]]) -> bool:
+    """Read one word of a search command; False when its meaning is unsure."""
+    if not word.startswith("-") or word == "-":
+        search.operands.append(span)
+        return True
+    if word.startswith("--"):
+        return _search_long(search, word, span, words)
+    return _search_short(search, word, span, words)
+
+
+def _search_short(
+    search: _Search, word: str, span: Span, words: Iterator[tuple[str, Span]]
+) -> bool:
+    """A cluster of short options (`-rn`, `-A3`, `-ie PATTERN`)."""
+    for k, letter in enumerate(word[1:], start=1):
+        if letter in "ef" or letter in search.values:
+            attached = len(word) > k + 1
+            return _take(search, letter, span if attached else next(words, (None, None))[1])
+        if letter not in search.flags:
+            return False
+    return True
+
+
+def _take(search: _Search, option: str, value: Span | None) -> bool:
+    """An option's value: a pattern (`e`), a pattern file (`f`) or anything else."""
+    if value is None:
+        return False
+    search.given |= option in "ef"
+    if option == "e":
+        search.patterns.append(value)
+    return True
+
+
+def _search_long(search: _Search, word: str, span: Span, words: Iterator[tuple[str, Span]]) -> bool:
+    name, has_value, _ = word.partition("=")
+    if name in _NO_PATTERN:
+        search.given = True  # `rg --files DIR`: every operand is a path, none a pattern
+        return True
+    if name in _PATTERN_OPTIONS or name in _FILE_OPTIONS:
+        value = span if has_value else next(words, (None, None))[1]
+        return _take(search, "e" if name in _PATTERN_OPTIONS else "f", value)
+    if name in search.long_values and not has_value:
+        return next(words, None) is not None
+    # A known value option written `--x=v`, or any `--flag`: an unknown long option without
+    # `=` might still take the next word, so only `=` forms and listed values are sure.
+    return bool(has_value) or name in _LONG_FLAGS
+
+
+_LONG_FLAGS = frozenset(
+    {
+        "--files",
+        "--files-with-matches",
+        "--files-without-match",
+        "--count",
+        "--line-number",
+        "--no-line-number",
+        "--with-filename",
+        "--no-filename",
+        "--ignore-case",
+        "--smart-case",
+        "--case-sensitive",
+        "--fixed-strings",
+        "--extended-regexp",
+        "--basic-regexp",
+        "--perl-regexp",
+        "--word-regexp",
+        "--line-regexp",
+        "--invert-match",
+        "--only-matching",
+        "--quiet",
+        "--silent",
+        "--recursive",
+        "--dereference-recursive",
+        "--hidden",
+        "--no-ignore",
+        "--no-ignore-vcs",
+        "--follow",
+        "--text",
+        "--null",
+        "--no-heading",
+        "--heading",
+        "--json",
+        "--vimgrep",
+        "--multiline",
+        "--pcre2",
+        "--no-messages",
+        "--search-zip",
+        "--trim",
+        "--unrestricted",
+        "--column",
+        "--byte-offset",
+        "--initial-tab",
+        "--max-columns-preview",
+        "--stats",
+        "--debug",
+    }
+)
