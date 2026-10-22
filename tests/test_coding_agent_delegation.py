@@ -63,6 +63,10 @@ def test_explicit_launch_is_high_priority_request(command):
         "grep 'codex exec' README.md",
         "cat > script.sh <<'EOF'\nclaude -p toy\nEOF",
         "# claude -p toy\ntrue",
+        # Codex's own patch helper (Codex 0.159 without code mode): applies, then exits.
+        "codex --codex-run-as-apply-patch $'*** Begin Patch\\n*** End Patch'",
+        "/opt/bin/codex --codex-run-as-apply-patch \"$(cat <<'P'\n*** Begin Patch\n"
+        '*** End Patch\nP\n)"',
     ],
 )
 def test_discovery_payloads_and_auth_are_not_delegation(command):
@@ -79,6 +83,11 @@ def test_discovery_payloads_and_auth_are_not_delegation(command):
         "codex",
         'python3 -c \'import subprocess; subprocess.run(["claude", "-p", "toy"])\'',
         'claude "unclosed',
+        # Only the helper's own first argument: another flag may start an agent.
+        "codex --full-auto toy",
+        'codex --model x --codex-run-as-apply-patch "toy"',
+        # A wrapper function isn't read, so its `$@` could be anything.
+        'apply_patch() { /opt/bin/codex --codex-run-as-apply-patch "$@"; }\napply_patch x',
     ],
 )
 def test_unsupported_forms_are_unknown(command):
@@ -165,3 +174,8 @@ def test_fast_agent_shell_input_is_read_as_a_command():
 )
 def test_unparsed_scripts_that_could_launch_stay_unknown(command):
     assert result(command).result.status is Status.UNKNOWN
+
+
+def test_a_launch_after_the_patch_helper_is_still_found():
+    command = "codex --codex-run-as-apply-patch p && codex exec 'Solve a synthetic task'"
+    assert result(command).result.status is Status.MATCH

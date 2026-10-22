@@ -18,6 +18,10 @@ HELP = frozenset({"--help", "-h", "--version", "-v"})
 CLAUDE_ADMIN = frozenset(
     {"auth", "login", "logout", "config", "mcp", "doctor", "update", "install"}
 )
+# Codex's own patch helper: with this first argument the binary applies the patch and
+# exits, never starting an agent (Codex's arg0 dispatch; how Codex 0.159 without code mode
+# applies patches from a shell, often through an `apply_patch() { …/codex … "$@"; }` wrapper).
+CODEX_HELPERS = frozenset({"--codex-run-as-apply-patch"})
 UNSUPPORTED = frozenset({"python", "python3", "eval", "xargs"})
 VALUE_OPTIONS = frozenset(
     {
@@ -79,6 +83,12 @@ def _launch(command: shell.Command) -> bool:
     return False
 
 
+def _no_agent(name: str | None, args: list[str]) -> bool:
+    """An admin subcommand, or Codex's patch helper: nothing that starts an agent."""
+    first = args[0] if args else None
+    return first in CLAUDE_ADMIN or (name == "codex" and first in CODEX_HELPERS)
+
+
 def _uncertain(command: shell.Command) -> bool:
     if _looked_up(command):  # `command -v "$x"` names a command without running it
         return False
@@ -87,7 +97,7 @@ def _uncertain(command: shell.Command) -> bool:
     args = [w for w, _ in command.argv()[1:]]
     if command.name in {"claude", "codex"}:
         return not (
-            _lookup(command) or any(a in HELP for a in args) or (args and args[0] in CLAUDE_ADMIN)
+            _lookup(command) or any(a in HELP for a in args) or _no_agent(command.name, args)
         )
     return command.name in UNSUPPORTED and bool(CLI.search(" ".join(command.words)))
 
