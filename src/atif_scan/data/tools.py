@@ -88,6 +88,7 @@ HARNESS_ALIASES = {
     "write_stdin": "shell",
     "apply_patch": "write",
     "update_plan": "inert",
+    "update_goal": "inert",  # Codex goal mode: a status ("complete"), like update_plan
     "wait": "inert",
     # Terminus 2.
     "bash_command": "shell",
@@ -286,6 +287,8 @@ ACTION_KEYS = {"file_editor": "command", "task_tracker": "command"}
 PROSE_TOOLS = {
     "think": ("thought", Channel.REASONING),
     "finish": ("message", Channel.MESSAGE),
+    # Codex goal mode: the goal the agent sets itself, in its own words.
+    "create_goal": ("objective", Channel.MESSAGE),
 }
 
 
@@ -359,8 +362,8 @@ def program_tool(name: str, args: object) -> str:
 # Tools that only read harness state and take no input, so an empty call can carry no
 # command, path, URL or text. Inert only when called with nothing: any argument stays
 # unknown. Codex code mode's clock: 1,540 `tools.clock__curr_time({})` calls in one TB4
-# job each left every input check unknown.
-NO_INPUT_TOOLS = frozenset({"clock__curr_time"})
+# job each left every input check unknown; Codex goal mode's `get_goal({})` likewise.
+NO_INPUT_TOOLS = frozenset({"clock__curr_time", "get_goal"})
 
 
 def normalize_tool(name: str, args: object = None) -> str:
