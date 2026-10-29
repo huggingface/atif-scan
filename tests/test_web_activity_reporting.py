@@ -5,7 +5,7 @@ from types import MappingProxyType
 
 import pytest
 
-from atif_scan import parse_trace
+from atif_scan import Context, Engine, Status, builtin_detectors, parse_trace
 from atif_scan.data.model import Content, Step, ToolCall, Trace
 from atif_scan.data.web_activity import WebActivity, call_activity, web_activity
 from atif_scan.output.brief import brief, brief_text
@@ -185,6 +185,66 @@ def item(label, gaps=(), activity=None):
     row.pop("coverage_gaps")
     row.pop("recording_gaps")
     return row
+
+
+@pytest.mark.parametrize("available", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_unknown_integrity_checks_are_not_proven_recording_gaps(available, legacy):
+    parsed = parse_trace({"steps": [{"source": "agent", "message": "done"}]}) if available else None
+    assessments = Engine(builtin_detectors()).evaluate(parsed, Context(partial=available))
+    row = report(assessments)
+    row.update(
+        input_id="synthetic",
+        input_status="available" if available else "unavailable_or_invalid",
+        input_error=None if available else "no_trajectory",
+        reward=1,
+    )
+    if legacy:
+        row.pop("recording_gaps")
+    assert all(
+        a.result.status == Status.UNKNOWN
+        for a in assessments
+        if a.spec.id in RECORDING_OVERLAP.values()
+    )
+    doc = document([row], "test")
+    assert not any(doc["coverage"]["recording_gaps"].values())
+    assert doc["coverage"]["behavioural_incomplete"] == 1
+    assert set(RECORDING_OVERLAP.values()) <= set(row["coverage_gaps"]["behavioural"])
+    text = " ".join(brief_text(brief(doc)).split())
+    assert "✓ no recording defect detected" not in text
+    assert "pairing links inferred" not in text
+    assert "pairing unresolved" not in text
+    assert "web outputs missing" not in text
+    assert "✓ no scanned trial shows benchmark awareness" not in text
+    if not available:
+        assert "no trajectory (no_trajectory)" in text
+
+
+def test_partial_recording_counts_only_the_proven_gap():
+    parsed = parse_trace(
+        {
+            "steps": [
+                {
+                    "source": "agent",
+                    "tool_calls": [
+                        {
+                            "tool_call_id": "w",
+                            "function_name": "web_search",
+                            "arguments": {"query": "synthetic query"},
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    row = report(Engine(builtin_detectors()).evaluate(parsed, Context(partial=True)))
+    assert row["recording_gaps"] == {
+        "trials": 1,
+        "pairing_reconstructed": 0,
+        "pairing_unresolved": 0,
+        "web_results_not_recorded": 1,
+    }
+    assert RECORDING_OVERLAP["pairing_unresolved"] in row["coverage_gaps"]["behavioural"]
 
 
 def test_overlapping_gaps_are_one_union_warning_with_subgroups():

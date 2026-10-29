@@ -88,7 +88,10 @@ RATIO_BASIS = {
 
 # Why a rewarded trial can't be cleared (report.uncleared_reasons), in plain words.
 NOT_CLEARED = {
-    "tool input not readable": "tool input unreadable",
+    # Legacy overview exports used a label that sounded like missing content.
+    "tool input not readable": (
+        "tool input analysis unresolved (dynamic/unsupported or unreadable)"
+    ),
 }
 
 

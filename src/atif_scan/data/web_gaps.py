@@ -24,6 +24,7 @@ class WebGaps:
 def _units(step: Step) -> list[ToolCall]:
     """Derived web actions sharing a parent are one recorded call/result unit."""
     parents = {c.id: c for c in step.calls if c.result_id is None and c.id}
+    ledger_parents = {c.result_id for c in step.calls if c.provenance == "runtime_recorded"}
     units: dict[int, ToolCall] = {}
     for call in step.calls:
         if call.tool not in ("web_search", "web_fetch") and call.name not in (
@@ -32,8 +33,10 @@ def _units(step: Step) -> list[ToolCall]:
             "web.run",
         ):
             continue
-        parent = parents.get(call.result_id or "", call)
-        units.setdefault(parent.index, parent)
+        # A PTC dispatch ledger does not expose child outcomes. Do not let its
+        # parent's printed aggregate clear the gap for an individual dispatch.
+        unit = call if call.result_id in ledger_parents else parents.get(call.result_id or "", call)
+        units.setdefault(unit.index, unit)
     return list(units.values())
 
 

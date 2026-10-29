@@ -11,7 +11,8 @@ the browser and reports need it as well as detectors. Deciding that something is
 - `loader`: parsing and loading ATIF; `content`, `tools`, `pairing`, `usage` hold what a
   value's text, a call, a result's pairing and the recorded usage mean
 - `model`: the immutable projection every layer reads
-- `shell`, `jslit`: static readers for shell commands and code-mode programs;
+- `shell`, `jslit`, `pylit`: static readers for shell commands, Codex code-mode
+  (JavaScript) and fast-agent `execute_python` (Python) tool programs;
   `program_state` counts programs keeping state the trace doesn't hold
 - `credentials`, `account_ids`: secret and account-identifier shapes (masking and detectors)
 - `web_inputs`, `web_results`, `web_activity`, `web_gaps`: web calls and what they returned

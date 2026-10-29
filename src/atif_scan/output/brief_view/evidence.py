@@ -255,7 +255,11 @@ def _recording_texts(b: Doc) -> Lines:
             f"{mark} {plural(count, 'trial')} ({pct(count, n)}): {_title_inline(b, check)}"
         )
     if not texts and not told:
-        texts.append(f"{OK} no recording defect detected")
+        texts.append(
+            f"{INFO} no recording defect detected; behavioural evidence unresolved"
+            if b["overview"]["trials"].get("behavioural_incomplete")
+            else f"{OK} no recording defect detected"
+        )
     if (cc := b.get("context_compactions") or {}).get("trials"):
         # Not a gap: the steps stay in the file; the agent worked from a summary after it.
         texts.append(

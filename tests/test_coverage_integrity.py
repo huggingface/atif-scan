@@ -890,6 +890,47 @@ def test_a_rewarded_trial_without_its_patch_says_so():
         "unread": [{"reason": "unreadable"}],
     }
     assert uncleared_reasons([item(no_patch)]) == {"submitted patch not recorded": 1}
-    assert uncleared_reasons([item(unreadable)]) == {"tool input not readable": 1}
+    assert uncleared_reasons([item(unreadable)]) == {
+        "tool input analysis unresolved (dynamic/unsupported or unreadable)": 1
+    }
     defect = {"id": "integrity.agent_steps_missing", "status": "match"}
     assert uncleared_reasons([item(no_patch, defect)]) == {"no agent steps recorded": 1}
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        call("execute_python", {"input": "await shell(command=runtime_command)"}),
+        call("bash", {"command": "find $(runtime_path) -type f"}),
+    ],
+)
+def test_dynamic_input_is_an_analysis_limit_not_missing_content(tool):
+    from atif_scan.output.brief import brief, brief_text
+    from atif_scan.output.document import document, report
+    from atif_scan.output.overview import uncleared_reasons
+
+    parsed = parse_trace(
+        trace(
+            step(source="user", message="Inspect the synthetic workspace."),
+            step(calls=[tool], results=[{"source_call_id": "c1", "content": "synthetic output"}]),
+            step(message="Inspection complete."),
+        )
+    )
+    row = report(Engine(builtin_detectors()).evaluate(parsed))
+    row.update(input_id="synthetic", input_status="available", reward=1)
+    assert row["incomplete"]
+    assert any(a["status"] == Status.UNKNOWN for a in row["assessments"])
+    reason = "tool input analysis unresolved (dynamic/unsupported or unreadable)"
+    assert uncleared_reasons([row]) == {reason: 1}
+    text = " ".join(brief_text(brief(document([row], "test"), dq="medium")).split())
+    assert "can't be cleared" in text and reason in text
+    assert "tool input unreadable" not in text
+    assert "no trajectory" not in text
+
+
+def test_legacy_unreadable_reason_uses_analysis_wording():
+    from atif_scan.output.brief_view.words import NOT_CLEARED
+
+    assert NOT_CLEARED["tool input not readable"] == (
+        "tool input analysis unresolved (dynamic/unsupported or unreadable)"
+    )

@@ -81,11 +81,12 @@ class Content:
     # `data.media`); empty when any part is only a placeholder, file reference or
     # unreadable payload. Identities only: the payload itself is never kept.
     media_ids: tuple[str, ...] = field(default=(), repr=False)
-    # Built at runtime inside a tool program (Codex code mode) from the program's own text
+    # Built at runtime inside a tool program (Codex code mode, fast-agent `execute_python`)
+    # from the program's own text
     # and runtime data: not readable, so action checks stay unknown. The program's
     # constants (its string and template literals) are its parent call's fields, so
     # checks of what the agent wrote or what the trace holds read those instead (see
-    # `jslit.program_strings`).
+    # `jslit.program_strings`, `pylit.program_strings`).
     computed: bool = False
     # Decoded size of the identified inline payloads (`media_ids`), in bytes: how much
     # media a request carried, never the media itself.
@@ -110,12 +111,12 @@ class ToolCall:
     id: str = field(repr=False)
     name: str = field(repr=False)
     arguments: Mapping[str, object] | None = field(repr=False)
-    # The call whose observation holds this call's result: itself, or for a call read
-    # from inside a tool program (Codex code mode), the program call.
+    # Parent program identity for derived calls. Legacy static calls share its
+    # observation; runtime dispatch ledgers do not establish child output visibility.
     result_id: str | None = field(default=None, repr=False)
     web_input: WebInput | None = field(default=None, repr=False)
-    # Web actions of a call read from a tool program, counted from its statically read
-    # arguments (which, like `web_input`'s, are not kept in `arguments`); None otherwise.
+    # Web actions of a derived call, from static or runtime-recorded arguments
+    # (which, like `web_input`'s, are not kept in `arguments`); None otherwise.
     web_activity: WebActivity | None = field(default=None, repr=False)
 
     # Validated provider status; absent/unrecognized metadata remains unknown.
@@ -123,6 +124,11 @@ class ToolCall:
     # Authored payload only; None means unavailable (also used for derived calls).
     raw_argument_chars: int | None = None
     raw_argument_basis: Literal["recorded_json", "raw_text", "compact_json"] | None = None
+
+    # Dispatch evidence is not necessarily new model-authored text.
+    provenance: Literal["model_authored", "static_inferred", "runtime_recorded"] = "model_authored"
+    ptc_status: Literal["completed", "raised", "in_flight", "cancelled"] | None = None
+    ptc_is_error: bool | None = None
 
     @property
     def result_key(self) -> str:
@@ -177,7 +183,11 @@ class Step:
         return self.source == "agent" and not self.copied
 
     def authored_surfaces(self) -> Iterator[Surface]:
-        """Message, reasoning and every classified call argument, in that order."""
+        """Message, reasoning and action arguments, including runtime dispatches.
+
+        Runtime-resolved arguments are action evidence, not extra authored tokens;
+        callers can distinguish them through ToolCall.provenance.
+        """
         yield Surface(Locator(self.index, Channel.MESSAGE), self.message)
         yield Surface(Locator(self.index, Channel.REASONING), self.reasoning)
         for call in self.calls:
@@ -191,11 +201,17 @@ class Step:
             yield Surface(at, observation.content)
 
     def results_for(self, call: ToolCall) -> list[tuple[int, Observation]]:
-        """Results linked by recorded ID or index, including a derived call's parent.
+        """Results linked by recorded ID or index, including legacy derived parents.
 
         Empty IDs never link calls to each other. The legacy lone-call fallback only
         includes observations with neither an ID nor an indexed association.
         """
+        # A dispatch ledger has no child output. The program may print a summary,
+        # transform or hide results; its aggregate is not the child's full result.
+        if call.result_id is not None and any(
+            c.provenance == "runtime_recorded" and c.result_id == call.result_id for c in self.calls
+        ):
+            return []
         key = call.result_key
         parent_index = call.index if call.result_id is None else None
         if call.result_id:

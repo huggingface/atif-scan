@@ -102,9 +102,9 @@ def _recording_gap_row(item: Doc) -> set[str]:
     saved = item.get("recording_gaps")
     if saved is not None:
         return {check for key, check in RECORDING_OVERLAP.items() if saved.get(key)}
-    return {a["id"] for a in item.get("assessments", []) if a.get("status") == "match"} | set(
-        coverage_gaps(item)["behavioural"]
-    )
+    # Unknown coverage says a check could not decide, not that its defect occurred.
+    # Keep it in coverage_gaps; only matches prove recording defects.
+    return {a["id"] for a in item.get("assessments", []) if a.get("status") == Status.MATCH}
 
 
 def _web_gap_counts(items: Sequence[Doc]) -> Doc:

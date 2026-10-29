@@ -18,10 +18,13 @@ from .content import content
 from .jsonval import JsonObject, as_list, as_object, as_str, compact_json, count, is_object
 from .model import Observation, Step, ToolCall, Trace
 from .pairing import drop_rejected_unknowns, reconstruct_observation_links
+from .ptc import apply_ledger
 from .tools import (
     RAW_INPUT_KEY,
+    Declared,
     call_fields,
     computed_fields,
+    declared_program_tools,
     normalize_tool,
     program_calls,
     program_fields,
@@ -101,7 +104,8 @@ def parse_trace(value: object) -> Trace:
     ):
         raise TraceError("unsupported_schema_version")
     raw_steps = as_list(value["steps"])
-    steps = [parse_step(index, raw) for index, raw in enumerate(raw_steps)]
+    declared = declared_program_tools(value.get("agent"))
+    steps = [parse_step(index, raw, declared) for index, raw in enumerate(raw_steps)]
     metrics = value.get("final_metrics")
     tokens = as_object(as_object(metrics).get("extra")).get("total_tool_use_tokens")
     per_step, unmetered, partial_kinds = step_usage(raw_steps)
@@ -187,7 +191,7 @@ def _llm_calls(raw_steps: list[object]) -> int | None:
     return sum(counted) if counted else None
 
 
-def parse_step(index: int, value: object) -> Step:
+def parse_step(index: int, value: object, declared: Declared | None = None) -> Step:
     raw = as_object(value)
     source = as_str(raw.get("source"))
     if source is None or source not in STEP_SOURCES:
@@ -201,10 +205,18 @@ def parse_step(index: int, value: object) -> Step:
     if not isinstance(raw_calls, list):
         raise TraceError("invalid_calls")
     calls = parse_calls(
-        as_list(raw_calls), copied, as_object(raw.get("extra")).get("tool_call_details")
+        as_list(raw_calls),
+        copied,
+        as_object(raw.get("extra")).get("tool_call_details"),
+        declared,
     )
     observations = parse_observations(raw.get("observation"))
     observations = reconstruct_observation_links(calls[: len(raw_calls)], observations)
+    calls = apply_ledger(
+        calls,
+        raw.get("observation"),
+        {call_id: args for _, call_id, args in map(_call_parts, raw_calls)},
+    )
     calls = drop_rejected_unknowns(calls, observations)
     step_id = raw.get("step_id")
     return Step(
@@ -231,7 +243,12 @@ def parse_step(index: int, value: object) -> Step:
 ProgramCall = tuple[str, str, str, object]
 
 
-def parse_calls(raw_calls: list[object], copied: bool, details: object = None) -> list[ToolCall]:
+def parse_calls(
+    raw_calls: list[object],
+    copied: bool,
+    details: object = None,
+    declared: Declared | None = None,
+) -> list[ToolCall]:
     """A step's recorded calls, then the calls read from their tool programs (so recorded
     positions stay stable)."""
     # Observations link to calls within their step, so ids must be unique per step.
@@ -247,7 +264,7 @@ def parse_calls(raw_calls: list[object], copied: bool, details: object = None) -
             if call_id in call_ids:
                 raise TraceError("duplicate_call_id")
             call_ids.add(call_id)
-        inner = program_calls(name, args)
+        inner = program_calls(name, args, declared)
         tool = "inert" if inner is not None else normalize_tool(name, args)
         frozen = freeze_object(args) if is_object(args) else None
         chars, basis = argument_accounting(
@@ -257,7 +274,9 @@ def parse_calls(raw_calls: list[object], copied: bool, details: object = None) -
             ToolCall(
                 call_index,
                 tool,
-                program_fields(args) if inner is not None else call_fields(tool, args, name=name),
+                program_fields(args, name, inner)
+                if inner is not None
+                else call_fields(tool, args, name=name),
                 call_id,
                 name,
                 frozen,
@@ -360,6 +379,7 @@ def _program_call(index: int, k: int, found: ProgramCall) -> ToolCall:
         f"{outer}>{name}",
         None,
         result_id=parent,
+        provenance="static_inferred",
         web_input=parse_web_input(name, args),
         web_activity=activity(name, tool, args),
     )

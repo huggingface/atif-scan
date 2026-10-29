@@ -302,6 +302,52 @@ so an input built from one is computed and stays `unknown`. Each report item cou
 programs in `stateful_programs` (a count only: no keys, values or program text; `0` when
 the trace doesn't use code mode), and the brief says how many uncleared rewarded trials
 used them.
+**fast-agent programmatic tool calling** runs tools from a Python program: one
+`execute_python` call whose raw `input` is the program (`r = await shell(command="…")`),
+whose runtime may also permit direct Python filesystem operations. Without a usable
+runtime ledger, the program is parsed with Python's `ast`, never compiled or run, and
+each inferred tool call becomes a call named `execute_python>NAME`, linked to the
+program's observation like code mode's (the legacy projection, not proof of full child
+output). The tool functions are the ones the trace's
+`execute_python` definition lists under "Available functions" (`agent.tool_definitions`):
+calling any other name (a helper kept from an earlier program, a builtin) is not a tool
+call. Without that list, every call of a name the program doesn't define counts, so an
+unrecognized helper stays unknown. Keyword arguments are read when literal, a name bound
+once at the top level to a literal, or `+`/f-string/`"sep".join` text of those; a call in a
+`for` loop or comprehension over a fixed list of strings and integers is read once per
+element (at most 64 combinations). Anything else (a value from an earlier program,
+`**kwargs`, a method call, `{x!r}`) is computed and unknown, exactly as in code mode, and
+the program's string literals are its call's argument fields. A program that doesn't parse,
+`eval`/`exec`/`getattr`-style builtins, or a tool used other than by calling it (`f = shell`)
+add an unreadable call. Tool-shaped names with ambiguous overlapping scopes stay
+unknown instead of silently dropping possible dispatches. Literal evaluation has
+finite work and materialized-text budgets, not just a nesting limit; exhausted
+budgets remain unknown. When fast-agent answers "Syntax error; the code was NOT executed."
+or "Type check failed; the code was NOT executed.", nothing ran and its unreadable fields
+are dropped, as for other rejected input. Variables persist between fast-agent programs;
+those values aren't counted in `stateful_programs` (code mode's `store`/`load` only).
+
+A uniquely and explicitly linked `execute_python` observation can instead supply
+`extra.ptc_calls_schema: "fast-agent.ptc-calls/v1"` and a `ptc_calls` dispatch ledger.
+The scanner validates the whole list, parent-prefixed unique IDs, tools, argument
+objects (or explicit `not_json_serializable` nulls), error flags and lifecycle statuses.
+Unknown schemas, malformed lists, ambiguous links and legacy id/tool/error-only exports
+retain static fallback. When every dispatch is `completed`, actual resolved arguments
+replace inferred child calls without duplicating them; `raised`, `in_flight` and
+`cancelled` ledgers add recorded evidence but retain conservative static inference.
+Unknown arguments stay unreadable. Model calls carry `model_authored`, `static_inferred`
+or `runtime_recorded` provenance; runtime metadata adds no authored character/token counts.
+
+An empty valid ledger means no nested tool dispatches, **not** no direct Python I/O.
+Source literals remain scanned under the existing literal-reader rules, and every
+ledger-backed parent keeps an unresolved argument field for general Python operations,
+even with complete or empty metadata, except for a recognized pre-execution refusal.\nRecorded dispatch evidence prevents a contradictory printed refusal from clearing\nunresolved arguments.
+This intentionally overrides derived dispatches without claiming full program analysis.
+The ledger contains no nested output: runtime calls (and partial-ledger static siblings)
+never borrow the parent's printed aggregate as their result. Child-result checks remain
+unknown without child output; web outcome gaps remain visible. Reports retain only
+allowlisted findings/counts/locators, never ledger argument values, IDs or source text.
+
 Tool call IDs must be unique within a step. An empty ID (Codex's hosted web calls) links
 nothing, and an ID reused by a later step is reported as `integrity.call_id_reused`.
 

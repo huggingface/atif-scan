@@ -8,7 +8,7 @@ import re
 from collections.abc import Iterator, Mapping
 from typing import TypeGuard
 
-from . import jslit
+from . import jslit, pylit
 from .content import content
 from .jsonval import JsonObject, as_list, as_object, is_object
 from .model import Channel, Content
@@ -321,9 +321,42 @@ def raw_input(args: object) -> str | None:
     return None
 
 
-def program_calls(name: str, args: object) -> list[tuple[str, object]] | None:
-    """Tool calls inside a Codex code-mode program (`exec` with a JavaScript `input`), or
-    None when this isn't one. Read statically; see `jslit`."""
+# fast-agent programmatic tool calling: one freeform tool whose raw `input` is a Python
+# program calling the agent's other tools as functions (`await shell(command="ls")`).
+PYTHON_PROGRAM_TOOLS = frozenset({"execute_python"})
+
+
+# Tool functions a program tool declares, by its name (see `declared_program_tools`).
+Declared = Mapping[str, frozenset[str]]
+# fast-agent lists them in the tool's description: "Available functions:" then a fenced
+# block of `async def NAME(*, …) -> …:` stubs.
+_AVAILABLE = re.compile(r"^Available functions:\s*```python\n(.*?)^```", re.M | re.S)
+_STUB = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(", re.M)
+
+
+def declared_program_tools(agent: object) -> dict[str, frozenset[str]]:
+    """The tool functions each program tool in `agent.tool_definitions` says programs can
+    call. A tool whose description lists none is left out (every call stays a possible
+    tool call). Only names are kept."""
+    found: dict[str, frozenset[str]] = {}
+    for definition in as_list(as_object(agent).get("tool_definitions")):
+        function = as_object(as_object(definition).get("function"))
+        name, text = function.get("name"), function.get("description")
+        block = _AVAILABLE.search(text) if isinstance(text, str) else None
+        names = frozenset(_STUB.findall(block.group(1))) if block else frozenset()
+        if isinstance(name, str) and name in PYTHON_PROGRAM_TOOLS and names:
+            found[name] = names
+    return found
+
+
+def program_calls(
+    name: str, args: object, declared: Declared | None = None
+) -> list[tuple[str, object]] | None:
+    """Tool calls inside a tool program, or None when this isn't one: Codex code mode
+    (`exec` with a JavaScript `input`, see `jslit`) or fast-agent's `execute_python` (see
+    `pylit`). Read statically, never run."""
+    if name in PYTHON_PROGRAM_TOOLS:
+        return _python_calls(name, args, declared)
     if name != "exec" or not isinstance(args, dict) or set(args) - {"input", "timeout_ms"}:
         return None
     program = args.get("input")
@@ -332,12 +365,35 @@ def program_calls(name: str, args: object) -> list[tuple[str, object]] | None:
     return jslit.tool_calls(program)
 
 
-def program_fields(args: object) -> tuple[Field, ...]:
-    """A code-mode program's own constants beyond the arguments read as its calls (see
-    `jslit.program_strings`): one unclassified argument field per literal, read wherever
-    commands are, so a command held in a constant (`const cmds = [...]`) is still seen."""
-    program = args.get("input") if isinstance(args, dict) else None
-    found = jslit.program_strings(program) if isinstance(program, str) else []
+def _python_calls(
+    name: str, args: object, declared: Declared | None
+) -> list[tuple[str, object]] | None:
+    program = raw_input(args)
+    if program is None:
+        return None
+    return pylit.tool_calls(program, (declared or {}).get(name), _harness_tool)
+
+
+def _harness_tool(name: str) -> bool:
+    """A recognized tool name (a Python program's other uses of one are unknown)."""
+    return _normalize_action(name, None) != "other"
+
+
+def program_fields(
+    args: object, name: str = "exec", calls: list[tuple[str, object]] | None = None
+) -> tuple[Field, ...]:
+    """A tool program's own constants beyond the arguments read as its calls (see
+    `jslit.program_strings`, `pylit.program_strings`): one unclassified argument field per
+    literal, read wherever commands are, so a command held in a constant (`const cmds =
+    [...]`, `cmds = [...]`) is still seen."""
+    program = args.get("input") if isinstance(args, dict) else raw_input(args)
+    if not isinstance(program, str):
+        found: list[str] = []
+    elif name in PYTHON_PROGRAM_TOOLS:
+        read = {text for _, argument in calls or () for text in pylit.strings(argument)}
+        found = pylit.program_strings(program, read)
+    else:
+        found = jslit.program_strings(program)
     return tuple((Channel.ARGUMENTS, content(text)) for text in found)
 
 
