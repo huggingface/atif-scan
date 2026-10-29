@@ -20,6 +20,15 @@ Main features:
 
 ## Quick start
 
+Run the published CLI without cloning:
+
+```bash
+uvx atif-scan@latest --help
+uvx --from atif-scan@latest atif-inspect --help
+```
+
+For development:
+
 ```bash
 uv sync
 uv run atif-scan examples/synthetic.json            # text on a terminal, JSON when piped
@@ -97,6 +106,7 @@ argument payloads (file contents, edits) are left out unless a check says otherw
 | Design rules: evidence, unknowns, layering | [docs/design.md](docs/design.md) |
 | Turning judge findings into checks, and measuring both | [docs/improvement-loop.md](docs/improvement-loop.md) |
 | What is safe to share, and what never is | [SECURITY.md](SECURITY.md) |
+| Publishing releases to PyPI and running with uvx | [docs/publishing.md](docs/publishing.md) |
 
 ## Development
 
