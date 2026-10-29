@@ -96,9 +96,9 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$PWD/dist/atif_scan-${RELEASE_VERSION}-py3-none-any.whl"
-          uvx --upgrade --python 3.11 --from "$wheel" atif-scan --version
-          uvx --python 3.11 --from "$wheel" atif-inspect --help
-          uvx --python 3.11 --from "$wheel" atif-scan \
+          uvx --isolated --refresh --python 3.11 --from "$wheel" atif-scan --help
+          uvx --isolated --refresh --python 3.11 --from "$wheel" atif-inspect --help
+          uvx --isolated --refresh --python 3.11 --from "$wheel" atif-scan \
             source/examples/synthetic.json --packs none --task synthetic-local \
             --format json > "$RUNNER_TEMP/synthetic-smoke.json"
           uv run --upgrade --isolated --no-project --python 3.11 --with "$wheel" \

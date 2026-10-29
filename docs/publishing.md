@@ -57,5 +57,5 @@ runtime dependencies from package metadata. Smoke checks therefore also validate
 fresh dependency resolutions, including the optional MCP dependency set.
 
 After upload, verify the PyPI file hashes against the workflow artifacts and run
-`uvx atif-scan@0.8.15 --version` and `uvx atif-scan@latest --help` from outside the
+`uvx atif-scan@0.8.15 --help` and `uvx atif-scan@latest --help` from outside the
 checkout. A successful GitHub tag/build alone does not mean PyPI was updated.

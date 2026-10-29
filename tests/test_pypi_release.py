@@ -208,3 +208,10 @@ def test_resolver_rejects_output_injection(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr(release, "git", lambda *_: SHA + "\nversion=9.9.9")
     with pytest.raises(release.ReleaseError, match="invalid release commit"):
         release.resolve(tmp_path, "v" + VERSION)
+
+
+def test_smoke_uses_supported_cli_flags() -> None:
+    workflow = (TOOL.parents[1] / ".github/workflows/publish.yml").read_text()
+    assert "atif-scan --version" not in workflow
+    assert "atif-scan --help" in workflow
+    assert "uvx --isolated --refresh" in workflow
