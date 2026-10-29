@@ -183,4 +183,25 @@ def _search_patterns(surface: Surface) -> list[shell.Span]:
     script = shell.parse(surface.content.text)
     if not script.complete:
         return []
-    return [span for command in script.commands for span in shell.search_patterns(command) or []]
+    return [
+        literal
+        for command in script.commands
+        for span in shell.search_patterns(command) or []
+        for literal in _outside_substitutions(command, span)
+    ]
+
+
+def _outside_substitutions(command: shell.Command, span: shell.Span) -> list[shell.Span]:
+    """A search pattern's text, excluding commands run to construct that pattern.
+    Nested searches get their own exemptions, never their parent's."""
+    start, end = span
+    literals = []
+    for child_start, child_end in sorted(child.span for child in command.substituted):
+        if child_end <= start or child_start >= end:
+            continue
+        if start < child_start:
+            literals.append((start, child_start))
+        start = max(start, child_end)
+    if start < end:
+        literals.append((start, end))
+    return literals
