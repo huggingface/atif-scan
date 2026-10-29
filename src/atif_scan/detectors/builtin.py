@@ -12,6 +12,7 @@ from .context import context_checks
 from .delegation import CodingAgentDelegation
 from .discovery import evaluation_directory_probe, probe_undecidable, test_path
 from .harness import harness_detectors
+from .hub_access import hub_access_detectors
 from .installs import install_detectors
 from .integrity import integrity_detectors
 from .lab_hosts import LAB_INTERNAL_HOST
@@ -330,6 +331,7 @@ def builtin_detectors() -> list[Detector]:
         ),
         *side_channel_detectors(),
         *orchestrator_detectors(),
+        *hub_access_detectors(),
         CodingAgentDelegation(),
         *account_id_detectors(),
         *install_detectors(),

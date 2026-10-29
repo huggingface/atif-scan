@@ -13,6 +13,7 @@ Main features:
  - Read mirrors of Datacurve's public DeepSWE trials, with their trial index ([docs/runs.md](docs/runs.md#datacurves-public-deepswe-trials)).
  - ATIF integrity checks (costs, trials, token accounting etc.)
  - Cheap deterministic checks for benchmark awareness, reward hacking etc.
+ - Separate Hub identity probes, discovered-account resource requests, and recorded file receipt.
  - Allowances for known benchmark tasks (tb-21, deepswe, tb-4, tb-lite bundled)
  - Generate prompts for judging/inspecting traces - read-only MCP Server provides safe access to benchmark traces.
 

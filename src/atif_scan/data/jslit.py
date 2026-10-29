@@ -82,6 +82,21 @@ def _lex(text: str) -> Lexed:
     return lexer.starts, lexer.ends, lexer.pairs
 
 
+def _without_comments(text: str, lexed: Lexed) -> str:
+    """Whitespace in place of comments, preserving offsets and line boundaries.
+    Structural regexes must see `x /* comment */ = y` as an assignment, while the
+    literal reader keeps the original strings, templates and source positions."""
+    starts, ends, _ = lexed
+    pieces: list[str] = []
+    after = 0
+    for start, end in zip(starts, ends, strict=True):
+        if text.startswith(("//", "/*"), start):
+            pieces.extend((text[after:start], re.sub(r"[^\r\n]", " ", text[start:end])))
+            after = end
+    pieces.append(text[after:])
+    return "".join(pieces)
+
+
 def _end(pattern: re.Pattern[str], text: str, pos: int) -> int:
     """Where `pattern` (one that always matches at `pos`) stops."""
     match = pattern.match(text, pos)
@@ -339,7 +354,7 @@ class _Reader:
 
 _DECLARE = re.compile(r"(?<![\w$.])(?:const|let|var)(?![\w$])")
 _ASSIGN = re.compile(
-    r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?:\*\*|>>>|<<|>>|\?\?|\|\||&&|[-+*/%&|^])?=(?![=>])"
+    r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?:\)\s*)*(?:\*\*|>>>|<<|>>|\?\?|\|\||&&|[-+*/%&|^])?=(?![=>])"
 )
 # Anything else that (re)binds a name: parameters, catch, function/class names, ++/--.
 _SHADOW = re.compile(
@@ -347,7 +362,9 @@ _SHADOW = re.compile(
     r"|\(([^()]*)\)\s*=>|(?<![\w$])([A-Za-z_$][\w$]*)\s*=>"
     r"|(?<![\w$.])(?!(?:if|for|while|switch|with)\b)[A-Za-z_$][\w$]*\s*\(([^()]*)\)\s*\{"
     r"|\bclass\s+([A-Za-z_$][\w$]*)"
-    r"|(?<![\w$])([A-Za-z_$][\w$]*)\s*(?:\+\+|--)|(?:\+\+|--)\s*([A-Za-z_$][\w$]*)"
+    r"|(?<![\w$])([A-Za-z_$][\w$]*)\s*(?:\)\s*)*(?:\+\+|--)"
+    r"|(?:\+\+|--|\bdelete\b)\s*(?:\(\s*)*([A-Za-z_$][\w$]*)"
+    r"|\bfor\s*(?:await\s*)?\(\s*([A-Za-z_$][\w$]*)\s+(?:of|in)\b"
 )
 _DESTRUCTURE = re.compile(r"[\]}]\s*=(?![=>])")
 _END_LITERAL = re.compile(r"[ \t]*(?:[;,\n})]|$)")
@@ -480,9 +497,12 @@ MAX_LOOPS = 200  # loop forms in one program before none is read (keeps reading 
 # Uses of a list that leave it as it is: these methods, `.length`, `xs[i]` reads.
 _READ_USE = re.compile(
     r"\s*(?:\.\s*(?:(map|forEach|flatMap|filter|some|every|find|findIndex)\s*\("
-    r"|(?:includes|indexOf|join|slice|at|length)(?![\w$])(?!\s*=(?!=)))|(\[))"
+    r"|(?:includes|indexOf|join|slice|at)\s*\(|(length)(?![\w$]))|(\[))"
 )
-_WRITE = re.compile(r"\s*(?:(?:\*\*|>>>|<<|>>|\?\?|\|\||&&|[-+*/%&|^])?=(?!=)|\+\+|--)")
+_WRITE = re.compile(
+    r"\s*(?:\)\s*)*(?:(?:\*\*|>>>|<<|>>|\?\?|\|\||&&|[-+*/%&|^])?=(?!=)"
+    r"|\+\+|--|(?:of|in)\b)"
+)
 _OF_BEFORE = re.compile(r"(?<![\w$])of\s*\Z")
 
 
@@ -525,10 +545,10 @@ def _reads(program: str, reader: _Reader, end: int) -> bool:
         # A callback is passed the list itself as its third argument: allow only an
         # inline arrow taking at most two.
         return _CALLBACK.match(program, use.end()) is not None
-    if use.group(2) is not None:
-        close = reader.pairs.get(use.start(2))
+    if use.group(3) is not None:
+        close = reader.pairs.get(use.start(3))
         return close is not None and not _WRITE.match(program, close + 1)
-    return True
+    return use.group(2) is None or not _WRITE.match(program, use.end())
 
 
 @dataclass(frozen=True)
@@ -693,10 +713,12 @@ def tool_calls(program: str) -> list[tuple[str, object]]:
     argument is the parsed literal, UNREAD when it isn't one, or None when the call has
     none; ("?", UNREAD) marks any other use of `tools`. Never raises: unreadable is UNREAD."""
     try:
-        reader = _Reader(program, _lex(program), {})
-        reader.bindings, lists = _bindings(program, reader)
-        dynamic = any(reader.code(m.start()) for m in _DYNAMIC.finditer(program))
-        loops = [] if dynamic else _loops(program, reader, lists)
+        lexed = _lex(program)
+        reader = _Reader(program, lexed, {})
+        syntax = _without_comments(program, lexed)
+        reader.bindings, lists = _bindings(syntax, reader)
+        dynamic = any(reader.code(m.start()) for m in _DYNAMIC.finditer(syntax))
+        loops = [] if dynamic else _loops(syntax, reader, lists)
     except (ValueError, IndexError, KeyError, RecursionError):
         return [("?", UNREAD)] if CALL.search(program) else []
     calls: list[tuple[str, object]] = []
