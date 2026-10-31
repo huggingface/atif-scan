@@ -255,7 +255,12 @@ reviewer can't look up the judge's answers by name.
 there and loads no skills, plugins or hooks; an older fast-agent gets a warning and a
 fallback (see [SECURITY.md](../SECURITY.md)). It skips only valid cached answers unless
 `--force`, runs `--jobs N` in parallel, and logs the first error line per failure to
-`ask-errors.log`. Invalid cached answers are retried on the next invocation, not in an
+`ask-errors.log`. When the provider stopped the run without an answer (a safety stop, a
+refusal, the output limit), the log says so, read from the run's saved trajectory, rather
+than fast-agent's "did not produce valid JSON": such a question is unanswered, never a
+clean result, and some providers stop on some traces every time (Opus via Copilot on TB4
+`vpp-loss-divergence`), so use another model for those. Invalid cached answers are retried
+on the next invocation, not in an
 automatic retry loop. New replies must pass the same answer validation as `--answers`
 before they are saved; a failed forced rerun leaves the previous answer intact. Any
 failed question makes the command exit nonzero. Metadata and cached answers are bounded

@@ -1,6 +1,7 @@
 """Completion is ingestion-valid, not merely a successful runner exit (synthetic only)."""
 
 import json
+import os
 import subprocess
 
 import pytest
@@ -296,3 +297,60 @@ def test_error_log_names_the_exception_not_a_traceback_frame():
     assert hunt._reason(out) == "BadRequestError: Error code: 400 - invalid_json_schema"
     assert hunt._reason("Error: nothing else\nmore") == "Error: nothing else"
     assert hunt._reason("") == "no output"
+
+
+def review_trajectory(stop_reason):
+    return {
+        "schema_version": "ATIF-v1.7",
+        "steps": [
+            {"step_id": 1, "source": "user", "message": "Synthetic prompt"},
+            {
+                "step_id": 2,
+                "source": "agent",
+                "message": "",
+                "extra": {"stop_reason": f"LlmStopReason.{stop_reason}"},
+            },
+        ],
+    }
+
+
+SCHEMA_ERROR = (
+    "Error: model response did not produce valid JSON matching the structured output schema."
+)
+
+
+@pytest.mark.parametrize(
+    ("stop", "logged"),
+    [
+        ("SAFETY", "provider safety stop: no answer"),
+        ("MAX_TOKENS", "output token limit reached"),
+        ("END_TURN", SCHEMA_ERROR),
+    ],
+)
+def test_provider_stop_is_logged_as_unanswered_not_a_bad_reply(bundle, monkeypatch, stop, logged):
+    """Regression (Opus via Copilot on TB4 vpp traces): every safety stop was logged as
+    'did not produce valid JSON', so an unanswered question read as a formatting error."""
+    root, meta = bundle
+
+    def runner(executable, command):
+        out = command[command.index("--trajectory-output") + 1]
+        with open(out, "w") as handle:
+            json.dump(review_trajectory(stop), handle)
+        return subprocess.CompletedProcess(command, 1, SCHEMA_ERROR, "")
+
+    monkeypatch.setattr(hunt, "run_go", runner)
+    monkeypatch.setattr(hunt.shutil, "which", lambda _: "synthetic-runner")
+    assert hunt.main(["--model", "synthetic", "--questions", str(root)]) == 1
+    assert logged in (root / "ask-errors.log").read_text()
+    assert hunt.pending(root, [], False) == [meta]  # still asked again next time
+
+
+def test_a_previous_attempts_trajectory_is_not_read_as_this_ones(bundle, monkeypatch):
+    root, meta = bundle
+    review = meta.with_suffix(".review.atif.json")
+    review.write_text(json.dumps(review_trajectory("SAFETY")))
+    os.utime(review, (1, 1))  # written by an earlier attempt
+    status, _ = run(bundle, monkeypatch, SCHEMA_ERROR, code=1)
+    assert status == 1
+    log = (root / "ask-errors.log").read_text()
+    assert "safety" not in log and "did not produce valid JSON" in log

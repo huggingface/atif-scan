@@ -18,7 +18,9 @@ Trace freshness is still checked when answers are ingested (--answers). fast-age
 
 Prompts contain masked trace text and are sent to the model's provider: only run this
 with a provider you're allowed to send the traces to. Keep the bundle out of Git.
-Failures are logged (first error line only) to DIR/ask-errors.log.
+Failures are logged (first error line only) to DIR/ask-errors.log; a run the provider
+stopped without an answer (a safety stop, a refusal, the output limit) is logged as that,
+from the run's own trajectory, so it isn't mistaken for a malformed reply.
 """
 
 from __future__ import annotations
@@ -32,10 +34,11 @@ import shlex
 import shutil
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ..data.jsonval import JsonObject, as_object, as_str
+from ..data.jsonval import JsonObject, as_list, as_object, as_str
 from ..review.answers import MAX_READ, parse_answer
 from ..review.catalogue import BY_ID
 from .fast_agent import run_go
@@ -44,6 +47,15 @@ MCP = "mcp>=1.2,<2"
 SERVER = "atif_scan.review.inspect_server"
 REASON_CHARS = 300
 _LOG_LOCK = threading.Lock()
+REVIEW_MAX_BYTES = 32 * 1024 * 1024  # as review.coverage
+# The answering run stopped without answering: the provider's reason, not a bad reply.
+# fast-agent then reports only that the reply didn't match the schema, which reads like a
+# model formatting error and hides that the question went unanswered.
+NO_ANSWER_STOPS = {
+    "safety": "provider safety stop: no answer (unanswered, not a clean result)",
+    "refusal": "model refusal: no answer (unanswered, not a clean result)",
+    "max_tokens": "output token limit reached before an answer",
+}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -177,19 +189,48 @@ def _answer(args: argparse.Namespace, meta: Path, metadata: JsonObject) -> bool:
     command = _command(args, meta, metadata)
     if isinstance(command, str):
         return _failed(args.questions, meta, command)
+    started = time.time()
     run = run_go(shlex.split(args.fast_agent), command)
+    stop = NO_ANSWER_STOPS.get(_stop_reason(meta.with_suffix(".review.atif.json"), started) or "")
     failed = any(line.startswith("Error:") for line in run.stdout.splitlines())
     if run.returncode != 0 or not run.stdout.strip() or failed:
-        return _failed(args.questions, meta, _reason(run.stdout + "\n" + run.stderr))
+        return _failed(args.questions, meta, stop or _reason(run.stdout + "\n" + run.stderr))
     reply = _validated_reply(run.stdout, metadata)
     if reply is None:
-        return _failed(args.questions, meta, "invalid answer")
+        return _failed(args.questions, meta, stop or "invalid answer")
     target = meta.with_suffix(".answer.json")
     tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}.{threading.get_ident()}")
     tmp.write_text(reply, encoding="utf-8")
     tmp.replace(target)
     print(f"answered  {meta}", file=sys.stderr)
     return True
+
+
+def _stop_reason(review: Path, since: float) -> str | None:
+    """How this answering run's last model turn stopped (`safety`, `max_tokens`, …), from
+    the trajectory it saved; None when it wrote none this run (an older file is a previous
+    attempt's) or it can't be read."""
+    agent = [
+        as_object(s) for s in _review_steps(review, since) if as_object(s).get("source") == "agent"
+    ]
+    if not agent:
+        return None
+    raw = as_str(as_object(agent[-1].get("extra")).get("stop_reason")) or ""
+    return raw.rsplit(".", 1)[-1].lower() or None
+
+
+def _review_steps(review: Path, since: float) -> list[object]:
+    """The steps of a trajectory written at or after `since`, bounded; else none."""
+    try:
+        if review.stat().st_mtime < since:
+            return []
+        with review.open("rb") as stream:
+            data = stream.read(REVIEW_MAX_BYTES + 1)
+        if len(data) > REVIEW_MAX_BYTES:
+            return []
+        return list(as_list(as_object(json.loads(data)).get("steps")))
+    except (OSError, ValueError, RecursionError):
+        return []
 
 
 def _validated_reply(stdout: str, metadata: JsonObject) -> str | None:
