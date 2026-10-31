@@ -20,20 +20,23 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from ..data.loader import TraceError, load_trace
 from ..data.model import Channel, Content, Observation, Step, Trace
 from .cite import mask, trace_secrets
+from .navigation import LEGEND, TAGS, all_tags, ranges, tag_index
 
 if TYPE_CHECKING:
-    from collections.abc import Set
+    from collections.abc import Iterator, Sequence, Set
 
     from ..data.jsonval import Doc
 
 PARTS = ("message", "reasoning", "calls", "results")
 SegmentPart = Literal["message", "reasoning", "call", "call_info", "result"]
+SegmentLocator = tuple[SegmentPart, int, int]
 MAX_SEGMENT_CHARS = 6000
 
 
@@ -174,17 +177,49 @@ def _cut(text: str, limit: int) -> str:
     return text
 
 
-def outline(trace: Trace) -> list[str]:
+def outline(
+    trace: Trace,
+    span: tuple[int | None, int | None] = (None, None),
+    nav: Sequence[Sequence[str]] | None = None,
+) -> list[str]:
+    """One line per step (step numbers `span[0]`..`span[1]`, inclusive): number, source,
+    tool names, text sizes, flags and navigation tags (`nav`, by step index; computed
+    when not given). No trace text."""
+    nav = all_tags(trace) if nav is None else nav
     lines = []
-    for step in trace.steps:
+    for step in in_span(trace, span):
         sid = trace.step_numbers[step.index]
         tools = ",".join(c.name for c in step.calls)
         flags = _flags(trace, step)
+        marks = " ".join(f"#{t}" for t in nav[step.index])
         lines.append(
             f"{sid:>5} {step.source:<6} {tools[:60]:<60} {' · '.join(_sizes(step))}"
             + (f"  [{', '.join(flags)}]" if flags else "")
+            + (f"  {marks}" if marks else "")
         )
     return lines
+
+
+def tag_summary(trace: Trace, nav: Sequence[Sequence[str]] | None = None) -> list[str]:
+    """Where each navigation tag occurs across the whole trace, with the legend."""
+    index = tag_index(trace, all_tags(trace) if nav is None else nav)
+    if not index:
+        return [f"tags: none ({LEGEND})"]
+    return [f"tags ({LEGEND}):"] + [
+        f"  #{tag} ({TAGS[tag]}): steps {ranges(steps)}" for tag, steps in index.items()
+    ]
+
+
+def in_span(trace: Trace, span: tuple[int | None, int | None]) -> list[Step]:
+    """The steps whose ATIF step numbers lie in `span` (inclusive; None is open)."""
+    first, last = span
+    numbers = trace.step_numbers
+    return [
+        step
+        for step in trace.steps
+        if (first is None or numbers[step.index] >= first)
+        and (last is None or numbers[step.index] <= last)
+    ]
 
 
 def _sizes(step: Step) -> list[str]:
@@ -269,41 +304,92 @@ def render(record: Doc) -> str:
     return "\n".join(lines)
 
 
+@dataclass(frozen=True, slots=True)
+class Query:
+    """One search request: a pattern, the windows to show, a step-number range."""
+
+    pattern: str
+    max_hits: int = 20
+    span: tuple[int | None, int | None] = (None, None)
+    windows: int = 1
+
+
+# Matches counted per part before the count is reported as a lower bound.
+MAX_COUNT = 1000
+
+
+def segments(step: Step) -> Iterator[tuple[str, SegmentLocator, Content]]:
+    """Every searchable part of a step: (label, read_segment locator, content)."""
+    yield "message", ("message", 0, 0), step.message
+    yield "reasoning", ("reasoning", 0, 0), step.reasoning
+    for i, call in enumerate(step.calls):
+        for f, (ch, content) in enumerate(call.fields):
+            if ch != Channel.METADATA:
+                yield f"call {call.name} {ch.value}", ("call", i, f), content
+    for i, o in enumerate(step.observations):
+        label = f"result {o.source_call_id}" + (
+            " [PAIRING-RECONSTRUCTED]" if o.pairing_reconstructed else ""
+        )
+        yield label, ("result", i, 0), o.content
+
+
 def grep(
-    trace: Trace, pattern: re.Pattern[str], known: frozenset[str], window: int = 160
+    trace: Trace,
+    pattern: re.Pattern[str],
+    known: frozenset[str],
+    window: int = 160,
+    *,
+    span: tuple[int | None, int | None] = (None, None),
+    windows: int = 1,
 ) -> list[Doc]:
+    """Masked windows around matches, in step order: up to `windows` per part, each with
+    the part's match count (`matches`, at least that many when `matches_capped`), the
+    masked offset of its match and the `read_segment` locator of the part."""
     hits: list[Doc] = []
-    for step in trace.steps:
-        texts = [("message", step.message.text), ("reasoning", step.reasoning.text)]
-        texts += [
-            (f"call {c.name} {ch.value}", t.text)
-            for c in step.calls
-            for ch, t in c.fields
-            if ch != Channel.METADATA
-        ]
-        texts += [
-            (
-                f"result {o.source_call_id}"
-                + (" [PAIRING-RECONSTRUCTED]" if o.pairing_reconstructed else ""),
-                o.content.text,
-            )
-            for o in step.observations
-        ]
-        for part, text in texts:
-            if not text:
+    for step in in_span(trace, span):
+        sid = trace.step_numbers[step.index]
+        for label, (part, index, field), content in segments(step):
+            if not content.text:
                 continue
-            masked = mask(text, known)
-            for m in pattern.finditer(masked):
+            masked = mask(content.text, known)
+            found = _matches(pattern, masked)
+            for m in found[: max(1, windows)]:
                 a, b = max(0, m.start() - window), min(len(masked), m.end() + window)
                 hits.append(
                     {
-                        "step": trace.step_numbers[step.index],
-                        "part": part,
+                        "step": sid,
+                        "part": label,
+                        "segment": {"part": part, "index": index, "field": field},
+                        "matches": len(found),
+                        **({"matches_capped": True} if len(found) >= MAX_COUNT else {}),
+                        "offset": m.start(),
                         "text": ("…" if a else "") + masked[a:b] + ("…" if b < len(masked) else ""),
                     }
                 )
-                break  # one window per part
     return hits
+
+
+def _matches(pattern: re.Pattern[str], text: str) -> list[re.Match[str]]:
+    found: list[re.Match[str]] = []
+    for m in pattern.finditer(text):
+        found.append(m)
+        if len(found) >= MAX_COUNT:
+            break
+    return found
+
+
+def unsearchable(trace: Trace, span: tuple[int | None, int | None]) -> dict[str, list[int]]:
+    """Step numbers in `span` whose parts hold content a text search can't see: media
+    (images and the like) and unreadable parts (e.g. arguments built at runtime)."""
+    gaps: dict[str, list[int]] = {"media": [], "unreadable": []}
+    for step in in_span(trace, span):
+        contents = [c for _, _, c in segments(step)]
+        sid = trace.step_numbers[step.index]
+        if any(c.media for c in contents):
+            gaps["media"].append(sid)
+        if any(not c.understood for c in contents):
+            gaps["unreadable"].append(sid)
+    return gaps
 
 
 def select(trace: Trace, args: argparse.Namespace) -> list[int]:
@@ -366,8 +452,14 @@ def _print_grep(trace: Trace, args: argparse.Namespace, known: frozenset[str]) -
         print(json.dumps(hits, indent=1))
     else:
         for h in hits:
-            print(f"{h['step']:>5} {h['part']}: {h['text'].replace(chr(10), ' ⏎ ')}")
+            count = f" ({_count(h)} matches)" if h["matches"] > 1 else ""
+            print(f"{h['step']:>5} {h['part']}{count}: {h['text'].replace(chr(10), ' ⏎ ')}")
     return 0 if hits else 1
+
+
+def _count(hit: Doc) -> str:
+    """A part's match count; `1000+` when counting stopped."""
+    return f"{hit['matches']}{'+' if hit.get('matches_capped') else ''}"
 
 
 def _print_outline(trace: Trace, args: argparse.Namespace) -> int:
@@ -375,7 +467,8 @@ def _print_outline(trace: Trace, args: argparse.Namespace) -> int:
     if args.step or args.steps or args.around:
         print("atif-inspect: no such step(s)", file=sys.stderr)
         return 1
-    lines = outline(trace)
+    nav = all_tags(trace)
+    lines = outline(trace, nav=nav)
     if args.json:
         print(json.dumps(lines, indent=1))
     else:
@@ -383,6 +476,7 @@ def _print_outline(trace: Trace, args: argparse.Namespace) -> int:
             f"{len(trace.steps)} steps · {trace.agent_steps} agent · "
             f"{trace.tool_calls} tool calls" + (" · compacted" if trace.compacted else "")
         )
+        print("\n".join(tag_summary(trace, nav)))
         print("\n".join(lines))
     return 0
 
