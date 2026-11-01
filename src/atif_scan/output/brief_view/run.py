@@ -314,12 +314,18 @@ def _review_bundle(review: Doc) -> Lines:
 def _answers(b: Doc) -> Lines:
     answers = b.get("answers") or {}
     thin = b.get("answers_thin") or {}
+    unread = b.get("answers_images_unread") or {}
     return [
         f"{INFO} reviewer answers, {question}: "
         + counts(sorted(tally_.items(), key=lambda kv: -kv[1]))
         + (
             f"; {thin[question]:,} clean/absent after reading under half the trace"
             if thin.get(question)
+            else ""
+        )
+        + (
+            f"; {unread[question]:,} clean/absent without reading all of the trace's images"
+            if unread.get(question)
             else ""
         )
         + " (annotations; the flagged set is unchanged)"

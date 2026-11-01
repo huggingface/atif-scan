@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..data.jsonval import as_list, as_object, as_str, count, is_object
+from ..evidence.extract import unsearchable
 from ..evidence.history import discover_history
 from ..evidence.native_reasoning import discover_native_reasoning
 
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from ..data.jsonval import Doc, JsonObject
     from ..data.model import Trace
 from .catalogue import ANSWER_STEPS, BY_ID, CONFIDENCE, Question
-from .coverage import review_coverage, thin
+from .coverage import images_unread, review_coverage, thin
 from .prompts import REASON_CHARS, answer_mechanisms, trace_digest
 
 MAX_READ = 64 * 1024  # bytes of a metadata or answer file; larger files are ignored
@@ -237,7 +238,7 @@ def _coverage(review: Path, trace: Trace, question: Question) -> Doc | None:
     required = (
         [numbers[i] for i in question.coverage_steps(trace)] if question.coverage_steps else []
     )
-    return review_coverage(review, numbers, required)
+    return review_coverage(review, numbers, required, unsearchable(trace, (None, None))["media"])
 
 
 def _row(meta: Doc, answer: Doc | None, status: str, digest: str | None) -> Doc:
@@ -278,4 +279,21 @@ def thin_answers(items: list[Doc]) -> dict[str, int]:
     return out
 
 
-__all__ = ["Answers", "answer_reason", "parse_answer", "tally", "thin_answers"]
+def images_unread_answers(items: list[Doc]) -> dict[str, int]:
+    """{question: universal answers given without reading all of the trace's images}."""
+    out: dict[str, int] = {}
+    for item in items:
+        for row in item.get("answers") or []:
+            if images_unread(row):
+                out[row["question"]] = out.get(row["question"], 0) + 1
+    return out
+
+
+__all__ = [
+    "Answers",
+    "answer_reason",
+    "images_unread_answers",
+    "parse_answer",
+    "tally",
+    "thin_answers",
+]

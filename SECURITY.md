@@ -21,6 +21,12 @@
   traces to. Transcripts are trace content: they are stored in the atif-scan home's
   `images/` folder (`0700`/`0600`) and never reported (reports carry counts). The loader
   keeps an inline payload's sha256, never the payload.
+- **`hunt --image-model MODEL`** (opt-in, needs `--inspect-tool`) sends every inline image
+  of the traces under review to MODEL the same way, up to 100 per trace, and stores the
+  transcripts in the same folder. The judge's read-only server then returns stored
+  transcripts through `read_media`, masked and framed like trace text; the server reads
+  only that folder, by image hash, and never calls a model. Transcripts reach the
+  judge's provider as trace text does.
 - Reports are an explicit field allowlist: no raw text, paths, URLs, argument values or
   exception messages. The one report field with trace text is opt-in `--cite`: bounded,
   secret-masked excerpts of the trace. Masking is best-effort, so treat cited output

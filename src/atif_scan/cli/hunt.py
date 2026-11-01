@@ -16,8 +16,15 @@ Invalid cached replies are retried on the next invocation; invalid new replies a
 Trace freshness is still checked when answers are ingested (--answers). fast-agent runs `--isolated`
 (atif_scan.cli.fast_agent): prompts aren't saved in its home and no plugins load.
 
+With --image-model MODEL (and --inspect-tool), every inline image in the traces to be
+reviewed is first transcribed by MODEL, as `atif-scan --image-model` does (each image
+once, stored privately under <atif-scan home>/images/), and the judge gets a
+`read_media(step)` tool that returns those stored transcripts. The server only reads the
+store; an image without a complete transcript reads as unread, never as empty.
+
 Prompts contain masked trace text and are sent to the model's provider: only run this
-with a provider you're allowed to send the traces to. Keep the bundle out of Git.
+with a provider you're allowed to send the traces to. With --image-model, the images
+also go to MODEL's provider. Keep the bundle out of Git.
 Failures are logged (first error line only) to DIR/ask-errors.log; a run the provider
 stopped without an answer (a safety stop, a refusal, the output limit) is logged as that,
 from the run's own trajectory, so it isn't mistaken for a malformed reply.
@@ -42,6 +49,7 @@ from ..data.jsonval import JsonObject, as_list, as_object, as_str
 from ..review.answers import MAX_READ, parse_answer
 from ..review.catalogue import BY_ID
 from .fast_agent import run_go
+from .images import ImageChecker
 
 MCP = "mcp>=1.2,<2"
 SERVER = "atif_scan.review.inspect_server"
@@ -76,6 +84,12 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="let the model read more of the trace through a read-only MCP server bound to "
         f"that one trajectory (needs atif-scan[mcp], else uv to fetch {MCP})",
+    )
+    p.add_argument(
+        "--image-model",
+        metavar="MODEL",
+        help="transcribe the traces' inline images with MODEL first, and let the judge read "
+        "the transcripts (read_media); needs --inspect-tool. Images go to MODEL's provider",
     )
     p.add_argument("--fast-agent", default="fast-agent", metavar="CMD", help="default: fast-agent")
     return p
@@ -126,16 +140,25 @@ def _metadata(path: Path) -> JsonObject:
     return meta
 
 
-def server_command(trace: str) -> str:
-    """The read-only MCP server for one trajectory, as a shell command for `--stdio`."""
+def server_command(trace: str, images: ImageChecker | None = None) -> str:
+    """The read-only MCP server for one trajectory, as a shell command for `--stdio`;
+    with `images`, bound to that image model's stored transcripts."""
+    bound = [trace]
+    if images is not None:
+        bound += ["--image-model", images.model, "--image-store", str(images.store)]
     if importlib.util.find_spec("mcp") is not None:
-        return shlex.join([sys.executable, "-m", SERVER, trace])
+        return shlex.join([sys.executable, "-m", SERVER, *bound])
     # Layer mcp over this interpreter's environment (which provides atif_scan).
     uv = ["uv", "run", "--no-project", "--python", sys.executable, "--with", MCP]
-    return shlex.join([*uv, "python", "-m", SERVER, trace])
+    return shlex.join([*uv, "python", "-m", SERVER, *bound])
 
 
-def _command(args: argparse.Namespace, meta: Path, metadata: JsonObject) -> list[str] | str:
+def _command(
+    args: argparse.Namespace,
+    meta: Path,
+    metadata: JsonObject,
+    images: ImageChecker | None = None,
+) -> list[str] | str:
     """`fast-agent go`'s arguments for one question, or why it can't be asked."""
     extra: list[str] = []
     if args.inspect_tool:
@@ -143,7 +166,8 @@ def _command(args: argparse.Namespace, meta: Path, metadata: JsonObject) -> list
         if not trace or not Path(trace).is_file():
             return "no local trajectory for --inspect-tool"
         # Keep the inspection tools available beyond the first tool round.
-        extra = ["--structured-tool-policy", "always", "--stdio", server_command(trace)]
+        server = server_command(trace, images)
+        extra = ["--structured-tool-policy", "always", "--stdio", server]
     return [
         *("--model", args.model, "--no-shell", "--no-subagents", "--quiet"),
         *extra,
@@ -177,16 +201,21 @@ def _reason(text: str) -> str:
     return ((errors or lines or ["no output"])[0])[:REASON_CHARS]
 
 
-def answer(args: argparse.Namespace, meta: Path) -> bool:
+def answer(args: argparse.Namespace, meta: Path, images: ImageChecker | None = None) -> bool:
     try:
         metadata = _metadata(meta)
     except (OSError, ValueError, RecursionError):
         return _failed(args.questions, meta, "invalid question metadata")
-    return _answer(args, meta, metadata)
+    return _answer(args, meta, metadata, images)
 
 
-def _answer(args: argparse.Namespace, meta: Path, metadata: JsonObject) -> bool:
-    command = _command(args, meta, metadata)
+def _answer(
+    args: argparse.Namespace,
+    meta: Path,
+    metadata: JsonObject,
+    images: ImageChecker | None = None,
+) -> bool:
+    command = _command(args, meta, metadata, images)
     if isinstance(command, str):
         return _failed(args.questions, meta, command)
     started = time.time()
@@ -257,6 +286,39 @@ def _check(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
         parser.error("fast-agent not found (--fast-agent CMD)")
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
+    if args.image_model and not args.inspect_tool:
+        parser.error("--image-model needs --inspect-tool (the judge reads transcripts with it)")
+
+
+def _trace_paths(todo: list[Path]) -> list[Path]:
+    """The distinct local trajectories behind these questions (unreadable metadata and
+    missing files are skipped: those questions fail on their own)."""
+    paths: list[Path] = []
+    for meta in todo:
+        try:
+            trace = as_str(_metadata(meta).get("trace_path"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if trace and Path(trace).is_file() and Path(trace) not in paths:
+            paths.append(Path(trace))
+    return paths
+
+
+def transcribe(args: argparse.Namespace, todo: list[Path]) -> ImageChecker:
+    """Transcribe every inline image of the traces to be reviewed (stored, each once)."""
+    images = ImageChecker(args.image_model, command=tuple(shlex.split(args.fast_agent)))
+    print(
+        f"atif-scan hunt: --image-model sends the traces' images to '{args.image_model}' "
+        "via fast-agent, for transcription",
+        file=sys.stderr,
+    )
+    totals: dict[str, int] = {}
+    for trace in _trace_paths(todo):
+        for key, value in images.transcribe_trace(trace).items():
+            totals[key] = totals.get(key, 0) + (value if isinstance(value, int) else 0)
+    counts = " · ".join(f"{k} {v}" for k, v in totals.items()) or "no images"
+    print(f"images: {counts} ({images.summary()})", file=sys.stderr)
+    return images
 
 
 def main(argv: list[str]) -> int:
@@ -265,6 +327,7 @@ def main(argv: list[str]) -> int:
     _check(parser, args)
     todo = pending(args.questions, args.question, args.force)
     tool = ", read-only trace tool" if args.inspect_tool else ""
+    tool += f", image transcripts from '{args.image_model}'" if args.image_model else ""
     print(
         f"{len(todo)} question(s) to ask with model '{args.model}' (jobs {args.jobs}{tool})",
         file=sys.stderr,
@@ -274,8 +337,9 @@ def main(argv: list[str]) -> int:
         return 0
     if not todo:
         return 0
+    images = transcribe(args, todo) if args.image_model else None
     with ThreadPoolExecutor(args.jobs) as pool:
-        results = list(pool.map(lambda meta: answer(args, meta), todo))
+        results = list(pool.map(lambda meta: answer(args, meta, images), todo))
     print(f"answered {sum(results)} · failed {results.count(False)}", file=sys.stderr)
     print(f"next: atif-scan <same inputs> --answers {args.questions} --brief", file=sys.stderr)
     return 1 if not all(results) else 0

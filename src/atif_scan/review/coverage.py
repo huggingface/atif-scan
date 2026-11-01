@@ -4,7 +4,11 @@
 (`<question>.review.atif.json`). Its read-only trace-tool calls say which steps of the
 reviewed trace it read: `read_steps(first, last)` ranges and `read_step_segment` steps,
 and whether it opened `trace_outline`. Searches return windows, not steps, and aren't
-counted as read. The figures are counts only; nothing of either trace is exported.
+counted as read. `read_media(step_number)` calls (stored image transcripts) are counted
+apart: `media_read` of the trace's `media_steps` (steps holding images). Reading a step's
+images is not reading the step, and a universal answer that left some unread
+(`images_unread`) is counted apart too. The figures are
+counts only; nothing of either trace is exported.
 A question can name the steps its universal answer must have read (`coverage_steps`:
 every verification claim, for `verification_hunt`); otherwise it is all of them.
 
@@ -67,12 +71,17 @@ def _steps_read(name: str, args: dict[str, object]) -> range:
 
 
 def review_coverage(
-    review: Path, step_numbers: Collection[int], required: Collection[int] = ()
+    review: Path,
+    step_numbers: Collection[int],
+    required: Collection[int] = (),
+    media_steps: Collection[int] = (),
 ) -> Doc | None:
-    """{steps_read, share, basis, outline, tool_calls} for one answering run over a trace
-    with these step numbers; None when its trajectory is missing, too large or not JSON.
-    `required` (step numbers, e.g. every verification claim): `share` is then the part of
-    those read (basis "required"), else of all steps (basis "steps")."""
+    """{steps_read, share, basis, outline, media_steps, media_read, tool_calls} for one
+    answering run over a trace with these step numbers; None when its trajectory is
+    missing, too large or not JSON. `required` (step numbers, e.g. every verification
+    claim): `share` is then the part of those read (basis "required"), else of all steps
+    (basis "steps"). `media_steps`: the steps holding images; `media_read` counts those
+    whose images it read (any step when none are given)."""
     try:
         with review.open("rb") as handle:
             data = handle.read(MAX_BYTES + 1)
@@ -90,14 +99,30 @@ def review_coverage(
     read: set[int] = set()
     for call in calls:
         read.update(n for n in _steps_read(_tool(call), _arguments(call)) if n in known)
+    media = {
+        step
+        for call in calls
+        if _tool(call) == "read_media"
+        and (step := count(_arguments(call).get("step_number"))) in known
+    }
+    with_media = set(media_steps) & known
     basis = set(required) & known or known
     return {
         "steps_read": len(read),
         "share": round(len(read & basis) / len(basis), 2) if basis else None,
         "basis": "required" if set(required) & known else "steps",
         "outline": any(_tool(c) == "trace_outline" for c in calls),
+        "media_steps": len(with_media),
+        "media_read": len(media & with_media if with_media else media),
         "tool_calls": len(calls),
     }
+
+
+def images_unread(row: Doc) -> bool:
+    """A universal answer given without reading all of the trace's images."""
+    coverage = as_object(row.get("coverage"))
+    steps, read = count(coverage.get("media_steps")), count(coverage.get("media_read"))
+    return row.get("answer") in UNIVERSAL and bool(steps) and (read or 0) < (steps or 0)
 
 
 def thin(row: Doc) -> bool:

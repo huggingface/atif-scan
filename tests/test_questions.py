@@ -1008,6 +1008,8 @@ def test_answer_coverage_comes_from_the_answering_runs_own_trajectory(job, tmp_p
         {"function_name": "uv__read_step_segment", "arguments": '{"step_number": 3}'},
         {"function_name": "uv__search_trace", "arguments": {"pattern": "x"}},  # not "read"
         {"function_name": "uv__read_steps", "arguments": {"first": 50, "last": 60}},  # unknown
+        {"function_name": "uv__read_media", "arguments": {"step_number": 4}},  # images only
+        {"function_name": "uv__read_media", "arguments": {"step_number": 99}},  # unknown
     ]
     review.write_text(json.dumps({"steps": [{"tool_calls": calls}]}))
     got = review_coverage(review, [1, 2, 3, 4])
@@ -1016,7 +1018,9 @@ def test_answer_coverage_comes_from_the_answering_runs_own_trajectory(job, tmp_p
         "share": 0.75,
         "basis": "steps",
         "outline": True,
-        "tool_calls": 5,
+        "media_steps": 0,
+        "media_read": 1,
+        "tool_calls": 7,
     }
     # Only the required steps (e.g. every verification claim) count when given.
     claims = review_coverage(review, [1, 2, 3, 4], required=[2, 4])
@@ -1043,6 +1047,8 @@ def test_answer_coverage_comes_from_the_answering_runs_own_trajectory(job, tmp_p
         "share": 0.33,
         "basis": "steps",
         "outline": False,
+        "media_steps": 0,
+        "media_read": 0,
         "tool_calls": 1,
     }
     main([*argv, "--brief"])
