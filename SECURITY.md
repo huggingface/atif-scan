@@ -57,7 +57,12 @@
   the MCP server `hunt --inspect-tool` passes is started. An older fast-agent rejects the
   flag: atif-scan then warns once and runs without it (`--no-shell --no-subagents`,
   session history off through the environment), where the home's plugins and hooks may
-  still load. Upgrade rather than rely on that.
+  still load. Upgrade rather than rely on that. `--isolated` does not cover the system
+  prompt: fast-agent's default one includes the working directory's `AGENTS.md` and an
+  environment block (workspace path, host platform). Every call therefore passes
+  atif-scan's own fixed system prompt (`--instruction`, no placeholders), and `hunt`
+  discards an answer whose recorded system prompt differs. Image transcripts stored
+  before this (names without `.s2`) are not read; delete them from `images/`.
 - **Companion history.** Full Harbor archives (`--full`) may include Grok compaction
   segments and task artifacts. Companion-history tools inventory only fixed local
   session locations beside the bound trajectory and never follow paths supplied by a

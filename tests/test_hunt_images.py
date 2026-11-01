@@ -15,20 +15,18 @@ import runpy
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING
 
 import pytest
 from test_image_model import image_message, png, reply, sha, uri
 from test_inspect_mcp import RecordingServer
 
 from atif_scan.cli import hunt, images
-from atif_scan.evidence.transcripts import TranscriptStore, stored_path
+from atif_scan.cli.fast_agent import INSTRUCTION
+from atif_scan.evidence.transcripts import STORE_VERSION, TranscriptStore, model_key, stored_path
 from atif_scan.review.catalogue import BY_ID
 from atif_scan.review.prompts import schema
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 SERVER = "atif_scan.review.inspect_server"
 MODEL = "vision-model"
@@ -235,3 +233,46 @@ def test_a_clean_answer_that_left_images_unread_is_counted_apart(tmp_path, capsy
     brief = {"answers": {"hack_hunt": {"clean": 1}}, "answers_images_unread": {"hack_hunt": 1}}
     [line] = _answers(brief)
     assert "1 clean/absent without reading all of the trace's images" in line
+
+
+def judge_writing(system: str):
+    """A judge run that records `system` as its system prompt, then answers clean."""
+
+    def run(executable, command):
+        out = command[command.index("--trajectory-output") + 1]
+        steps = [{"step_id": 1, "source": "system", "message": system}]
+        Path(out).write_text(json.dumps({"steps": steps}))
+        return subprocess.CompletedProcess(command, 0, json.dumps(ANSWER), "")
+
+    return run
+
+
+@pytest.mark.parametrize(
+    ("system", "answered"),
+    [
+        (INSTRUCTION, True),
+        # fast-agent's default: the working directory's AGENTS.md and environment.
+        ("You are a helpful AI Agent.\n\n# atif-scan development\nRead README.md", False),
+        (INSTRUCTION + "\n# project instructions", False),
+    ],
+)
+def test_an_answer_under_a_foreign_system_prompt_is_discarded(
+    tmp_path, monkeypatch, system, answered
+):
+    root = bundle(tmp_path, trajectory(tmp_path), questions=1)
+    monkeypatch.setattr(hunt, "run_go", judge_writing(system))
+    monkeypatch.setattr(hunt.shutil, "which", lambda _: "synthetic-runner")
+    status = hunt.main(["--model", "judge", "--questions", str(root)])
+    [meta] = root.glob("input-*/hack_hunt.json")
+    assert meta.with_suffix(".answer.json").exists() is answered
+    assert status == (0 if answered else 1)
+    if not answered:
+        assert "system prompt was not atif-scan's" in (root / "ask-errors.log").read_text()
+
+
+def test_transcripts_asked_under_the_old_system_prompt_are_not_read(tmp_path):
+    # Stored before atif-scan set its own system prompt: named without STORE_VERSION.
+    old = tmp_path / f"{sha(png(1))}.{model_key(MODEL)}.json"
+    old.write_text(reply("PART A-12"))
+    assert TranscriptStore(tmp_path, MODEL).get(sha(png(1))) is None
+    assert stored_path(tmp_path, sha(png(1)), MODEL).name.endswith(f".{STORE_VERSION}.json")

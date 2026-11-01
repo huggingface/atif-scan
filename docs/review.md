@@ -254,7 +254,11 @@ reviewer can't look up the judge's answers by name.
 --no-subagents --json-schema …` (`--fast-agent CMD` picks another command). `--isolated`
 (fast-agent 0.10.43+) uses your fast-agent home's config and logins but saves nothing
 there and loads no skills, plugins or hooks; an older fast-agent gets a warning and a
-fallback (see [SECURITY.md](../SECURITY.md)). It skips only valid cached answers unless
+fallback (see [SECURITY.md](../SECURITY.md)). The judge's system prompt is atif-scan's
+own (`--instruction`): fast-agent's default would add the working directory's
+`AGENTS.md`, so a judge run from a project checkout got that project's development
+instructions. An answer whose saved trajectory shows another system prompt is discarded
+and logged. It skips only valid cached answers unless
 `--force`, runs `--jobs N` in parallel, and logs the first error line per failure to
 `ask-errors.log`. When the provider stopped the run without an answer (a safety stop, a
 refusal, the output limit), the log says so, read from the run's saved trajectory, rather

@@ -257,7 +257,8 @@ def test_image_model_transcribes_the_blocking_image(tmp_path, capsys, monkeypatc
     }
     [call] = fake_fast_agent()  # the same image twice is asked about once
     args = call["args"]
-    assert args[:4] == ["go", "--isolated", "--model", "vision-model"]
+    assert args[:3] == ["go", "--isolated", "--instruction"]  # atif-scan's own system prompt
+    assert args[4:6] == ["--model", "vision-model"]
     assert {"--no-shell", "--no-subagents", "--json-schema"} <= set(args)
     assert call["session_history"] == "false"  # also off for a fast-agent without it
     assert bytes.fromhex(call["image"]) == frame  # the decoded image, not the data URI

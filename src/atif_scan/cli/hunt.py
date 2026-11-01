@@ -44,12 +44,16 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..data.jsonval import JsonObject, as_list, as_object, as_str
 from ..review.answers import MAX_READ, parse_answer
 from ..review.catalogue import BY_ID
-from .fast_agent import run_go
+from .fast_agent import INSTRUCTION, run_go
 from .images import ImageChecker
+
+if TYPE_CHECKING:
+    import subprocess
 
 MCP = "mcp>=1.2,<2"
 SERVER = "atif_scan.review.inspect_server"
@@ -220,19 +224,56 @@ def _answer(
         return _failed(args.questions, meta, command)
     started = time.time()
     run = run_go(shlex.split(args.fast_agent), command)
-    stop = NO_ANSWER_STOPS.get(_stop_reason(meta.with_suffix(".review.atif.json"), started) or "")
-    failed = any(line.startswith("Error:") for line in run.stdout.splitlines())
-    if run.returncode != 0 or not run.stdout.strip() or failed:
-        return _failed(args.questions, meta, stop or _reason(run.stdout + "\n" + run.stderr))
-    reply = _validated_reply(run.stdout, metadata)
-    if reply is None:
-        return _failed(args.questions, meta, stop or "invalid answer")
+    reply = _checked_reply(run, meta, metadata, started)
+    if not isinstance(reply, tuple):
+        return _failed(args.questions, meta, reply)
     target = meta.with_suffix(".answer.json")
     tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}.{threading.get_ident()}")
-    tmp.write_text(reply, encoding="utf-8")
+    tmp.write_text(reply[0], encoding="utf-8")
     tmp.replace(target)
     print(f"answered  {meta}", file=sys.stderr)
     return True
+
+
+def _checked_reply(
+    run: subprocess.CompletedProcess[str], meta: Path, metadata: JsonObject, started: float
+) -> tuple[str] | str:
+    """(the validated reply,), or why the run gave no usable answer."""
+    review = meta.with_suffix(".review.atif.json")
+    stop = NO_ANSWER_STOPS.get(_stop_reason(review, started) or "")
+    failed = any(line.startswith("Error:") for line in run.stdout.splitlines())
+    if run.returncode != 0 or not run.stdout.strip() or failed:
+        return stop or _reason(run.stdout + "\n" + run.stderr)
+    reply = _validated_reply(run.stdout, metadata)
+    if reply is None:
+        return stop or "invalid answer"
+    if _foreign_system_prompt(review, started):
+        return FOREIGN_PROMPT
+    return (reply,)
+
+
+FOREIGN_PROMPT = (
+    "the judge's system prompt was not atif-scan's (workspace instructions may have "
+    "reached it): answer discarded"
+)
+
+
+def _foreign_system_prompt(review: Path, since: float) -> bool:
+    """Whether this answering run's recorded system prompt differs from atif-scan's
+    INSTRUCTION (fast-agent's default would add the working directory's AGENTS.md).
+    False when it saved no trajectory this run: nothing to check."""
+    system = [
+        as_object(s) for s in _review_steps(review, since) if as_object(s).get("source") == "system"
+    ]
+    if not system:
+        return False
+    message = system[0].get("message")
+    parts = [as_str(message)] if isinstance(message, str) else _texts(message)
+    return "".join(p or "" for p in parts).strip() != INSTRUCTION.strip()
+
+
+def _texts(message: object) -> list[str | None]:
+    return [as_str(as_object(part).get("text")) for part in as_list(message)]
 
 
 def _stop_reason(review: Path, since: float) -> str | None:

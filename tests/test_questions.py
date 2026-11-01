@@ -285,7 +285,8 @@ def test_hunt_answers_each_question_once_with_a_stub(job, tmp_path, capsys):
     calls = [log.read_text().splitlines() for log in tmp_path.glob("args.*.log")]
     assert len(calls) == 2
     args = calls[0]
-    assert args[:4] == ["go", "--isolated", "--model", "stub-model"]
+    assert args[:3] == ["go", "--isolated", "--instruction"]  # atif-scan's own system prompt
+    assert args[4:6] == ["--model", "stub-model"]
     assert "--no-shell" in args and "--no-subagents" in args and "--json-schema" in args
     assert "--stdio" not in args
     # Only the last JSON line is kept, not the status line before it.

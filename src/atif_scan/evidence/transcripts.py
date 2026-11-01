@@ -36,7 +36,11 @@ TEXT_READ: dict[str, Legible] = {
     "unreadable": "none",
 }
 SHA256_HEX = re.compile(r"[0-9a-f]{64}")
-MAX_STORED = 256 * 1024  # a stored answer: a capped transcript plus a few fields
+MAX_STORED = 256 * 1024
+# Part of every stored answer's name. "s2": asked with atif-scan's own system prompt
+# (`cli.fast_agent.INSTRUCTION`); earlier answers may have had the asking workspace's
+# AGENTS.md as their system prompt, so they are not read (they are asked again).
+STORE_VERSION = "s2"  # a stored answer: a capped transcript plus a few fields
 
 
 @dataclass(frozen=True)
@@ -86,7 +90,7 @@ def model_key(model: str) -> str:
 
 def stored_path(store: Path, digest: str, model: str) -> Path:
     """Where the answer for this image (sha256 hex) and model is kept."""
-    return store / f"{digest}.{model_key(model)}.json"
+    return store / f"{digest}.{model_key(model)}.{STORE_VERSION}.json"
 
 
 def read_stored(path: Path) -> Transcript | None:
