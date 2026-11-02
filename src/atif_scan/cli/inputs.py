@@ -145,9 +145,31 @@ def resolve_local(values: list[str], args: argparse.Namespace) -> list[Source]:
         return resolve(values, args.pattern, runs=args.runs, sync_failures=args.sync_failures)
     found = []
     for index, value in enumerate(values, 1):
-        part = resolve([value], args.pattern, runs=args.runs, sync_failures=args.sync_failures)
+        known = _replacement_trials(value, getattr(args, "selection", None))
+        part = resolve(
+            [value],
+            args.pattern,
+            runs=args.runs,
+            sync_failures=args.sync_failures,
+            known_trials={value: known},
+        )
         found.extend(replace(s, label=f"part-{index}/{s.label}") for s in part)
     return found
+
+
+def _replacement_trials(value: str, selection: Selection | None) -> tuple[str, ...]:
+    """Expected trials only for an exact replacement job in a validated selection."""
+    if selection is None:
+        return ()
+    job = next(
+        (j for j in selection.jobs if j == Path(value) and j.name in selection.replacement_jobs),
+        None,
+    )
+    if job is None:
+        return ()
+    return tuple(
+        trial for name, trial in (*selection.replaced, *selection.replacements) if name == job.name
+    )
 
 
 def _trial_key(source: Source, jobs: set[Path]) -> tuple[str, str] | None:

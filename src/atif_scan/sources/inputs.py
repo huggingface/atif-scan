@@ -628,9 +628,10 @@ NO_TRAJECTORY = "no_trajectory"
 def _job_trial_source(
     listing: Listing, folder: str, saved: dict[str, SavedRun], membership: Mapping[str, bool]
 ) -> Source:
-    """A Harbor job's trial folder with a result.json but no trajectory (see
-    harbor.runs.untraced_trials): unavailable, with its result.json facts read afresh
-    each scan (never cached). Labelled as Harbor lays out traced trials: `<trial>/agent`."""
+    """A known Harbor trial without a trajectory: unavailable, with recorded run facts
+    read afresh each scan (never cached). Known from a trial result or a validated
+    selection, never from an inferred outcome. Labelled like traced trials: `<trial>/agent`.
+    """
     entry = Entry(f"{folder}/agent/{DEFAULT_PATTERN}", None)
     meta = listed_facts(
         hub_trial(saved, entry),
@@ -644,7 +645,14 @@ def _job_trial_source(
         raise TraceError(NO_TRAJECTORY_ERRORED if errored else NO_TRAJECTORY)
 
     local = listing.local_path(Entry(folder, None)) if listing.local_path else None
-    return Source(f"{folder}/agent", load, meta=meta, details=details, trial_dir=local)
+    return Source(
+        f"{folder}/agent",
+        load,
+        reward=reward_lookup(listing, entry, ""),
+        meta=meta,
+        details=details,
+        trial_dir=local,
+    )
 
 
 def _ale_sources(listing: Listing, found: list[Attempt], before: int) -> list[Source]:
@@ -688,6 +696,7 @@ def _listing_sources(
     membership: Mapping[str, bool],
     before: int,
     jobs: Sequence[str] = (),
+    known_trials: Sequence[str] = (),
 ) -> list[Source]:
     """One input's selected trajectories, then the trials its saved Hub listing names
     without one (unavailable, as a harbor:// scan reports them), then the trial folders
@@ -697,8 +706,6 @@ def _listing_sources(
     known = attempts(listing)
     ale = known if pattern == DEFAULT_PATTERN else []
     entries = [e for e in entries if not any(a.contains(e.path) for a in ale)]
-    if not entries and not ale:
-        raise SourceError("no_files_match_pattern")
     sources = [
         _trial_source(
             listing,
@@ -717,11 +724,14 @@ def _listing_sources(
             _untraced(label, facts) for label, facts in listed_without_trajectory(saved, entries)
         ]
         labels = {s.label for s in sources}
+        traced = {trial_folder(entry) for entry in entries}
         sources += [
             _job_trial_source(listing, folder, saved, membership)
-            for folder in untraced_trials(listing, jobs)
-            if f"{folder}/agent" not in labels
+            for folder in dict.fromkeys([*untraced_trials(listing, jobs), *known_trials])
+            if f"{folder}/agent" not in labels and folder not in traced
         ]
+    if not sources:
+        raise SourceError("no_files_match_pattern")
     return sources
 
 
@@ -731,6 +741,8 @@ def resolve(
     fs: RemoteFS | None = None,
     runs: list[Doc] | None = None,
     sync_failures: list[int] | None = None,
+    *,
+    known_trials: Mapping[str, Sequence[str]] | None = None,
 ) -> list[Source]:
     """Expand each value in order (see module docstring).
 
@@ -739,7 +751,9 @@ def resolve(
     files, and relative paths that are not valid identifiers, get a positional
     `input-NNNN` label, so absolute paths never reach a report. Harbor job run facts
     found on the way are appended to `runs`, mirror files that failed to sync counted
-    per input in `sync_failures`.
+    per input in `sync_failures`. `known_trials` supplies independently validated trial
+    folders by input value (e.g. replacement receipts). With the default pattern, retain
+    these trials as unavailable even before their first trajectory or result is written.
     """
     sources: list[Source] = []
     for given in values:
@@ -752,7 +766,16 @@ def resolve(
         if runs is not None:
             runs.extend(found_runs)
             runs.extend(run for run, _ in saved.values() if run)
-        sources += _listing_sources(listing, value, pattern, saved, membership, len(sources), jobs)
+        sources += _listing_sources(
+            listing,
+            value,
+            pattern,
+            saved,
+            membership,
+            len(sources),
+            jobs,
+            (known_trials or {}).get(given, ()),
+        )
     if len({s.label for s in sources}) != len(sources):
         raise SourceError("duplicate_input_labels")
     return sources

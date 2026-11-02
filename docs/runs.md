@@ -55,9 +55,12 @@ replaced trial's slot is taken by the end of its chain, which is scanned and sco
 replaced original and any superseded link are still scanned, labelled with their lineage
 and kept as evidence (`not_counted` in JSON, a **Replaced** filter in the viewer) so you
 can check the failure was infrastructure. A replacement not yet run leaves its slot
-pending. The brief's **REPLACED** section lists them by original error and gives the
-score as first run. Every receipt naming the run must verify or the selection is
-rejected: kind/keys, `upload: false`, parent receipt and config digests, its own config
+pending. A replacement with a trial folder but no trajectory is retained as unavailable,
+even before Harbor writes its trial result. Only recorded rewards or errors determine
+its outcome; without either it remains unknown and unscored. The brief's **REPLACED**
+section lists replacements by original error and gives the score as first run. Every
+receipt naming the run must verify or the selection is rejected: kind/keys,
+`upload: false`, parent receipt and config digests, its own config
 digest, one successor per trial, chains within a partition without cycles, at most one
 trial (of the right task) per replacement job, and a replaced trial that really was an
 unverified failure. `--as-run` scans the original job parts as they ran.

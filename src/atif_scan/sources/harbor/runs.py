@@ -341,6 +341,8 @@ def untraced_details(listing: Listing, folder: str) -> Callable[[], Doc]:
     path = f"{folder}/result.json"
 
     def details() -> Doc:
+        if path not in listing.paths:
+            return {}  # absent or excluded (e.g. a symlink): unknown, never read it
         return with_attempt_cost(listing, path, trial_result(listing.read(path, RESULT_BYTES)))
 
     return details
