@@ -336,10 +336,13 @@ def test_provider_stop_is_logged_as_unanswered_not_a_bad_reply(bundle, monkeypat
         out = command[command.index("--trajectory-output") + 1]
         with open(out, "w") as handle:
             json.dump(review_trajectory(stop), handle)
+        # Pin freshness: an immediate mock write's filesystem mtime may lag wall time.
+        os.utime(out, (100, 100))
         return subprocess.CompletedProcess(command, 1, SCHEMA_ERROR, "")
 
     monkeypatch.setattr(hunt, "run_go", runner)
     monkeypatch.setattr(hunt.shutil, "which", lambda _: "synthetic-runner")
+    monkeypatch.setattr(hunt.time, "time", lambda: 100)
     assert hunt.main(["--model", "synthetic", "--questions", str(root)]) == 1
     assert logged in (root / "ask-errors.log").read_text()
     assert hunt.pending(root, [], False) == [meta]  # still asked again next time
