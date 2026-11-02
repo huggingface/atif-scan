@@ -61,7 +61,9 @@
   prompt: fast-agent's default one includes the working directory's `AGENTS.md` and an
   environment block (workspace path, host platform). Every call therefore passes
   atif-scan's own fixed system prompt (`--instruction`, no placeholders), and `hunt`
-  discards an answer whose recorded system prompt differs. Image transcripts stored
+  discards an answer whose recorded system prompt differs. The only permitted addition
+  is the exact known fast-agent runtime batching note; arbitrary suffixes and workspace
+  instructions are still rejected. Image transcripts stored
   before this (names without `.s2`) are not read; delete them from `images/`.
 - **Companion history.** Full Harbor archives (`--full`) may include Grok compaction
   segments and task artifacts. Companion-history tools inventory only fixed local

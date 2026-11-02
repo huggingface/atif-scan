@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING
 from ..data.jsonval import JsonObject, as_list, as_object, as_str
 from ..review.answers import MAX_READ, parse_answer
 from ..review.catalogue import BY_ID
-from .fast_agent import INSTRUCTION, run_go
+from .fast_agent import expected_instruction, run_go
 from .images import ImageChecker
 
 if TYPE_CHECKING:
@@ -260,7 +260,7 @@ FOREIGN_PROMPT = (
 
 def _foreign_system_prompt(review: Path, since: float) -> bool:
     """Whether this answering run's recorded system prompt differs from atif-scan's
-    INSTRUCTION (fast-agent's default would add the working directory's AGENTS.md).
+    instruction and allowlisted runtime note (never the working directory's AGENTS.md).
     False when it saved no trajectory this run: nothing to check."""
     system = [
         as_object(s) for s in _review_steps(review, since) if as_object(s).get("source") == "system"
@@ -269,7 +269,7 @@ def _foreign_system_prompt(review: Path, since: float) -> bool:
         return False
     message = system[0].get("message")
     parts = [as_str(message)] if isinstance(message, str) else _texts(message)
-    return "".join(p or "" for p in parts).strip() != INSTRUCTION.strip()
+    return not expected_instruction("".join(p or "" for p in parts))
 
 
 def _texts(message: object) -> list[str | None]:

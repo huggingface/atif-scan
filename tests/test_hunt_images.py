@@ -11,6 +11,7 @@ for an image: partial, missing and unmatched images stay unread.
 from __future__ import annotations
 
 import json
+import os
 import runpy
 import shlex
 import subprocess
@@ -23,7 +24,7 @@ from test_image_model import image_message, png, reply, sha, uri
 from test_inspect_mcp import RecordingServer
 
 from atif_scan.cli import hunt, images
-from atif_scan.cli.fast_agent import INSTRUCTION
+from atif_scan.cli.fast_agent import INSTRUCTION, PTC_BATCHING_NOTE
 from atif_scan.evidence.transcripts import STORE_VERSION, TranscriptStore, model_key, stored_path
 from atif_scan.review.catalogue import BY_ID
 from atif_scan.review.prompts import schema
@@ -242,6 +243,7 @@ def judge_writing(system: str):
         out = command[command.index("--trajectory-output") + 1]
         steps = [{"step_id": 1, "source": "system", "message": system}]
         Path(out).write_text(json.dumps({"steps": steps}))
+        os.utime(out, (100, 100))  # deterministic freshness for the immediate mock write
         return subprocess.CompletedProcess(command, 0, json.dumps(ANSWER), "")
 
     return run
@@ -251,6 +253,11 @@ def judge_writing(system: str):
     ("system", "answered"),
     [
         (INSTRUCTION, True),
+        (INSTRUCTION + "\n\n" + PTC_BATCHING_NOTE, True),
+        (INSTRUCTION + "\n" + PTC_BATCHING_NOTE + "\n# project instructions", False),
+        (INSTRUCTION + "\n# project instructions\n" + PTC_BATCHING_NOTE, False),
+        (INSTRUCTION + "\n" + PTC_BATCHING_NOTE.replace("read-only", "arbitrary"), False),
+        (PTC_BATCHING_NOTE, False),
         # fast-agent's default: the working directory's AGENTS.md and environment.
         ("You are a helpful AI Agent.\n\n# atif-scan development\nRead README.md", False),
         (INSTRUCTION + "\n# project instructions", False),
@@ -260,6 +267,7 @@ def test_an_answer_under_a_foreign_system_prompt_is_discarded(
     tmp_path, monkeypatch, system, answered
 ):
     root = bundle(tmp_path, trajectory(tmp_path), questions=1)
+    monkeypatch.setattr(hunt.time, "time", lambda: 100)
     monkeypatch.setattr(hunt, "run_go", judge_writing(system))
     monkeypatch.setattr(hunt.shutil, "which", lambda _: "synthetic-runner")
     status = hunt.main(["--model", "judge", "--questions", str(root)])
