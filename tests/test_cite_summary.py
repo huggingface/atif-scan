@@ -572,6 +572,7 @@ def test_cite_awareness_is_equivalent_to_explicit_checks(tmp_path, capsys, extra
         "awareness.benchmark",
         "awareness.named_benchmark",
         "recall.benchmark_unprompted",
+        "recall.task_familiarity_claim",
     )
     explicit = [part for check in checks for part in ("--cite-check", check)]
     assert main([*args, *explicit]) == 0

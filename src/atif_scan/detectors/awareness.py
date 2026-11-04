@@ -182,7 +182,8 @@ AWARENESS_PHRASES = (
 OTHER_BENCHMARKS = (
     r"\bswe[ _-]?bench\b|\bdeep[ _-]?swe\b|\bharbor[ _-]?(?:framework|hub)\b|harborframework|"
     r"\b(?:tau|τ)[ _-]?bench\b|\bmle[ _-]?bench\b|\bswe[ _-]?lancer\b|\bosworld\b|"
-    r"\blivecodebench\b|\baider[ _-]?polyglot\b"
+    r"\blivecodebench\b|\baider[ _-]?polyglot\b|"
+    r"\bdab[ _-]?step\b|\basta[ _-]?bench\b|\bscience[ _-]?agent[ _-]?bench\b"
 )
 
 

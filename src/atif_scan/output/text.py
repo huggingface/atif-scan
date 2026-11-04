@@ -8,6 +8,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..data.jsonval import Doc
+from .coverage import (
+    CHECK_LIST_LIMIT,
+    COVERAGE_NOTICE,
+    cause_line,
+    check_list,
+    ptc_line,
+    ptc_notice,
+)
 from .document import (
     EVIDENCE_SHOWN,
     coverage_counts,
@@ -55,31 +63,59 @@ def headline(item: Doc) -> str:
     return f"{score} · behavioural coverage {coverage}{telemetry}"
 
 
+def _unrecognized_counts(item: Doc) -> str:
+    line = f"unrecognized tool calls {item['unrecognized_tool_calls']}"
+    usage = item.get("ptc_usage")
+    if usage and usage["wrappers"]:
+        line += (
+            f" ({usage['unrecognized_wrappers']} PTC wrappers; "
+            f"{usage['remaining_unrecognized']} remaining)"
+        )
+    return line
+
+
 def counts(item: Doc) -> str:
     if item["agent_steps"] is None:
         return ""
     return (
         f"agent steps {item['agent_steps']} · tool calls {item['tool_calls']} · "
-        f"unrecognized tools {item['unrecognized_tool_calls']}"
+        + _unrecognized_counts(item)
         + (" · partial" if item["partial"] else "")
         + (f" · reward {item['reward']:g}" if item.get("reward") is not None else "")
         + (f" · task {item['task']}" if item.get("task") else "")
     )
 
 
-def unresolved(item: Doc) -> list[str]:
+def unresolved(item: Doc, *, compact: bool = False) -> list[str]:
     """Full-scan gap reasons, including incomplete matches and filtered-out checks."""
     if item["input_status"] != "available":
         return []
     gaps = coverage_gaps(item)
-    return [
-        f"{label} ({len(gaps[key])}): {', '.join(gaps[key])}"
+    lines = [
+        f"{label} ({len(gaps[key])} checks): {check_list(gaps[key], compact=compact)}"
         for key, label in (
             ("behavioural", "Behavioural coverage incomplete"),
             ("telemetry", "Telemetry checks unresolved"),
         )
         if gaps[key]
     ]
+
+    if compact and (cause := cause_line(item)):
+        lines.append(cause)
+    return lines
+
+
+def coverage_notice(doc: Doc) -> str:
+    """Explain compaction once per detail document, not once per trace."""
+    return (
+        COVERAGE_NOTICE
+        if any(
+            len(checks) > CHECK_LIST_LIMIT
+            for item in doc["inputs"]
+            for checks in coverage_gaps(item).values()
+        )
+        else ""
+    )
 
 
 def tally(group: dict[str, list[Doc]]) -> str:
@@ -106,15 +142,25 @@ def footer(doc: Doc) -> str:
 def _heading(item: Doc) -> list[str]:
     """The item's headline, its shape and how its agent loop ended, when unusual."""
     lines = [f"== {item['input_id']}: {headline(item)}"]
-    lines += [f"   {line}" for line in (counts(item), ending_note(item)) if line]
+    lines += [
+        f"   {line}"
+        for line in (counts(item), ptc_line(item.get("ptc_usage")), ending_note(item))
+        if line
+    ]
+    return lines
+
+
+def _report_heading(doc: Doc) -> list[str]:
+    lines: list[str] = [f"atif-scan {doc['scanner_version']}", ""]
+    for note in (filter_notice(doc), coverage_notice(doc), ptc_notice(doc["inputs"])):
+        if note:
+            lines += [note, ""]
     return lines
 
 
 def to_text(doc: Doc) -> str:
     """Plain-text view (no optional dependencies)."""
-    lines = [f"atif-scan {doc['scanner_version']}", ""]
-    if notice := filter_notice(doc):
-        lines += [notice, ""]
+    lines = _report_heading(doc)
     for item in doc["inputs"]:
         group = sections(item)
         lines += _heading(item)
@@ -125,7 +171,7 @@ def to_text(doc: Doc) -> str:
             lines.extend(_citation_text(item, a["id"], "            "))
         for a in group["expected"]:
             lines.append(f"   {'expected':<8} {a['id']:<36} by {', '.join(a['expected_by'])}")
-        lines.extend(f"   {line}" for line in unresolved(item))
+        lines.extend(f"   {line}" for line in unresolved(item, compact=True))
         lines += [f"   {tally(group)}", ""]
     lines.append(footer(doc))
     return "\n".join(lines) + "\n"

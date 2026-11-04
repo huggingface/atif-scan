@@ -10,6 +10,7 @@ from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
+from .coverage import ptc_line, ptc_notice
 from .document import STYLE, ending_note, sections
 from .document import filter_notice as _filter_notice
 from .summary import (
@@ -19,7 +20,7 @@ from .summary import (
     summary_head_lines,
     summary_tail_lines,
 )
-from .text import _cited, citation_lines, counts, footer, headline, where
+from .text import _cited, citation_lines, counts, coverage_notice, footer, headline, where
 from .text import tally as _tally
 from .text import unresolved as _unresolved
 
@@ -85,6 +86,8 @@ def _print_heading(console: Console, item: Doc) -> None:
     console.print(Text(item["input_id"], style="bold"), Text(headline(item), style=style))
     if shape := counts(item):
         console.print(Text(shape, style="dim"))
+    if usage := ptc_line(item.get("ptc_usage")):
+        console.print(Text(usage, style="dim"))
     if note := ending_note(item):
         console.print(Text(note, style="yellow"))
 
@@ -105,7 +108,7 @@ def _print_item(console: Console, item: Doc) -> None:
     if table.row_count:
         console.print(table)
     _print_citations(console, item, group)
-    for line in _unresolved(item):
+    for line in _unresolved(item, compact=True):
         console.print(Text(line, style="magenta"))
     if item["input_status"] == "available":
         console.print(Text(_tally(group), style="dim"))
@@ -116,6 +119,10 @@ def render(doc: Doc, file: IO[str] | None = None) -> None:
     console.print(f"[bold]atif-scan[/] {doc['scanner_version']}")
     if notice := _filter_notice(doc):
         console.print(Text(notice, style="dim"))
+    if note := coverage_notice(doc):
+        console.print(Text(note, style="dim"))
+    if note := ptc_notice(doc["inputs"]):
+        console.print(Text(note, style="dim"))
     for item in doc["inputs"]:
         _print_item(console, item)
     console.print()

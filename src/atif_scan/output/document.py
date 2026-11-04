@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 from ..checks import Severity, Status, check_selected
 from ..data.facts import TAIL
+from .coverage import coverage_causes
 
 if TYPE_CHECKING:
     from collections import Counter
@@ -254,6 +255,7 @@ def report(
 
     output["web_activity"] = web_activity.document() if web_activity is not None else None
     output["coverage_gaps"] = coverage_gaps(output)
+    output["coverage_causes"] = coverage_causes(output)
     output["recording_gaps"] = recording_gaps([output])
     return output
 
@@ -310,6 +312,7 @@ def filter_findings(
             item,
             assessments=assessments,
             coverage_gaps=coverage_gaps(item),
+            coverage_causes=coverage_causes(item),
             recording_gaps=recording_gaps([item]),
         )
         group = sections(shown)

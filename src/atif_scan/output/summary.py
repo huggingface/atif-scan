@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..data.jsonval import Doc
+from .coverage import PTC_LIMITS, ptc_line, ptc_summary
 from .document import RANK, SCHEMA_VERSION, events, filter_notice, ranked, sections
 from .overview import overview_text
 from .text import _citation_rows, _cited, footer, where
@@ -114,6 +115,7 @@ def summary(doc: Doc) -> Doc:
         **({"finding_checks": doc["finding_checks"]} if "finding_checks" in doc else {}),
         "scanner_version": doc["scanner_version"],
         "coverage": doc["coverage"],
+        "ptc_usage": ptc_summary(items),
         "highest_severity": {
             k: highest[k]
             for k in ("critical", "high", "medium", "low", "info", "none", "unavailable")
@@ -191,12 +193,31 @@ def _detail_lines(s: Doc) -> list[str]:
     return lines
 
 
+def _ptc_lines(s: Doc) -> list[str]:
+    usage = s.get("ptc_usage")
+    if not usage or not (line := ptc_line(usage)):
+        return []
+    scope = (
+        f"{usage['inputs_using_ptc']} input(s) using PTC · "
+        f"{usage['inputs_counted']} with counts · "
+        f"{usage['inputs_without_counts']} without counts"
+    )
+    return [
+        f"{line} · {scope}",
+        f"Unrecognized calls: {usage['unrecognized_wrappers']} PTC wrappers; "
+        f"{usage['remaining_unrecognized']} remaining (inputs with counts only).",
+        PTC_LIMITS,
+        "",
+    ]
+
+
 def summary_head_lines(s: Doc) -> list[str]:
     """The summary before its per-check details: overview, severities, check table."""
     lines = [f"atif-scan {s['scanner_version']} · summary", ""]
     if notice := filter_notice(s):
         lines += [notice, ""]
     lines += _summary_overview_lines(s)
+    lines += _ptc_lines(s)
     lines.append(
         "highest severity per trace (including recording integrity; brief excludes it): "
         + " · ".join(f"{k} {v}" for k, v in s["highest_severity"].items())

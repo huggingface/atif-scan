@@ -451,9 +451,12 @@ def awareness_section(b: Doc) -> Lines:
             else []
         )
     n, known = aw.get("scanned") or _present(b), _rewards_known(b)
+    subject = "benchmark awareness"
+    if any(st["stage"] == "familiar" and st["trials"] for st in stages):
+        subject += " or claimed task familiarity"
     head = (
         f"{plural(aw['trials'], 'trial')} of {n:,} scanned ({pct(aw['trials'], n)}) show"
-        " benchmark awareness, at any review priority"
+        f" {subject}, at any review priority"
         if aw["trials"]
         else f"{INFO} no visible benchmark awareness in scanned trials"
     )

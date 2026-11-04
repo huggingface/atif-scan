@@ -17,6 +17,7 @@ from ..data.facts import recorded_facts, run_facts, trace_facts, trial_reward, t
 from ..data.jsonval import as_object
 from ..data.loader import TraceError
 from ..data.program_state import stateful_programs
+from ..data.ptc_usage import ptc_usage
 from ..data.web_activity import web_activity
 from ..engine import Engine, effective_context
 from ..evidence.cite import citations
@@ -88,6 +89,7 @@ def scanned_item(
         web_activity=web_activity(trace),
         compacted=bool(trace is not None and trace.compacted),
     )
+    ptc = ptc_usage(trace)
     scanned.update(
         input_id=source.label,
         input_status="available" if trace is not None else "unavailable_or_invalid",
@@ -104,6 +106,15 @@ def scanned_item(
         unrecognized_tool_calls=trace.unrecognized_tool_calls if trace is not None else None,
         # Code-mode programs keeping state the trace doesn't hold (`store`/`load`): a count.
         stateful_programs=stateful_programs(trace),
+        ptc_usage={
+            "wrappers": ptc.wrappers,
+            "runtime_recorded": ptc.runtime_recorded,
+            "static_inferred": ptc.static_inferred,
+            "unrecognized_wrappers": ptc.unrecognized_wrappers,
+            "remaining_unrecognized": ptc.remaining_unrecognized,
+        }
+        if ptc is not None
+        else None,
     )
     return scanned
 
