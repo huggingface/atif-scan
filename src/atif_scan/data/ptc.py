@@ -72,7 +72,10 @@ def _dispatch(value: object, parent: str) -> Dispatch | None:
     )
 
 
-def _ledger(observation: object, parent: str, reserved: set[str]) -> list[Dispatch] | None:
+def recorded_dispatches(
+    observation: object, parent: str, reserved: set[str]
+) -> list[Dispatch] | None:
+    """Validate a uniquely linked runtime ledger, never authored or result-body text."""
     results = [
         as_object(r)
         for r in as_list(as_object(observation).get("results"))
@@ -145,7 +148,7 @@ def apply_ledger(
             or sum(c.id == parent.id for c in parents) != 1
         ):
             continue
-        ledger = _ledger(observation, parent.id, reserved)
+        ledger = recorded_dispatches(observation, parent.id, reserved)
         if ledger is not None:
             calls = _replace_program(calls, parent, sources[parent.id], ledger)
             reserved.update(d.id for d in ledger)

@@ -22,7 +22,9 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from ..data.jsonval import as_list, as_object, as_str, count
+from ..data.jsonval import JsonObject, as_list, as_object, as_str, count
+from ..data.ptc import recorded_dispatches
+from ..data.tools import PYTHON_PROGRAM_TOOLS
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from ..data.jsonval import Doc
 
 MAX_BYTES = 32 * 1024 * 1024  # answering trajectories observed: ~100-170 KB
+MAX_READ_STEPS = 8  # inspect_server rejects larger read_steps ranges.
 LOW_COVERAGE = 0.5  # share of the reviewed trace's steps below which "nothing" is a guess
 # Answers that claim nothing was found anywhere: the ones coverage matters for.
 UNIVERSAL = frozenset(
@@ -62,12 +65,39 @@ def _tool(call: object) -> str:
 
 def _steps_read(name: str, args: dict[str, object]) -> range:
     if name == "read_steps":
-        first, last = count(args.get("first")), count(args.get("last"))
-        if first is not None and last is not None and first <= last:
+        first = count(args.get("first"))
+        last = first if args.get("last") is None else count(args.get("last"))
+        # The inspector defaults to one step and rejects spans longer than eight.
+        if first is not None and last is not None and 0 <= last - first < MAX_READ_STEPS:
             return range(first, last + 1)
     elif name == "read_step_segment" and (step := count(args.get("step_number"))) is not None:
         return range(step, step + 1)
     return range(0)
+
+
+def _step_calls(value: object) -> list[JsonObject]:
+    step = as_object(value)
+    calls = [as_object(c) for c in as_list(step.get("tool_calls"))]
+    ids = [as_str(c.get("tool_call_id")) for c in calls]
+    reserved = {cid for cid in ids if cid}
+    recorded: list[JsonObject] = []
+    for call, cid in zip(calls, ids, strict=True):
+        if (
+            as_str(call.get("function_name")) not in PYTHON_PROGRAM_TOOLS
+            or not cid
+            or ids.count(cid) != 1
+        ):
+            continue
+        ledger = recorded_dispatches(step.get("observation"), cid, reserved)
+        if ledger is None:
+            continue
+        reserved.update(d.id for d in ledger)
+        recorded.extend(
+            {"function_name": d.tool, "arguments": d.arguments}
+            for d in ledger
+            if d.status == "completed" and d.is_error is False
+        )
+    return [*calls, *recorded]
 
 
 def review_coverage(
@@ -90,11 +120,7 @@ def review_coverage(
         doc = json.loads(data)
     except (OSError, ValueError, RecursionError):
         return None
-    calls = [
-        c
-        for s in as_list(as_object(doc).get("steps"))
-        for c in as_list(as_object(s).get("tool_calls"))
-    ]
+    calls = [c for s in as_list(as_object(doc).get("steps")) for c in _step_calls(s)]
     known = set(step_numbers)
     read: set[int] = set()
     for call in calls:
