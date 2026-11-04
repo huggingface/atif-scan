@@ -24,7 +24,7 @@ from test_image_model import image_message, png, reply, sha, uri
 from test_inspect_mcp import RecordingServer
 
 from atif_scan.cli import hunt, images
-from atif_scan.cli.fast_agent import INSTRUCTION, PTC_BATCHING_NOTE
+from atif_scan.cli.fast_agent import INSTRUCTION, PTC_BATCHING_NOTE, PTC_BATCHING_NOTE_TEMPLATE
 from atif_scan.evidence.transcripts import STORE_VERSION, TranscriptStore, model_key, stored_path
 from atif_scan.review.catalogue import BY_ID
 from atif_scan.review.prompts import schema
@@ -254,6 +254,7 @@ def judge_writing(system: str):
     [
         (INSTRUCTION, True),
         (INSTRUCTION + "\n\n" + PTC_BATCHING_NOTE, True),
+        (INSTRUCTION + "\n\n" + PTC_BATCHING_NOTE_TEMPLATE.format(tool="exec_sandbox"), True),
         (INSTRUCTION + "\n" + PTC_BATCHING_NOTE + "\n# project instructions", False),
         (INSTRUCTION + "\n# project instructions\n" + PTC_BATCHING_NOTE, False),
         (INSTRUCTION + "\n" + PTC_BATCHING_NOTE.replace("read-only", "arbitrary"), False),

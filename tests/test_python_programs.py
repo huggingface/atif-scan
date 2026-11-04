@@ -171,6 +171,16 @@ def test_declared_program_tools_are_read_from_the_description():
     assert declared_program_tools(None) == {}
 
 
+def test_exec_sandbox_is_the_renamed_program_tool():
+    # fast-agent renamed execute_python to exec_sandbox (0.10.52); both are program tools.
+    renamed = {
+        "tool_definitions": [{"function": {"name": "exec_sandbox", "description": DESCRIPTION}}]
+    }
+    assert declared_program_tools(renamed) == {
+        "exec_sandbox": frozenset({"shell", "read_text_file"})
+    }
+
+
 def test_parsing_is_silent_and_bounded():
     with warnings.catch_warnings():
         warnings.simplefilter("error")

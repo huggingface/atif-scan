@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from .jsonval import as_list, as_object, as_str, compact_json, is_object
 from .model import ToolCall
-from .tools import call_fields, computed_fields, program_fields, program_tool
+from .tools import PYTHON_PROGRAM_TOOLS, call_fields, computed_fields, program_fields, program_tool
 from .web_activity import activity
 from .web_inputs import parse_web_input
 
@@ -140,7 +140,7 @@ def apply_ledger(
     reserved = {c.id for c in parents}
     for parent in parents:
         if (
-            parent.name != "execute_python"
+            parent.name not in PYTHON_PROGRAM_TOOLS
             or not parent.id
             or sum(c.id == parent.id for c in parents) != 1
         ):

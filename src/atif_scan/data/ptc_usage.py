@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .tools import PYTHON_PROGRAM_TOOLS
+
 if TYPE_CHECKING:
     from .model import ToolCall, Trace
 
@@ -26,7 +28,7 @@ class PtcUsage:
 
 def _wrapper(call: ToolCall) -> bool:
     return (
-        call.name == "execute_python"
+        call.name in PYTHON_PROGRAM_TOOLS
         and call.provenance == "model_authored"
         and call.result_id is None
     )

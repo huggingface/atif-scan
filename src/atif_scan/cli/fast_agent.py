@@ -45,13 +45,18 @@ INSTRUCTION = (
 )
 # fast-agent's execute_python runtime appends this fixed tool-use note. Permit only
 # this exact appendix, never arbitrary text after our instruction (e.g. AGENTS.md).
-PTC_BATCHING_NOTE = (
+PTC_BATCHING_NOTE_TEMPLATE = (
     "Batch independent searches, file reads, and other read-only calls in a single "
-    "`execute_python` invocation using `asyncio.gather`. Prefer this over separate "
+    "`{tool}` invocation using `asyncio.gather`. Prefer this over separate "
     "invocations or sequential awaits when no result depends on another. Inspect every "
     "result; use `settle()` when each result must be collected despite individual failures. "
     "Keep dependent steps, approvals, and potentially conflicting mutations sequential."
 )
+# fast-agent's code tool was renamed from execute_python to exec_sandbox (0.10.52).
+PTC_BATCHING_NOTES = frozenset(
+    PTC_BATCHING_NOTE_TEMPLATE.format(tool=tool) for tool in ("execute_python", "exec_sandbox")
+)
+PTC_BATCHING_NOTE = PTC_BATCHING_NOTE_TEMPLATE.format(tool="execute_python")
 _LOCK = threading.Lock()
 
 
@@ -59,7 +64,7 @@ def expected_instruction(text: str) -> bool:
     """Our instruction alone, or with the known runtime batching note; fail closed."""
     text, own = text.strip(), INSTRUCTION.strip()
     return text == own or (
-        text.startswith(own + "\n") and text[len(own) :].strip() == PTC_BATCHING_NOTE
+        text.startswith(own + "\n") and text[len(own) :].strip() in PTC_BATCHING_NOTES
     )
 
 

@@ -323,7 +323,8 @@ def raw_input(args: object) -> str | None:
 
 # fast-agent programmatic tool calling: one freeform tool whose raw `input` is a Python
 # program calling the agent's other tools as functions (`await shell(command="ls")`).
-PYTHON_PROGRAM_TOOLS = frozenset({"execute_python"})
+# fast-agent named its PTC code tool execute_python until 0.10.52, exec_sandbox since.
+PYTHON_PROGRAM_TOOLS = frozenset({"execute_python", "exec_sandbox"})
 
 
 # Tool functions a program tool declares, by its name (see `declared_program_tools`).
