@@ -56,6 +56,9 @@ TOOLS = {
 }
 # Harness-specific names, one table per harness (extend with a regression test).
 HARNESS_ALIASES = {
+    # Kimi Code.
+    "FetchURL": "web_fetch",
+    "TodoList": "inert",
     # Cursor CLI (cursor-cli), seen on the TB2.1 leaderboard.
     "shellToolCall": "shell",
     "readToolCall": "read",

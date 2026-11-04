@@ -115,6 +115,33 @@ def test_dynamic_targets_do_not_become_complete_negatives(command):
     assert found.status in {Status.UNKNOWN, Status.MATCH}
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        # Assigned Request objects and assembled URLs need dataflow, not a clean negative.
+        "import urllib.request\n"
+        "url = 'https://api.github.com/search/code?q=synthetic_demo_theorem'\n"
+        "req = urllib.request.Request(url, headers={'User-Agent': 'synthetic'})\n"
+        "with urllib.request.urlopen(req) as response:\n"
+        "    print(response.read())\n",
+        "import urllib.request, urllib.parse\n"
+        "query = 'synthetic task phrase'\n"
+        "url = 'https://catalogue.example/search?q=' + urllib.parse.quote(query)\n"
+        "print(urllib.request.urlopen(url).read())\n",
+        "import urllib.request, urllib.parse\n"
+        "data = urllib.parse.urlencode({'q': 'synthetic task phrase'}).encode()\n"
+        "req = urllib.request.Request('https://catalogue.example/search', data=data)\n"
+        "print(urllib.request.urlopen(req).read())\n",
+    ],
+)
+def test_python_search_dataflow_gaps_are_not_clean(source):
+    command = f"python3 - <<'PY'\n{source}PY"
+    result = by_id(assess(command))[CANDIDATE]
+    assert result.status in {Status.UNKNOWN, Status.MATCH}
+    if result.status == Status.UNKNOWN:
+        assert not result.complete
+
+
 def test_search_candidate_exports_only_counts_and_locators():
     query = "synthetic-private-query-4827"
     command = f"curl 'https://catalogue.example/?search={query}'"
