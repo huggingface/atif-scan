@@ -22,10 +22,10 @@ import re
 from typing import TYPE_CHECKING
 
 from ..checks import CheckSpec, Detection, Severity, Unread
-from ..data import shell
 from ..data.jsonval import as_str
 from ..data.model import Channel, Locator
 from ..data.pysource import parse_module
+from ..data.python_units import shell_python_sources
 
 if TYPE_CHECKING:
     from ..checks import Context, Detector
@@ -38,8 +38,6 @@ METRICS = {
     "watchdog_failed": False,
 }
 WRITTEN_KEYS = frozenset({"content", "contents", "text", "file_text"})
-PYTHON = re.compile(r"python(?:[23](?:\.\d+)?)?")
-PYTHON_FLAGS = frozenset({"-u", "-B", "-E", "-I", "-s", "-S", "-q"})
 RESULT_ROUTE = re.compile(r"(?:GET )?/results(?: HTTP/1\.[01])?")
 # Literal tokens every match contains (the signature reads only literal names and keys).
 # Text missing one can't match however it parses, so it is clean, not unknown: on 170
@@ -112,40 +110,6 @@ def _signature(source: str) -> bool | None:
     )
 
 
-def _python_args(command: shell.Command) -> list[tuple[str, shell.Span]] | None:
-    if PYTHON.fullmatch(command.name or "") is None:
-        return None
-    args = command.argv()[1:]
-    while args and args[0][0] in PYTHON_FLAGS:
-        args = args[1:]
-    return args
-
-
-def _stdin_python(command: shell.Command) -> bool:
-    args = _python_args(command)
-    return args is not None and (not args or args[0][0] == "-")
-
-
-def _shell_sources(text: str) -> tuple[list[str], bool]:
-    script = shell.parse(text)
-    sources: list[str] = []
-    complete = script.complete
-    for command in script.commands:
-        args = _python_args(command)
-        if args and args[0][0] == "-c":
-            if len(args) > 1:
-                sources.append(args[1][0])
-            else:
-                complete = False
-    files = dict(zip(script.file_bodies, script.file_targets, strict=True))
-    for span, owner in zip(script.bodies, script.body_commands, strict=True):
-        if _stdin_python(owner) or files.get(span, "").endswith(".py"):
-            sources.append(text[span[0] : span[1]])
-            # The shell reader retains an unterminated heredoc through EOF.
-            complete &= span[1] < len(text)
-    return sources, complete
-
-
 def _written_payload(trace: Trace, surface: Surface) -> bool:
     if surface.tool != "write" or surface.at.call is None:
         return False
@@ -208,7 +172,7 @@ def _inspect_surface(surface: Surface) -> tuple[bool, bool]:
     if _cannot_match(surface):
         return False, True
     sources, complete = (
-        _shell_sources(surface.content.text)
+        shell_python_sources(surface.content.text)
         if surface.at.channel == Channel.COMMAND
         else ([surface.content.text], True)
     )
