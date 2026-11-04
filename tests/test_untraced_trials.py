@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
 from test_harbor_files import result_json, trajectory
 from test_selection import cohort, replacement
 
 from atif_scan.cli import main
+from atif_scan.sources.inputs import SourceError, resolve
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -83,7 +85,7 @@ def test_only_harbor_trial_folders_of_a_job_count(tmp_path, capsys):
     assert sorted(i["input_id"] for i in doc["inputs"] if i["input_status"] != "available") == [
         "gamma__g1/agent"
     ]
-    # Outside a Harbor job folder (no job config.json), nothing is added.
+    # With neither a job config nor sibling trial configs, nothing is added.
     (job / "config.json").unlink()
     _, doc = scan([str(job), "--no-cache"], capsys)
     assert all(i["input_status"] == "available" for i in doc["inputs"])
@@ -136,3 +138,116 @@ def test_highlights_export_accepts_a_job_with_an_untraced_trial(tmp_path, capsys
     viewer = tmp_path / "viewer"
     assert main([str(job), "--viewer", str(viewer), "--no-cache"]) in (0, 1)
     assert "needs local traces" not in capsys.readouterr().err
+
+
+def standalone_trial(root: Path, task: str, **facts) -> Path:
+    """Reorganized trial receipts; the job config lives separately."""
+    trial = root / f"{task}__x"
+    trial.mkdir(parents=True)
+    (trial / "config.json").write_text(
+        json.dumps({"task": {"path": f"tasks/{task}"}, "agent": {"name": "synthetic"}})
+    )
+    (trial / "result.json").write_text(json.dumps(result_json(task, **facts)))
+    return trial
+
+
+@pytest.mark.parametrize("trajectory_path", ["agent/trajectory.json", "trajectory.json"])
+def test_standalone_mixed_trials_retain_missing_trace_and_result_facts(
+    tmp_path, capsys, trajectory_path
+):
+    traced = standalone_trial(tmp_path, "alpha", reward=1.0)
+    path = traced / trajectory_path
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(trajectory("ls")))
+    standalone_trial(tmp_path, "beta", error="RemoteProtocolError", cost=0.25)
+    # A separately stored job receipt must not supply configuration to these trials.
+    job = tmp_path / "jobs" / "separate"
+    job.mkdir(parents=True)
+    (job / "config.json").write_text(json.dumps({"job_name": "separate", "n_attempts": 7}))
+    (job / "result.json").write_text(json.dumps({"n_total_trials": 99, "stats": {}}))
+    runs = []
+    assert len(resolve([str(tmp_path)], runs=runs)) == 2
+    assert runs == []
+    code, doc = scan([str(tmp_path), "--no-cache"], capsys)
+    assert code == 0
+    items = {i["input_id"]: i for i in doc["inputs"]}
+    assert len(items) == 2
+    dead = items["beta__x/agent"]
+    assert dead["input_status"] == "unavailable_or_invalid"
+    assert dead["input_error"] == "no_trajectory_errored"
+    assert (dead["task"], dead["error_type"], dead["cost_usd"]) == (
+        "beta",
+        "RemoteProtocolError",
+        0.25,
+    )
+    assert dead.get("reward") is None
+    assert dead["input_tokens"] == 1000
+    assert "SECRET" not in json.dumps(doc)
+    _, brief = scan([str(tmp_path), "--brief", "--no-cache"], capsys)
+    trials = brief["overview"]["trials"]
+    assert (trials["present"], trials["errored"], trials["without_trajectory"]) == (2, 1, 1)
+
+
+def test_standalone_all_untraced_trials_preserve_rewards_errors_and_unknowns(tmp_path, capsys):
+    standalone_trial(tmp_path, "alpha", reward=1.0)
+    standalone_trial(tmp_path, "beta", error="AgentTimeoutError")
+    unknown = standalone_trial(tmp_path, "gamma", tokens=(None, None, None))
+    receipt = result_json("gamma")
+    receipt.update(agent_result=None, verifier_result=None, exception_info=None)
+    (unknown / "result.json").write_text(json.dumps(receipt))
+    runs = []
+    assert len(resolve([str(tmp_path)], runs=runs)) == 3
+    assert runs == []
+    code, doc = scan([str(tmp_path), "--no-cache"], capsys)
+    assert code == 0
+    items = {i["task"]: i for i in doc["inputs"]}
+    assert len(items) == 3
+    assert all(i["input_status"] == "unavailable_or_invalid" for i in items.values())
+    assert items["alpha"]["input_error"] == "no_trajectory"
+    assert items["alpha"]["reward"] == 1.0
+    assert items["beta"]["input_error"] == "no_trajectory_errored"
+    assert items["beta"]["error_type"] == "AgentTimeoutError"
+    assert items["gamma"]["input_error"] == "no_trajectory"
+    assert all(items["gamma"].get(k) is None for k in ("reward", "error_type", "cost_usd"))
+    # An explicit alternative pattern must not silently select receipt-only trials.
+    with pytest.raises(SourceError, match="no_files_match_pattern"):
+        resolve([str(tmp_path)], pattern="other.json")
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {},
+        {"n_total_trials": 3, "stats": {}},
+        {"task_name": "gamma"},
+        {"trial_name": "gamma__x", "task_name": "gamma"},
+        {**result_json("gamma"), "trial_name": "different__x"},
+        {**result_json("gamma"), "task_name": []},
+        {**result_json("gamma"), "task_name": ""},
+        {**result_json("gamma"), "agent_result": []},
+        [],
+        "not a receipt",
+    ],
+)
+def test_standalone_unrelated_results_are_not_trials(tmp_path, receipt):
+    trial = standalone_trial(tmp_path, "gamma")
+    (trial / "result.json").write_text(json.dumps(receipt))
+    with pytest.raises(SourceError, match="no_files_match_pattern"):
+        resolve([str(tmp_path)])
+
+
+def test_standalone_receipts_do_not_duplicate_job_trials(tmp_path):
+    job = job_folder(tmp_path)
+    standalone_trial(job, "delta", error="AgentTimeoutError")
+    sources = resolve([str(job)])
+    assert len(sources) == 6
+    assert sum(s.label == "delta__x/agent" for s in sources) == 1
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_standalone_unreadable_result_is_not_recognized(tmp_path, oversized):
+    trial = standalone_trial(tmp_path, "gamma")
+    data = json.dumps(result_json("gamma")) + " " * (1024 * 1024) if oversized else "{"
+    (trial / "result.json").write_text(data)
+    with pytest.raises(SourceError, match="no_files_match_pattern"):
+        resolve([str(tmp_path)])

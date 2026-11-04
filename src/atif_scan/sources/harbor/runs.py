@@ -34,6 +34,7 @@ from .files import (
     TRIAL_LEDGER,
     attempt_cost,
     declared_prices,
+    is_trial_receipt,
     job_listed_trials,
     job_meta,
     safety_details,
@@ -316,12 +317,30 @@ def job_folders(listing: Listing) -> tuple[list[Doc], dict[str, bool], list[str]
 TRIAL_NAME = re.compile(r"[A-Za-z0-9][\w.-]*__[A-Za-z0-9]+")
 
 
+def _standalone_untraced_trials(listing: Listing) -> list[str]:
+    """Trial config/result siblings suffice without a job config, but require a
+    validated receipt. The trial config is not read or promoted to job configuration."""
+    if not listing.directory or listing.reader is None:
+        return []
+    out = []
+    for path in sorted(listing.paths):
+        result = PurePosixPath(path)
+        folder = result.parent
+        if result.name != "result.json" or not TRIAL_NAME.fullmatch(folder.name):
+            continue
+        if (folder / "config.json").as_posix() not in listing.paths or any(
+            folder.joinpath(*parts).as_posix() in listing.paths for parts in TRAJECTORY_PARTS
+        ):
+            continue
+        if is_trial_receipt(listing.read(path, RESULT_BYTES + 1), folder.name):
+            out.append(folder.as_posix())
+    return out
+
+
 def untraced_trials(listing: Listing, jobs: Iterable[str]) -> list[str]:
-    """Trial folders (`<job prefix><trial>`) of recognised Harbor job folders (`jobs`, as
-    job_folders returns them) that hold a result.json but no trajectory: usually a trial
-    that errored before the agent ran (a provider connection error). They are trials of
-    the run all the same: counted as present and errored, and scored (errored without a
-    reward = 0), never treated as missing."""
+    """Trial folders with a result.json but no trajectory, under recognized jobs or
+    with standalone trial receipts. Keep their actual result facts, not inferred job
+    configuration; no trajectory is unknown evidence, not a clean result."""
     present = listing.paths
     out: list[str] = []
     for prefix in jobs:
@@ -331,7 +350,7 @@ def untraced_trials(listing: Listing, jobs: Iterable[str]) -> list[str]:
             for t in sorted(trials - traced)
             if TRIAL_NAME.fullmatch(t) and f"{prefix}{t}/result.json" in present
         ]
-    return out
+    return sorted(set(out) | set(_standalone_untraced_trials(listing)))
 
 
 def untraced_details(listing: Listing, folder: str) -> Callable[[], Doc]:

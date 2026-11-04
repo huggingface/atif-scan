@@ -206,6 +206,23 @@ def phase_durations(d: Mapping[str, object]) -> Doc:
     }
 
 
+def is_trial_receipt(data: bytes | None, trial: str) -> bool:
+    """Recognize a standalone trial result, not merely a file with a task label.
+
+    Bind the receipt to its listed folder; nullable outcome objects also cover trials
+    that failed before agent execution. No receipt-supplied paths are followed.
+    """
+    d = _json(data)
+    task = as_str(d.get("task_name"))
+    outcomes = {"agent_result", "verifier_result", "exception_info"} & d.keys()
+    return (
+        d.get("trial_name") == trial
+        and bool(task and task.strip())
+        and bool(outcomes)
+        and all(d[key] is None or is_object(d[key]) for key in outcomes)
+    )
+
+
 def trial_result(data: bytes | None) -> Doc:
     """Allowlisted facts from a trial's result.json ({} when absent or unreadable)."""
     d = _json(data)

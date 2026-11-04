@@ -699,9 +699,9 @@ def _listing_sources(
     known_trials: Sequence[str] = (),
 ) -> list[Source]:
     """One input's selected trajectories, then the trials its saved Hub listing names
-    without one (unavailable, as a harbor:// scan reports them), then the trial folders
-    of its Harbor job folders (`jobs`) that have none. `before` counts the sources
-    already resolved, for positional labels."""
+    without one (unavailable, as a harbor:// scan reports them), then untraced trial
+    folders recognized through Harbor jobs (`jobs`) or standalone receipts. `before`
+    counts the sources already resolved, for positional labels."""
     entries = selected(listing, pattern)
     known = attempts(listing)
     ale = known if pattern == DEFAULT_PATTERN else []
