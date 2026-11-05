@@ -369,10 +369,21 @@ def program_calls(
     return jslit.tool_calls(program)
 
 
+def python_program_source(args: object) -> str | None:
+    """Known Python wrappers: freeform input or the exact structured ``code`` shape.
+
+    Do not reinterpret arbitrary tools' code payloads or choose between ambiguous keys.
+    """
+    if isinstance(args, dict) and set(args) == {"code"}:
+        value = args["code"]
+        return value if isinstance(value, str) else None
+    return raw_input(args)
+
+
 def _python_calls(
     name: str, args: object, declared: Declared | None
 ) -> list[tuple[str, object]] | None:
-    program = raw_input(args)
+    program = python_program_source(args)
     if program is None:
         return None
     return pylit.tool_calls(program, (declared or {}).get(name), _harness_tool)
@@ -390,7 +401,10 @@ def program_fields(
     `jslit.program_strings`, `pylit.program_strings`): one unclassified argument field per
     literal, read wherever commands are, so a command held in a constant (`const cmds =
     [...]`, `cmds = [...]`) is still seen."""
-    program = args.get("input") if isinstance(args, dict) else raw_input(args)
+    if name in PYTHON_PROGRAM_TOOLS:
+        program = python_program_source(args)
+    else:
+        program = args.get("input") if isinstance(args, dict) else raw_input(args)
     if not isinstance(program, str):
         found: list[str] = []
     elif name in PYTHON_PROGRAM_TOOLS:
@@ -398,7 +412,15 @@ def program_fields(
         found = pylit.program_strings(program, read)
     else:
         found = jslit.program_strings(program)
-    return tuple((Channel.ARGUMENTS, content(text)) for text in found)
+    literals = tuple((Channel.ARGUMENTS, content(text)) for text in found)
+    # Private inspection needs the entire program, not just its extracted literals.
+    # Keep it a payload: predicates must not treat quoted edits as executed commands.
+    source = (
+        ((Channel.PAYLOAD, content(program)),)
+        if name in PYTHON_PROGRAM_TOOLS and isinstance(program, str)
+        else ()
+    )
+    return literals + source
 
 
 def computed_fields(tool: str) -> tuple[Field, ...]:
