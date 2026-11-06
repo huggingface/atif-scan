@@ -62,4 +62,4 @@ def test_awareness_benchmark_version_bumped_for_the_new_wording():
     from atif_scan import builtin_detectors
 
     spec = next(c.spec for c in builtin_detectors() if c.spec.id == "awareness.benchmark")
-    assert spec.version == "9"
+    assert spec.version == "10"
