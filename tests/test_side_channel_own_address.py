@@ -31,7 +31,7 @@ WRITE = 'echo "$IP server" >> /etc/hosts'
 def test_simple_own_address_setup_is_still_clean(command: str):
     found = evaluate(diff("src/a.go", "x"), shell_steps(command))["network.isolation_bypass"]
     assert found.result.status == Status.NO_MATCH
-    assert found.spec.version == "5"
+    assert found.spec.version == "6"
 
 
 @pytest.mark.parametrize(
