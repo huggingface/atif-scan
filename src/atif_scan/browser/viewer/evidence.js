@@ -473,7 +473,27 @@
     if (row.thin) facts.push("a universal answer after reading under half: a guess about the rest");
     return facts;
   }
-  const api = { judgeConcerns, answerTone, answerFacts, MAX_NOTE, reviewKey, validVerdict, isPositive, mechanismFor, reviewProgress, reviewExport, PAGE_SIZE, MAX_HITS, PRIORITY, sameField, locate, page, highlighted, focusOffset, clip,
+  // A call's minor argument fields (each string leaf of its arguments, e.g. a parsed shell
+  // command's words) fold behind one row when there are many, so the step reads as its calls.
+  // `keep(field)` names fields that must stay visible (the selected one, finding locations).
+  const FOLD_MIN = 3;
+  function groupFields(step, keep = () => false) {
+    const out = [], byCall = new Map();
+    for (const f of step.fields) {
+      if (f.part !== "call") { out.push({ field: f }); continue; }
+      if (!byCall.has(f.index)) { byCall.set(f.index, []); out.push({ call: f.index }); }
+      byCall.get(f.index).push(f);
+    }
+    return out.flatMap(item => {
+      if (!("call" in item)) return [item];
+      const fields = byCall.get(item.call);
+      const minor = fields.filter(f => f.channel === "arguments" && !keep(f));
+      if (minor.length < FOLD_MIN) return fields.map(f => ({ field: f }));
+      const shown = fields.filter(f => !minor.includes(f)).map(f => ({ field: f }));
+      return [...shown, { folded: minor, call: item.call, key: `${step.step}:${item.call}` }];
+    });
+  }
+  const api = { groupFields, FOLD_MIN, judgeConcerns, answerTone, answerFacts, MAX_NOTE, reviewKey, validVerdict, isPositive, mechanismFor, reviewProgress, reviewExport, PAGE_SIZE, MAX_HITS, PRIORITY, sameField, locate, page, highlighted, focusOffset, clip,
     context, literalMatches, search, ordered, isLead, hasGap, topPriority, rewardLabel,
     needsAttention, stepSummary, family, checkIndex, matchesFilters, byPriority, coverageLines, focusNote, charLabel, length, unreadText,
     compact, usd, duration, costHeadline, harnessLine, trialFacts, calcLines, runRecordsNote, unknownLead, errorClass, outcome, CLASS_LABEL, counted, lineageNote };

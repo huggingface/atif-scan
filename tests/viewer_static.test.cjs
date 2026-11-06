@@ -291,3 +291,22 @@ test("judge answers: concerns, guesses and undecided states", () => {
   assert.ok(E.answerFacts(row({ thin: true, read_share: 0.249, confidence: "high" })).includes("opened 24% of steps with the trace tools"));
   assert.match(E.answerFacts(row({ status: "unanswered" }))[0], /not a negative/);
 });
+
+test("a call's many minor argument fields fold behind one row; kept fields stay out", () => {
+  const call = (field, channel, text) => ({ part: "call", index: 1, field, label: `call 1 · shell · ${channel}`, status: "text", channel, text });
+  const step = { step: 2, fields: [
+    { part: "message", index: 0, field: 0, label: "message", status: "text", text: "hi" },
+    call(0, "command", "which R"), call(1, "arguments", "call-id"),
+    call(2, "arguments", "which"), call(3, "arguments", "R"), call(4, "arguments", "echo"), call(5, "arguments", "R"),
+  ] };
+  const items = E.groupFields(step);
+  assert.deepEqual(items.filter(i => i.field).map(i => i.field.channel ?? i.field.part), ["message", "command"]);
+  const folded = items.find(i => i.folded);
+  assert.deepEqual(folded.folded.map(f => f.field), [1, 2, 3, 4, 5]);
+  assert.equal(folded.key, "2:1");
+  // A located or selected field is never folded away; fewer than three stay unfolded.
+  const kept = E.groupFields(step, f => f.field === 3 && f.part === "call");
+  assert.deepEqual(kept.find(i => i.folded).folded.map(f => f.field), [1, 2, 4, 5]);
+  const few = E.groupFields({ step: 3, fields: step.fields.slice(0, 4) });
+  assert.ok(!few.some(i => i.folded));
+});

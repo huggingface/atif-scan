@@ -59,7 +59,7 @@
   const scoredTrials = trials.filter(E.counted);
   const state = { trial: null, ref: null, span: null, finding: null, offset: 0,
     filter: scoredTrials.some(E.needsAttention) ? "attention" : "all", tab: "findings", allSteps: false,
-    priority: "", check: "" };
+    priority: "", check: "", unfolded: new Set() };
 
   // Review mode: a blind human-review export. Verdicts are kept in this browser's local
   // storage (keyed by the export ID) and leave only as a file the reviewer downloads.
@@ -85,6 +85,11 @@
   function firstRef(trial) {
     const step = trial.steps.find(s => s.fields.length);
     return step ? refOf({ step: step.step, ...step.fields[0] }) : null;
+  }
+  function locatedFields(trial) {
+    const keys = new Set();
+    for (const f of trial.findings) for (const l of f.locations) keys.add(`${l.step}:${l.part}:${l.index ?? 0}:${l.field ?? 0}`);
+    return keys;
   }
   function flaggedSteps(trial) {
     const flagged = new Set();
@@ -336,7 +341,19 @@
       const head = button("", () => jump(firstRef({ steps: [s] }), null, null), "step-head");
       head.append(node("strong", "STEP " + s.step), node("span", s.role));
       card.append(head, node("p", E.stepSummary(s), "step-title"));
-      s.fields.forEach(f => card.append(fieldButton(s, f, E.sameField(state.ref, { step: s.step, ...f }))));
+      const located = locatedFields(trial);
+      const keep = f => E.sameField(state.ref, { step: s.step, ...f }) || located.has(`${s.step}:${f.part}:${f.index}:${f.field}`);
+      for (const item of E.groupFields(s, keep)) {
+        if (item.field) { card.append(fieldButton(s, item.field, E.sameField(state.ref, { step: s.step, ...item.field }))); continue; }
+        if (state.unfolded.has(item.key)) {
+          item.folded.forEach(f => card.append(fieldButton(s, f, false)));
+          card.append(button(`Fold ${item.folded.length} argument values`, () => { state.unfolded.delete(item.key); renderTimeline(); }, "fold"));
+        } else {
+          const chars = item.folded.reduce((n, f) => n + E.length(f), 0);
+          card.append(button(`call ${item.call} · ${item.folded.length} more argument values · ${chars.toLocaleString("en")} chars`,
+            () => { state.unfolded.add(item.key); renderTimeline(); }, "fold"));
+        }
+      }
       if (flagged.has(s.step)) { const flags = node("div", undefined, "badges step-flags"); flags.append(badge("finding")); card.append(flags); }
       return card;
     }));

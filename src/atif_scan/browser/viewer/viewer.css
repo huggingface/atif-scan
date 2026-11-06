@@ -138,3 +138,5 @@ footer.notes p{margin:4px 0}
 .answer-reason p{margin:2px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .answer-reason-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.75}
 .chip--plain{color:var(--ink)}
+.fold{display:block;width:100%;text-align:left;border:0;border-top:1px dashed var(--line-soft);background:transparent;color:var(--muted);font-size:12.5px;padding:7px 14px;cursor:pointer}
+.fold:hover{background:var(--inset);color:var(--ink)}
