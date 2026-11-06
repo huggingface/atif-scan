@@ -71,7 +71,7 @@ def export_viewer(args: argparse.Namespace) -> int:
         document = export.bundle(
             records, items, digests, doc, run, review, answers, full=args.viewer_full
         )
-        export.write(args.viewer, document)
+        export.write(args.viewer, document, split_steps=args.viewer_split)
     except (OSError, ValueError):
         print("atif-scan: viewer export failed (details withheld)", file=sys.stderr)
         return 2

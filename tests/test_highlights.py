@@ -117,3 +117,35 @@ def test_rows_skip_low_findings_but_keep_awareness_and_explained():
     assert highlights._keys(moment("access.test_path", "medium", ["expected.x"])) == [
         "explained:access.test_path"
     ]
+
+
+def test_highlights_viewer_links_each_excerpt_to_its_step(trace, tmp_path, capsys):
+    out = tmp_path / "hl"
+    args = [
+        str(trace),
+        "--highlights",
+        str(out),
+        "--highlights-viewer",
+        "../trajectories/index.html",
+    ]
+    assert main(args) in (0, 1)
+    assert _data(out)["viewer_href"] == "../trajectories/index.html"
+    plain = tmp_path / "plain"
+    assert main([str(trace), "--highlights", str(plain)]) in (0, 1)
+    assert "viewer_href" not in _data(plain)
+
+
+@pytest.mark.parametrize(
+    "href",
+    ["https://example.com/v/index.html", "//example.com/v", "javascript:alert(1)", "v#x", "v?q"],
+)
+def test_highlights_viewer_must_be_a_relative_link(trace, tmp_path, capsys, href):
+    with pytest.raises(SystemExit):
+        main([str(trace), "--highlights", str(tmp_path / "hl"), "--highlights-viewer", href])
+    assert "relative link" in capsys.readouterr().err
+
+
+def test_highlights_viewer_requires_highlights(trace, capsys):
+    with pytest.raises(SystemExit):
+        main([str(trace), "--highlights-viewer", "../v/index.html"])
+    assert "--highlights-viewer requires --highlights" in capsys.readouterr().err

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -426,11 +427,24 @@ def _browse_arguments(parser: argparse.ArgumentParser) -> None:
         "(blind --review exports always include all steps)",
     )
     parser.add_argument(
+        "--viewer-split",
+        action="store_true",
+        help="with --viewer: write each trial's steps to its own file, loaded when the trial "
+        "is opened (for hosting a large --viewer-full export)",
+    )
+    parser.add_argument(
         "--highlights",
         type=Path,
         metavar="DIR",
         help="write a static highlight report to a new or empty DIR: masked excerpts of "
         "where findings, benchmark-awareness stages and judge concerns (--answers) happened",
+    )
+    parser.add_argument(
+        "--highlights-viewer",
+        metavar="HREF",
+        type=_relative_href,
+        help="with --highlights: a relative link to a --viewer export of the same scan; each "
+        "excerpt then opens its step there (e.g. ../trajectories/index.html)",
     )
     parser.add_argument(
         "--review",
@@ -440,6 +454,19 @@ def _browse_arguments(parser: argparse.ArgumentParser) -> None:
         "scores or answers; its candidate steps to jump between; verdicts saved in the "
         "browser and exported as a file for `atif-scan labels import-review`)",
     )
+
+
+def _relative_href(value: str) -> str:
+    """A same-site relative link: no scheme, host, query or fragment."""
+    if (
+        not value
+        or re.match(r"^([a-z][a-z0-9+.-]*:|//)", value, re.I)
+        or any(c in value for c in "?#\\")
+    ):
+        raise argparse.ArgumentTypeError(
+            "must be a relative link such as ../trajectories/index.html"
+        )
+    return value
 
 
 def _check_viewer_dir(
@@ -473,6 +500,10 @@ def _check_viewer_options(parser: argparse.ArgumentParser, args: argparse.Namesp
         parser.error("--review requires --viewer DIR")
     if args.viewer_full and args.viewer is None:
         parser.error("--viewer-full requires --viewer DIR")
+    if args.highlights_viewer is not None and args.highlights is None:
+        parser.error("--highlights-viewer requires --highlights DIR")
+    if args.viewer_split and args.viewer is None:
+        parser.error("--viewer-split requires --viewer DIR")
 
 
 def _check_desk_conflicts(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:

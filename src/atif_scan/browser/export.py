@@ -43,6 +43,7 @@ FORMAT = "atif-scan-viewer/1"
 ASSETS = ("index.html", "viewer.css", "evidence.js", "viewer.js")
 SHARED_ASSETS = ("tokens.css",)  # from the browser package, shared with --browse
 DATA_FILE = "data.js"
+TRIALS_DIR = "trials"  # --viewer-split: one steps file per trial, loaded when opened
 MAX_NAME = 60
 WEB_GAPS = "integrity.web_results_not_recorded"
 TRIAL_KEYS = ("input_id", "task", "reward", "input_status", "severity", "score")
@@ -427,6 +428,24 @@ def data_script(document: Doc, name: str = "ATIF_VIEWER") -> str:
     return f"window.{name} = " + text.replace("<", "\\u003c") + ";\n"
 
 
+def split(document: Doc) -> dict[str, str]:
+    """Move each trial's steps into its own script, loaded only when the trial is opened, so
+    a full-chronology export of a large run stays light: {relative path: script}. The
+    document keeps every summary, finding and fact; each trial gains `steps_file`."""
+    files = {}
+    for trial in document["trials"]:
+        name = f"{TRIALS_DIR}/{int(trial['id'])}.js"  # numeric ids only: never a path from data
+        steps = trial.pop("steps")
+        text = json.dumps(steps, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+        files[name] = (
+            f"window.ATIF_VIEWER_STEPS({json.dumps(trial['id'])}, "
+            + text.replace("<", "\\u003c")
+            + ");\n"
+        )
+        trial["steps_file"] = name
+    return files
+
+
 def _writable(directory: Path) -> None:
     if directory.is_symlink() or (
         directory.exists() and (not directory.is_dir() or any(directory.iterdir()))
@@ -440,11 +459,17 @@ def write(
     folder: str = "viewer",
     assets: tuple[str, ...] = ASSETS,
     global_name: str = "ATIF_VIEWER",
+    *,
+    split_steps: bool = False,
 ) -> None:
     """A new or empty directory, private until the reviewer publishes it themselves: the
-    `folder`'s fixed `assets`, the shared tokens, and the document as `data.js`."""
+    `folder`'s fixed `assets`, the shared tokens, and the document as `data.js` (with
+    `split_steps`, each trial's steps in `trials/<id>.js`)."""
     _writable(directory)
     directory.mkdir(mode=0o700, exist_ok=True)
+    shards = split(document) if split_steps else {}
+    if shards:
+        (directory / TRIALS_DIR).mkdir(mode=0o700)
     package = resources.files("atif_scan.browser")
     static = package.joinpath(folder)
     files = {name: static.joinpath(name).read_text(encoding="utf-8") for name in assets}
@@ -452,6 +477,7 @@ def write(
         {name: package.joinpath(name).read_text(encoding="utf-8") for name in SHARED_ASSETS}
     )
     files[DATA_FILE] = data_script(document, global_name)
+    files.update(shards)
     for name, text in files.items():
         fd = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:

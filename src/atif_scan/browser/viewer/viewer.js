@@ -25,6 +25,36 @@
   }
   const trials = data.trials;
   const filtered = data.evidence_scope === "findings";
+
+  // --viewer-split: a trial's steps live in their own script (`trials/<id>.js`, a numeric
+  // name checked here, never a path taken as-is), loaded the first time the trial is opened.
+  const byId = new Map(trials.map(t => [t.id, t]));
+  const waiting = new Map();
+  window.ATIF_VIEWER_STEPS = (id, steps) => {
+    const trial = byId.get(id);
+    if (!trial || Array.isArray(trial.steps) || !Array.isArray(steps)) return;
+    trial.steps = steps;
+    (waiting.get(id) ?? []).forEach(done => done());
+    waiting.delete(id);
+  };
+  function withSteps(trial, then) {
+    if (Array.isArray(trial.steps)) { then(); return; }
+    if (typeof trial.steps_file !== "string" || !/^trials\/\d+\.js$/.test(trial.steps_file)) {
+      trial.steps = []; trial.stepsUnavailable = true; then(); return;
+    }
+    if (!waiting.has(trial.id)) {
+      waiting.set(trial.id, []);
+      const script = document.createElement("script");
+      script.src = trial.steps_file;
+      script.onerror = () => {
+        trial.steps = []; trial.stepsUnavailable = true;
+        (waiting.get(trial.id) ?? []).forEach(done => done());
+        waiting.delete(trial.id);
+      };
+      document.head.append(script);
+    }
+    waiting.get(trial.id).push(then);
+  }
   // Counted trials only: replaced originals are evidence, shown under "Replaced".
   const scoredTrials = trials.filter(E.counted);
   const state = { trial: null, ref: null, span: null, finding: null, offset: 0,
@@ -98,7 +128,11 @@
     jump(refOf(loc), { ...loc, loc: locIndex }, finding);
   }
   function selectTrial(trial) {
+    withSteps(trial, () => openTrial(trial));
+  }
+  function openTrial(trial) {
     state.trial = trial; state.allSteps = false; state.finding = null;
+    if (trial.stepsUnavailable) { jump(null); return; }
     $("search-results").replaceChildren(); $("evidence-query").value = "";
     const top = E.ordered(trial.findings).find(f => f.locations.some(l => l.focus_status !== "unlocated"));
     if (top) openFinding(top, top.locations.findIndex(l => l.focus_status !== "unlocated"));
@@ -280,7 +314,7 @@
     const trial = state.trial, flagged = flaggedSteps(trial);
     $("all-steps").disabled = !trial.steps.length;
     if (!state.ref) {
-      $("context-label").textContent = trial.steps.length ? "" : filtered ? "No finding-related steps retained. Other recorded steps were omitted from this export." : "No recorded steps are available for this trial.";
+      $("context-label").textContent = trial.steps.length ? "" : trial.stepsUnavailable ? "This trial's steps are not part of this export." : filtered ? "No finding-related steps retained. Other recorded steps were omitted from this export." : "No recorded steps are available for this trial.";
       $("step-rail").replaceChildren(); $("timeline").replaceChildren(); return;
     }
     const visible = state.allSteps ? trial.steps : E.context(trial, state.ref.step);
@@ -693,25 +727,40 @@
   });
 
   // Fragment locators are validated against the exported data; they are never paths or URLs.
+  // `#input=<input id>&step=N` opens a step by the trial's input ID (as a highlight report
+  // names it); `#trial=` with `part`/`index`/`field` opens one exact field.
   function restore() {
     const params = new URLSearchParams(location.hash.slice(1));
-    const trial = trials.find(t => t.id === params.get("trial"));
+    const trial = params.has("trial") ? byId.get(params.get("trial"))
+      : params.has("input") ? trials.find(t => t.input_id === params.get("input")) : null;
     if (!trial) return false;
+    withSteps(trial, () => {
+      if (trial.stepsUnavailable) { openTrial(trial); return; }
+      try { restoreIn(trial, params); } catch { openTrial(trial); }
+    });
+    return true;
+  }
+  function restoreIn(trial, params) {
     state.trial = trial; state.filter = E.counted(trial) ? "all" : "replaced";
     const finding = trial.findings.find(f => f.id === params.get("finding"));
     const loc = Number(params.get("loc"));
     if (finding && Number.isSafeInteger(loc) && finding.locations[loc]) {
       state.finding = finding; state.span = { ...finding.locations[loc], loc };
     }
-    if (!params.has("step")) { jump(firstRef(trial), null, null); return true; }
-    const ref = { step: Number(params.get("step")), part: params.get("part"),
+    if (!params.has("step")) { jump(firstRef(trial), null, null); return; }
+    const number = Number(params.get("step"));
+    if (!params.has("part")) {
+      const step = trial.steps.find(s => s.step === number && s.fields.length);
+      jump(step ? firstRef({ steps: [step] }) : firstRef(trial), null, null);
+      return;
+    }
+    const ref = { step: number, part: params.get("part"),
       index: Number(params.get("index") ?? 0), field: Number(params.get("field") ?? 0) };
     const { field } = E.locate(trial, ref);
     const offset = Number(params.get("offset") ?? 0);
     E.page(field, offset);
     if (state.span && !E.sameField(refOf(state.span), ref)) state.span = null;
     state.ref = ref; state.offset = offset; render(); scrollToEvidence();
-    return true;
   }
   renderSummary();
   let restored = false;

@@ -27,6 +27,8 @@ def export_highlights(args: argparse.Namespace) -> int:
     try:
         summary = brief(doc, args.dq_on, args.min_trials, args.expect_tasks, args.price_rates)
         document = highlights.document(items, doc, summary)
+        if args.highlights_viewer:
+            document["viewer_href"] = args.highlights_viewer
         export.write(args.highlights, document, "highlights", ASSETS, "ATIF_HIGHLIGHTS")
     except (OSError, ValueError):
         print("atif-scan: highlight export failed (details withheld)", file=sys.stderr)

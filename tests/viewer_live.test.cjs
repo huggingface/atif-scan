@@ -22,7 +22,7 @@ function playwright() {
   }
 }
 
-async function exportViewer(dir) {
+async function exportViewer(dir, extra = [], name = "viewer") {
   const trace = path.join(dir, "synthetic.json");
   const long = Array.from({ length: 400 }, (_, i) => `synthetic line ${i} 🌿漢é\n`).join("");
   await fs.writeFile(trace, JSON.stringify({ schema_version: "ATIF-v1.7", steps: [
@@ -32,9 +32,9 @@ async function exportViewer(dir) {
       observation: { results: [{ source_call_id: "c1", content: "synthetic result" }] } },
     { step_id: 3, source: "agent", message: "Done." },
   ] }));
-  const out = path.join(dir, "viewer");
+  const out = path.join(dir, name);
   try {
-    execFileSync("uv", ["run", "atif-scan", trace, "--viewer", out], { cwd: root, stdio: "pipe" });
+    execFileSync("uv", ["run", "atif-scan", trace, "--viewer", out, ...extra], { cwd: root, stdio: "pipe" });
   } catch (error) { if (error.status !== 1) throw error; }
   return out;
 }
@@ -159,6 +159,44 @@ test("review mode: blind panel, verdicts saved across reloads and exported as a 
       [["present", "contradicted", "last run failed"]]);
     assert.equal(await page.evaluate(() => window.syntheticInjected), undefined);
     assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("split viewer loads a trial's steps on demand and opens a step by input ID", async t => {
+  const pw = playwright();
+  if (!pw) { t.skip("Playwright is not installed"); return; }
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "atif-viewer-"));
+  const browser = await pw.chromium.launch(process.env.BROWSER_EXECUTABLE ? { executablePath: process.env.BROWSER_EXECUTABLE } : {});
+  try {
+    const out = await exportViewer(dir, ["--viewer-full", "--viewer-split"], "split");
+    const url = "file://" + path.join(out, "index.html");
+    const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+    const errors = [];
+    page.on("pageerror", e => errors.push(String(e)));
+    page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+    await page.goto(url);
+    const input = await page.evaluate(() => window.ATIF_VIEWER.trials[0].input_id);
+    assert.equal(await page.evaluate(() => "steps" in window.ATIF_VIEWER.trials[0] && !Array.isArray(window.ATIF_VIEWER.trials[0].steps)), false);
+    await page.locator("#step-rail button").first().waitFor();
+    // Loaded from trials/0.js, not data.js.
+    assert.ok(await page.evaluate(() => Array.isArray(window.ATIF_VIEWER.trials[0].steps)));
+
+    const linked = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+    await linked.goto(url + "#input=" + encodeURIComponent(input) + "&step=3");
+    await linked.locator("#field-text").filter({ hasText: "Done." }).waitFor();
+    assert.equal(await linked.evaluate(() => window.syntheticInjected ?? null), null);
+
+    // A missing steps file leaves the trial's summary and says so, without an error page.
+    assert.deepEqual(errors, []);
+    await fs.rm(path.join(out, "trials", "0.js"));
+    const missing = await browser.newPage();
+    missing.on("pageerror", e => errors.push(String(e)));
+    await missing.goto(url);
+    await missing.locator("#context-label", { hasText: "not part of this export" }).waitFor();
+    assert.deepEqual(errors, []);  // the failed load is a network error, not a page error
   } finally {
     await browser.close();
     await fs.rm(dir, { recursive: true, force: true });

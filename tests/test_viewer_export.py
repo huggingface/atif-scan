@@ -541,3 +541,25 @@ def test_info_unknowns_are_not_filtered(monkeypatch):
     monkeypatch.setattr(export, "apply_titles", lambda found, report: None)
     shown = export._trial_findings(None, {}, {}, frozenset(), full=False)
     assert [f["status"] for f in shown] == ["unknown"]
+
+
+def test_viewer_split_moves_each_trials_steps_to_its_own_script(trace: Path, tmp_path: Path):
+    whole, split = tmp_path / "whole", tmp_path / "split"
+    _export(trace, whole, "--viewer-full")
+    _export(trace, split, "--viewer-full", "--viewer-split")
+    a, b = _data(whole)["trials"][0], _data(split)["trials"][0]
+    assert "steps" not in b and b["steps_file"] == f"{export.TRIALS_DIR}/{b['id']}.js"
+    assert {k: v for k, v in a.items() if k != "steps"} == {
+        k: v for k, v in b.items() if k != "steps_file"
+    }
+    text = (split / b["steps_file"]).read_text()
+    prefix = f"window.ATIF_VIEWER_STEPS({json.dumps(b['id'])}, "
+    assert text.startswith(prefix) and text.endswith(");\n")
+    assert json.loads(text[len(prefix) : -3]) == a["steps"]
+    assert CREDENTIAL not in text and "<" not in text  # masked; markup escaped
+
+
+def test_viewer_split_requires_viewer(trace: Path, capsys):
+    with pytest.raises(SystemExit):
+        main([str(trace), "--viewer-split"])
+    assert "--viewer-split requires --viewer" in capsys.readouterr().err
