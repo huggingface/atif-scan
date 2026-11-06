@@ -142,6 +142,9 @@ class Source:
     # The local trial folder of a trial without a trajectory (never reported; used only
     # to match it to its job for --run/--release selection).
     trial_dir: Path | None = field(default=None, repr=False)
+    # A trial its run listing names but that has no trajectory at all: evidence-only, never
+    # a remote input to fetch (exports such as --viewer accept it).
+    untraced: bool = field(default=False, repr=False)
 
 
 def local_fingerprint(path: Path) -> Callable[[], str | None]:
@@ -617,7 +620,7 @@ def _untraced(label: str, facts: Doc) -> Source:
     def load() -> Trace:
         raise TraceError("no_trajectory_downloaded")
 
-    return Source(label, load, meta=facts)
+    return Source(label, load, meta=facts, untraced=True)
 
 
 # Fixed input_error codes of a Harbor job's trial folder without a trajectory.

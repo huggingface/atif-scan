@@ -26,7 +26,10 @@ def _pinned(records: list[Record]) -> list[str | None] | None:
     # replaced trial under --run/--release) are evidence-only items, not missing inputs:
     # they have no trace to pin or export. Any other input without a local file is remote.
     if any(
-        source.local is None and not source.selection and source.trial_dir is None
+        source.local is None
+        and not source.selection
+        and source.trial_dir is None
+        and not source.untraced
         for source, _ in records
     ):
         print("atif-scan: --viewer needs local traces (details withheld)", file=sys.stderr)

@@ -828,3 +828,17 @@ def test_leaderboard_row_scores_every_listed_trial_despite_retry_names(
     card = json.loads(capsys.readouterr().out)["harbor_jobs"][0]
     assert card["trials"]["present"] == 4 and card["retries"] is None
     assert card["accuracy"][0] == 75.0  # alpha 2/2 + beta 1/2, every listed trial scored
+
+
+def test_viewer_exports_a_synced_job_with_a_listed_untraced_trial(harbor, tmp_path, capsys):
+    """Regression: a synced Hub job whose saved listing names a trial without any
+    trajectory (T6) was refused by --viewer/--highlights ("needs local traces"): that
+    trial is evidence-only, not a remote input."""
+    sync = tmp_path / "sync"
+    assert main([f"harbor://jobs/{JOB}", "--sync-to", str(sync), "--format", "json"]) in (0, 1)
+    capsys.readouterr()
+    for flag in ("--viewer", "--highlights"):
+        out = tmp_path / flag.strip("-")
+        assert main([str(sync / "harbor" / JOB), flag, str(out)]) in (0, 1)
+        assert "needs local traces" not in capsys.readouterr().err
+        assert (out / "data.js").is_file()
