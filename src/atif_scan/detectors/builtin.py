@@ -32,6 +32,7 @@ from .lookup import (
     destinations,
 )
 from .lures import lure_detectors
+from .model_answer import model_answer_detectors
 from .network import network_command
 from .orchestrator import orchestrator_detectors
 from .priming import instruction_detectors
@@ -340,6 +341,7 @@ def builtin_detectors() -> list[Detector]:
             benchmark_source,
         ),
         *side_channel_detectors(),
+        *model_answer_detectors(),
         *orchestrator_detectors(),
         *hub_access_detectors(),
         CodingAgentDelegation(),
