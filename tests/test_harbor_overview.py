@@ -810,3 +810,21 @@ def test_subsets_are_for_hub_inputs_only(tmp_path, capsys):
         with pytest.raises(SystemExit):
             main([*argv, "--task-subset", tasks])
         assert "applies to harbor:// jobs and leaderboard rows only" in capsys.readouterr().err
+
+
+def test_leaderboard_row_scores_every_listed_trial_despite_retry_names(
+    row_harbor, tmp_path, capsys
+):
+    # Regression (a TB2.1 row): the leaderboard's own trial list is scored as listed. A row
+    # may associate an errored attempt and its `__retry_` re-run as two trials; in a job
+    # the errored one would be superseded, in a row it stays a scored (failed) trial.
+    path = tmp_path / "data.json"
+    data = json.loads(path.read_text())
+    errored, rerun = data["jobs"][JOB2]
+    errored.update(name="beta__aa11bb22", reward=0, error_type="NonZeroAgentExitCodeError")
+    rerun.update(name="beta__aa11bb22__retry_0a0a0a0a", started_at="2026-08-27T17:00:00+00:00")
+    path.write_text(json.dumps(data))
+    assert main(["--inspect", f"harbor://rows/{ROW}", "--format", "json"]) == 0
+    card = json.loads(capsys.readouterr().out)["harbor_jobs"][0]
+    assert card["trials"]["present"] == 4 and card["retries"] is None
+    assert card["accuracy"][0] == 75.0  # alpha 2/2 + beta 1/2, every listed trial scored

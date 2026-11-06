@@ -615,23 +615,33 @@ def row_listing(cli: Harbor, row: str, progress: Progress = _quiet) -> tuple[Doc
     return run, jobs
 
 
+@dataclass(frozen=True)
+class _Fetch:
+    """Where and how a scan downloads a job's trials."""
+
+    dest: Path
+    full: bool
+    workers: int
+    refresh: bool
+    progress: Progress = _quiet
+
+
 def _trial_sources(
     cli: Harbor,
     job: str,
     rows: Sequence[JsonObject],
-    dest: Path,
-    full: bool,
-    workers: int,
-    refresh: bool,
-    progress: Progress = _quiet,
+    how: _Fetch,
     show: JsonObject | None = None,
+    *,
+    chained: bool = True,
 ) -> list[Source]:
     """Sources for a job's listed trials. Each trial's Hub facts are its run listing
-    (`Source.meta`; see `facts` for how they combine with the trajectory's)."""
+    (`Source.meta`; see `facts` for how they combine with the trajectory's). `chained`
+    False (a leaderboard row's trials) scores every trial, as the row lists it."""
     rows = [r for r in rows if valid_row(r)]
-    paths = fetch(cli, job, rows, dest / job, full, workers, refresh, progress)
-    save_listing(dest / job, job, show, rows)
-    chains = retry_chains(rows)
+    paths = fetch(cli, job, rows, how.dest / job, how.full, how.workers, how.refresh, how.progress)
+    save_listing(how.dest / job, job, show, rows)
+    chains = retry_chains(rows) if chained else {}
     return [
         Source(
             trial_label(row),
@@ -695,6 +705,11 @@ def _subset_facts(
     }
 
 
+# A leaderboard row's trial list is the leaderboard's own selection, scored as listed:
+# retry chains (`__retry_` names) are a job's bookkeeping, and a row may associate a
+# re-run's attempts, or an errored attempt, deliberately. Only jobs supersede retries.
+
+
 def harbor_sources(
     value: str,
     dest: Path,
@@ -711,6 +726,7 @@ def harbor_sources(
     kind, ref = reference(value)
     cli = cli or HarborCLI.find()
     private_directory(dest)
+    how = _Fetch(dest, full, workers, refresh, progress)
     if kind == "row":
         run, jobs = row_listing(cli, ref, progress)
         if tasks is not None:
@@ -719,9 +735,7 @@ def harbor_sources(
             kept = [r for _, rows in jobs for r in rows]
             run = _subset_facts(run, kept, listed, tasks, row=True)
         sources = [
-            s
-            for job, rows in jobs
-            for s in _trial_sources(cli, job, rows, dest, full, workers, refresh, progress)
+            s for job, rows in jobs for s in _trial_sources(cli, job, rows, how, chained=False)
         ]
         return sources, run
     job = ref
@@ -731,7 +745,7 @@ def harbor_sources(
         listed = len(rows)
         rows = _in_subset(rows, tasks)
         run = _subset_facts(run, rows, listed, tasks, row=False)
-    sources = _trial_sources(cli, job, rows, dest, full, workers, refresh, progress, shows[job])
+    sources = _trial_sources(cli, job, rows, how, shows[job])
     return sources, run
 
 
@@ -749,6 +763,6 @@ def inspect_job(value: str, cli: Harbor | None = None, tasks: frozenset[str] | N
         rows = _in_subset(rows, tasks)
         run = _subset_facts(run, rows, listed, tasks, row=kind == "row")
     rows = [r for r in rows if valid_row(r)]
-    chains = retry_chains(rows)
+    chains = retry_chains(rows) if kind == "job" else {}
     trials = [dict(trial_meta(r, chains.get(str(r["id"]))), input_id=trial_label(r)) for r in rows]
     return {"run": run, "trials": trials}
