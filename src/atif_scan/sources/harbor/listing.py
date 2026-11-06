@@ -109,14 +109,17 @@ def _ordered(chain: list[Mapping[str, object]]) -> list[Mapping[str, object]] | 
 
 def retry_chains(rows: Sequence[Mapping[str, object]]) -> dict[str, Doc]:
     """{trial id: retry facts} for every attempt in a retry chain: `retry_attempts` (the
-    chain's length) and `retry_superseded` (True for all but the last attempt; None when
-    the chain's order is unknown, so every attempt stays scored)."""
+    chain's length) and `retry_superseded`: True for an earlier attempt that ended in an
+    error (Harbor retries only errored trials), False for the last attempt and for an
+    earlier one that ended without an error (a result, which stays scored: a leaderboard
+    row can associate a whole re-run's `__retry_` trials as attempts of their own), and
+    None when the chain's order is unknown, so every attempt stays scored."""
     facts: dict[str, Doc] = {}
     for chain in _chains(rows):
         ordered = _ordered(chain)
         last = ordered[-1] if ordered else None
         for row in chain:
-            superseded = None if last is None else row is not last
+            superseded = None if last is None else row is not last and bool(row.get("error_type"))
             facts[str(row.get("id"))] = {
                 "retry_attempts": len(chain),
                 "retry_superseded": superseded,
@@ -135,6 +138,8 @@ def retry_summary(rows: Sequence[Mapping[str, object]]) -> Doc | None:
     superseded = [
         trial_meta(r) for r in rows if facts.get(str(r.get("id")), {}).get("retry_superseded")
     ]
+    ordered = [o for c in chains if (o := _ordered(c))]
+    kept = sum(1 for o in ordered for r in o[:-1] if not r.get("error_type"))
     used = ("cost_usd", "input_tokens", "output_tokens")
     return {
         "chains": len(chains),
@@ -142,6 +147,8 @@ def retry_summary(rows: Sequence[Mapping[str, object]]) -> Doc | None:
         "superseded": len(superseded),
         "unordered_chains": sum(1 for c in chains if _ordered(c) is None),
         "superseded_errors": dict(Counter(m["error_type"] or "none" for m in superseded)),
+        # Earlier attempts that ended without an error: results, so they stay scored.
+        "kept_results": kept,
         # Against the assumption: an attempt that ended without an error, or did paid work.
         "superseded_without_error": sum(1 for m in superseded if not m["error_type"]),
         "superseded_with_usage": sum(1 for m in superseded if any(m.get(k) for k in used)),

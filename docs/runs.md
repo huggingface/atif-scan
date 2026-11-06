@@ -275,15 +275,18 @@ atif-scan --inspect harbor://jobs/<id>      # listing only: nothing downloaded
   trajectory are trials* in [reports.md](reports.md).
 - **Retries.** Harbor re-runs an errored trial as `<trial>__retry_<id>` and keeps every
   attempt in the job (the suffix-free name may be any attempt, not the first). atif-scan
-  groups each chain by name, orders it by start time, and scores only its last attempt:
-  the attempts before it count as present, errored and spent, but not scored
-  (`retry_superseded` on each item). That rests on an **assumption**, stated in the
-  brief: the replaced attempts were infrastructure failures (a crash or start-up error),
-  not results. The brief and `overview.retries` show the evidence: the replaced
-  attempts' error types, any that ended without an error (a retried result), any that
-  did agent work first (steps, tokens, cost, or a minute or more of agent time), and the
-  accuracy if every attempt were scored. A chain whose start times are missing or tied
-  can't be ordered, so all of its attempts stay scored.
+  groups each chain by name, orders it by start time, and scores only its last attempt
+  and any earlier attempt that ended without an error: an errored attempt before the last
+  counts as present, errored and spent, but not scored (`retry_superseded` on each item).
+  Harbor retries only errored trials, so an earlier attempt with no error is a result
+  (a leaderboard row can associate a whole re-run's `__retry_` trials as attempts of
+  their own) and stays scored (`overview.retries.kept_results`). Superseding rests on an
+  **assumption**, stated in the brief: the replaced attempts were infrastructure failures
+  (a crash or start-up error), not results. The brief and `overview.retries` show the
+  evidence: the replaced attempts' error types, any that did agent work first (steps,
+  tokens, cost, or a minute or more of agent time), and the accuracy if every attempt
+  were scored. A chain whose start times are missing or tied can't be ordered, so all of
+  its attempts stay scored.
 - **Comparison jobs.** One job can configure several harness/model setups (terminus-2
   with three models beside claude-code and codex, say), and so can several jobs scanned
   together. The listing records each trial's configured `agent_name`/`model_name`

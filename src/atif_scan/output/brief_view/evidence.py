@@ -117,12 +117,22 @@ def _rerun_texts(rr: Doc | None) -> Lines:
 RETRY_IDS_SHOWN = 3
 
 
+def _kept_result_texts(rt: Doc) -> Lines:
+    """Earlier attempts in a retry chain that ended without an error stay scored."""
+    if not (kept := rt.get("kept_results")):
+        return []
+    return [
+        f"{INFO} {plural(kept, 'earlier attempt')} in `__retry_` chains ended without an"
+        " error (a result, not a crash): scored as attempts of their own"
+    ]
+
+
 def _retry_texts(rt: Doc | None) -> Lines:
     """Harbor retry chains: which attempts aren't scored, the assumption that makes
     that fair, and any attempt that argues against it."""
-    if not rt or not (rt["superseded"] or rt["unordered_chains"]):
+    if not rt or not (rt["superseded"] or rt["unordered_chains"] or rt.get("kept_results")):
         return []
-    texts: Lines = []
+    texts: Lines = _kept_result_texts(rt)
     if rt["superseded"]:
         texts.append(
             f"{INFO} {plural(rt['superseded'], 'retried attempt')} not scored: Harbor re-ran"

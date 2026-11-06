@@ -144,6 +144,7 @@ def retries(items: list[Doc], runs: list[Doc]) -> Doc | None:
         "assumption": "superseded_attempts_were_infrastructure_failures",
         "chains": sum(r["chains"] for r in listed),
         "superseded": len(superseded),
+        "kept_results": sum(r.get("kept_results", 0) for r in listed),
         "unordered_chains": sum(r["unordered_chains"] for r in listed),
         "superseded_errors": ranked(Counter(i.get("error_type") or "none" for i in superseded)),
         # Against the assumption (each is a trial ID to look at, not a verdict):

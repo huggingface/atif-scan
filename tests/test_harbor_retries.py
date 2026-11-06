@@ -86,6 +86,7 @@ def test_only_the_last_attempt_of_a_chain_is_superseding():
         "attempts": 3,
         "superseded": 2,
         "unordered_chains": 0,
+        "kept_results": 0,
         "superseded_errors": {CRASH: 2},
         "superseded_without_error": 0,
         "superseded_with_usage": 0,
@@ -105,16 +106,47 @@ def test_superseded_attempts_are_present_but_not_scored():
     assert "2 earlier attempts not scored (assumed infrastructure failures)" in text
 
 
-def test_a_retried_result_or_real_work_argues_against_the_assumption():
+def test_paid_work_before_a_crash_argues_against_the_assumption():
     rows = job_rows()
-    rows[0]["error_type"] = None  # a clean failure, then retried: a re-roll, not a crash
     rows[1]["cost_usd"] = 0.4  # paid model calls before it crashed
     rt = card(rows)["retries"]
-    assert rt["superseded_without_error"] == ["alpha__aa11bb22__retry_0a0a0a0a"]
     assert rt["superseded_with_work"] == ["alpha__aa11bb22"]
-    texts = _retry_texts(rt)
-    assert any("ended without an error" in t for t in texts)
-    assert any("did agent work" in t for t in texts)
+    assert any("did agent work" in t for t in _retry_texts(rt))
+
+
+def test_an_earlier_attempt_with_a_result_stays_scored():
+    # Harbor retries only errored trials: an earlier attempt that ended without an error
+    # is a result (a re-roll), not a crash, so it is never superseded.
+    rows = job_rows()
+    rows[0]["error_type"] = None
+    facts = retry_chains(rows)
+    assert {k[-1]: v["retry_superseded"] for k, v in facts.items()} == {
+        "1": False,
+        "2": True,
+        "3": False,
+    }
+    rt = card(rows)["retries"]
+    assert (rt["superseded"], rt["kept_results"], rt["superseded_without_error"]) == (1, 1, [])
+    assert any("scored as attempts of their own" in t for t in _retry_texts(rt))
+
+
+def test_a_rerun_associated_as_attempts_keeps_every_trial():
+    # Regression (a TB2.1 leaderboard row, 445 trials for 89 tasks x 5): the row associates
+    # a whole re-run's `__retry_` trials as attempts of their own, beside the originals.
+    # Scoring only each chain's last attempt dropped 146 rewarded-or-failed results (299
+    # scored); none ended in an error, so all 445 count (350 rewarded vs 349 published).
+    rows = [
+        row(1, "alpha__aa11bb22", "00:00", 1),
+        row(2, "alpha__aa11bb22__retry_0a0a0a0a", "05:00", 0),
+        row(3, "alpha__cc33dd44__retry_0b0b0b0b", "00:01", 1),
+        row(4, "alpha__cc33dd44__retry_0c0c0c0c", "05:01", 1),
+        row(5, "alpha__ee55ff66", "00:02", 0),
+    ]
+    assert not any(v["retry_superseded"] for v in retry_chains(rows).values())
+    ov = card(rows)
+    assert ov["trials"]["present"] == 5 and ov["tasks"]["max_trials"] == 5
+    assert ov["accuracy"][0] == 60.0
+    assert ov["retries"]["superseded"] == 0 and ov["retries"]["kept_results"] == 2
 
 
 def test_a_superseded_attempt_with_agent_time_counts_as_work():
