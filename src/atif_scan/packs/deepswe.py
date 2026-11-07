@@ -38,8 +38,7 @@ from typing import TYPE_CHECKING
 from ..checks import CheckSpec, Context, Detection, Severity, Status, Unread
 from ..data import shell
 from ..data.model import Channel
-from ..detectors.side_channel import WRITTEN, model_call, model_call_in
-from ..detectors.text import SurfaceDetector
+from ..detectors.side_channel import ModelCall, model_call_in, model_call_surfaces
 from ..detectors.vocabulary import INPUT, PATHS_TEXT
 from ..rules import Allowance, Ref
 
@@ -515,17 +514,12 @@ class ModelClientSource:
     spec: CheckSpec
 
     def evaluate(self, trace: Trace, context: Context) -> Detection:
-        found = SurfaceDetector(self.spec, WRITTEN, model_call).evaluate(trace, context)
+        found = ModelCall(self.spec).evaluate(trace, context)
         if context.partial or not found.complete:
             return Detection(Status.UNKNOWN, complete=False, unread=found.unread)
         if found.status != Status.MATCH:
             return found
-        candidates = (
-            surface
-            for surface in trace.agent_surfaces()
-            if surface.at.channel in WRITTEN and model_call(surface) is not None
-        )
-        if not all(written_source_only(surface) for surface in candidates):
+        if not all(written_source_only(s) for s in model_call_surfaces(trace)):
             return Detection(Status.NO_MATCH)
         return found
 

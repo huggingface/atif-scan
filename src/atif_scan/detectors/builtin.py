@@ -38,6 +38,7 @@ from .network import network_command
 from .orchestrator import orchestrator_detectors
 from .priming import instruction_detectors
 from .provenance import DownstreamSourceReference
+from .provider_keys import provider_key_detectors
 from .recall import PROSE_AND_INPUT, UnprimedDetector, regex_candidates
 from .search import SearchCandidates
 from .side_channel import side_channel_detectors
@@ -360,6 +361,7 @@ def builtin_detectors() -> list[Detector]:
         ),
         *side_channel_detectors(),
         *model_answer_detectors(),
+        *provider_key_detectors(),
         *orchestrator_detectors(),
         *hub_access_detectors(),
         CodingAgentDelegation(),

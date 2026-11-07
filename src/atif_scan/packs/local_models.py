@@ -17,10 +17,9 @@ from ..detectors.side_channel import (
     MODEL_SDK,
     NEAR,
     TOKEN_BREAK,
-    WRITTEN,
-    model_call,
+    ModelCall,
+    model_call_surfaces,
 )
-from ..detectors.text import SurfaceDetector
 
 if TYPE_CHECKING:
     from ..data.model import Surface, Trace
@@ -71,16 +70,11 @@ class LocalStreamingTests:
     spec: CheckSpec
 
     def evaluate(self, trace: Trace, context: Context) -> Detection:
-        found = SurfaceDetector(self.spec, WRITTEN, model_call).evaluate(trace, context)
+        found = ModelCall(self.spec).evaluate(trace, context)
         if context.partial or trace.recording_gaps or not found.complete:
             return Detection(Status.UNKNOWN, complete=False, unread=found.unread)
         if found.status != Status.MATCH:
             return found
-        candidates = (
-            surface
-            for surface in trace.agent_surfaces()
-            if surface.at.channel in WRITTEN and model_call(surface) is not None
-        )
-        if not all(local_streaming_test(surface) for surface in candidates):
+        if not all(local_streaming_test(s) for s in model_call_surfaces(trace)):
             return Detection(Status.NO_MATCH)
         return found
