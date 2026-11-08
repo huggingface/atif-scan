@@ -249,7 +249,8 @@ def trace_facts(trace: Trace | None) -> Doc:
         "model_name": trace.agent[2],
         # Agent steps per step-level model (most used first): what actually ran.
         "step_models": dict(models) or None,
-        "llm_calls": trace.llm_calls or trace.agent_steps,
+        # Declared counts win, zero included (a harness declaring no model calls).
+        "llm_calls": trace.agent_steps if trace.llm_calls is None else trace.llm_calls,
         # A fixed code (Trace.reasoning_exposure): presence, not completeness.
         "reasoning": trace.reasoning_exposure,
         # A number and a fixed code only: authored characters per reported completion token.

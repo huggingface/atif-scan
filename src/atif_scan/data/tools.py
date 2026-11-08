@@ -164,6 +164,13 @@ HARNESS_ALIASES = {
     # OrcaTerm: completion reports (prose summaries, not written files).
     "goal_complete": "inert",
     "goal_blocked": "inert",
+    # SLAI Agent Runtime's tb_bridge (a TB2.1 submission): a CLI relaying a host-side
+    # client's actions into the sandbox. `task` returns the instruction, `upload` copies a
+    # host file in (`host_path`), `finalize` reports a summary. exec/write/read/ls resolve
+    # through their namespace (see `NAMESPACE`).
+    "tb_bridge.task": "inert",
+    "tb_bridge.upload": "write",
+    "tb_bridge.finalize": "inert",
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 ALIASES.update(HARNESS_ALIASES)
@@ -466,6 +473,11 @@ def _idle_call(name: str, args: object) -> bool:
     return name in NO_INPUT_TOOLS and not args
 
 
+# A namespaced tool name (`tb_bridge.exec`, `functions:read`, `mcp__server__bash`): its
+# last part is the tool, when the whole name isn't a known one.
+NAMESPACE = re.compile(r"^[A-Za-z_][\w-]*(?:\.|:|__)(\w+)$")
+
+
 def _normalize_action(name: str, args: object) -> str:
     if name in PROSE_TOOLS:
         return "inert" if _prose_tool(name, args) else "other"
@@ -474,7 +486,10 @@ def _normalize_action(name: str, args: object) -> str:
         key = ACTION_KEYS.get(name, "action_type")
         action = args.get(key) if is_object(args) else None
         return actions.get(action, "other") if isinstance(action, str) else "other"
-    return ALIASES.get(name, "other")
+    if name in ALIASES:
+        return ALIASES[name]
+    namespaced = NAMESPACE.match(name)
+    return ALIASES.get(namespaced.group(1), "other") if namespaced else "other"
 
 
 def _norm(key: str | None) -> str:
@@ -556,7 +571,46 @@ def call_fields(tool: str, args: object, *, name: str = "") -> tuple[Field, ...]
     fields = _generic_call_fields(tool, args)
     if name in (PROSE_TOOLS.keys() | ACTION_KEYS.keys()) and tool == "other":
         return _unknown_action(fields)
+    if tool == "write" and name not in DELETE_TOOLS and _contents_unrecorded(args, fields):
+        fields = (*fields, (Channel.PAYLOAD, Content(understood=False)))
     return fields
+
+
+# Write tools that remove a file: they carry no contents by design.
+DELETE_TOOLS = frozenset({"deleteToolCall"})
+# Argument keys naming a file on the harness host copied into the sandbox (SLAI tb_bridge
+# `upload`): the contents are that file, not recorded text.
+HOST_PATH_KEYS = _keys("hostpath", "localpath", "hostsource", "localsource")
+# A Windows drive or UNC path: never a path inside a Linux sandbox.
+HOST_PATH_VALUE = re.compile(r"[A-Za-z]:[\\/]|\\\\[^\\\s]")
+
+
+def host_paths(tool: str, args: object) -> list[str]:
+    """Arguments naming a file on the harness host: by key on any call, by a Windows
+    shape on a write (copied into the sandbox)."""
+    return [
+        value
+        for key, value in leaves(dict(args) if isinstance(args, Mapping) else args)
+        if isinstance(value, str)
+        and (_norm(key) in HOST_PATH_KEYS or (tool == "write" and HOST_PATH_VALUE.match(value)))
+    ]
+
+
+# Edit-tool keys holding the new text but not read as payload (they stay unclassified
+# arguments): muse-code `edit_file` {find, replace}, LemonCrow `edits: [{old, new}]`,
+# dtcoder `apply_patch` {patch_text}.
+CONTENT_KEYS = _keys("replace", "replacement", "new", "patchtext")
+
+
+def _contents_unrecorded(args: object, fields: tuple[Field, ...]) -> bool:
+    """A write recording a path but neither its contents nor a host file they came from
+    (SLAI tb_bridge `write`: path and mode, the result echoing only BYTES=/SHA256=): what
+    it wrote is unknown, not empty."""
+    if any(channel == Channel.PAYLOAD for channel, _ in fields) or not is_object(args):
+        return False
+    if any(_norm(key) in CONTENT_KEYS and isinstance(v, str) for key, v in leaves(args)):
+        return False
+    return not host_paths("write", args)
 
 
 def _unknown_action(fields: tuple[Field, ...]) -> tuple[Field, ...]:
