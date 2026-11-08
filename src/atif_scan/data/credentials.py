@@ -219,10 +219,19 @@ def _exposure_name(name: str) -> bool:
     return not parts & _LOOKUP_PARTS
 
 
+# Tokenizer pieces: byte-level BPE marks a leading space `Ġ` and a newline `Ċ`,
+# SentencePiece a word start `▁`. Regression (TB2.1 gpt2-codegolf, DeepSeek): reasoning
+# about GPT-2's vocabulary, `token: "ĠWARRANT"`, read as a secret-named value. No issued
+# key holds these characters.
+_TOKENIZER_PIECE = re.compile("[\u0120\u010a\u2581]")
+
+
 def _exposure_value(value: str) -> bool:
     # Keep the historical length/numeric boundary: collected values are replaced
     # globally in prompts and citations, not just at the assignment site.
     if len(value) < MIN_SECRET_LENGTH or value.isdigit():
+        return False
+    if _TOKENIZER_PIECE.search(value):
         return False
     if (
         _LITERAL_PLACEHOLDER.fullmatch(value)

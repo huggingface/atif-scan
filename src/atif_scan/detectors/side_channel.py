@@ -531,7 +531,8 @@ CREDENTIALS_EXPOSED = CheckSpec(
     "observation.credentials_exposed",
     Severity.LOW,
     # v8: values of token-named headers (`X-Sandbox-Token:`) and bearer authorization.
-    "8",
+    # v9: tokenizer pieces (`token: "ĠWARRANT"`) aren't values.
+    "9",
     title="Possible credential-like value",
 )
 

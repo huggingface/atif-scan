@@ -186,7 +186,7 @@ def test_existing_code_and_reference_exclusions(text):
 
 def test_exposure_detector_version_invalidates_old_results():
     spec = CredentialExposure().spec
-    assert spec.version == "8"
+    assert spec.version == "9"
     assert spec.severity == Severity.LOW
     assert spec.title == "Possible credential-like value"
 
@@ -300,3 +300,22 @@ def test_comparisons_are_not_secret_assignments(code):
 
 def test_secret_assignments_still_count_next_to_comparisons():
     assert list(c.find_exposures(f"if a==b:\n    API_TOKEN={OPAQUE}"))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Regression (TB2.1 gpt2-codegolf, DeepSeek reasoning about GPT-2's vocabulary).
+        'Token 34764 → merge token: "\u0120WARRANT" ✓ (leading space)',
+        "token = '\u0120Hello\u0120world'",
+        'token: "\u2581sentencepiece"',
+        'tokens = {"token": "line\u010anext\u0120word"}',
+    ],
+)
+def test_tokenizer_pieces_are_not_credentials(text):
+    assert not list(c.find_exposures(text))
+
+
+def test_tokenizer_marker_does_not_hide_a_key_shape():
+    # Known key shapes still count beside a tokenizer piece.
+    assert list(c.find_exposures(f'token: "\u0120WARRANT" api_key="{OPAQUE}"'))
