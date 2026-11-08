@@ -27,6 +27,7 @@ from ..data import shell
 from ..data.jsonval import as_str, count, load_object
 from ..data.model import Channel, Locator
 from .side_channel import ModelServer, model_call_in, model_servers, model_url
+from .web_opens import by_reference, opened, unresolved
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -127,20 +128,43 @@ def _model_calls(trace: Trace) -> tuple[list[_Call], list[Unread]]:
     unread: list[Unread] = []
     servers = model_servers(trace)
     for step, call in trace.agent_calls():
-        for index, (channel, content) in enumerate(call.fields):
-            if channel not in REQUEST_CHANNELS:
-                continue
-            at = Locator(step.index, channel, call.index, field=index)
-            if not content.understood:
-                unread.append(Unread("unreadable", at))
-            if channel == Channel.URL:
-                found = model_url(content.text)
-            else:
-                found = executed_call(content, at, servers)
-            if found is not None:
-                calls.append(_Call(step, call, at))
-                break
+        if by_reference(call):  # no URL by design: judged by the page its result names
+            found = _opened_model_page(step, call, unread)
+        else:
+            found = _requested(step, call, servers, unread)
+        if found is not None:
+            calls.append(found)
     return calls, unread
+
+
+def _requested(
+    step: Step, call: ToolCall, servers: Sequence[ModelServer], unread: list[Unread]
+) -> _Call | None:
+    """The first field of the call that calls a model; unreadable fields go to `unread`."""
+    for index, (channel, content) in enumerate(call.fields):
+        if channel not in REQUEST_CHANNELS:
+            continue
+        at = Locator(step.index, channel, call.index, field=index)
+        if not content.understood:
+            unread.append(Unread("unreadable", at))
+        if channel == Channel.URL:
+            found = model_url(content.text)
+        else:
+            found = executed_call(content, at, servers)
+        if found is not None:
+            return _Call(step, call, at)
+    return None
+
+
+def _opened_model_page(step: Step, call: ToolCall, unread: list[Unread]) -> _Call | None:
+    """An open by reference whose result names a model-API page; one whose result names
+    none leaves the check unknown."""
+    pages = list(opened(step, call))
+    if not pages and unresolved(step, call):
+        unread.append(Unread("undecidable", Locator(step.index, Channel.URL, call.index)))
+    if any(model_url(page.url) for page in pages):
+        return _Call(step, call, Locator(step.index, Channel.URL, call.index))
+    return None
 
 
 @dataclass(frozen=True)
@@ -174,8 +198,9 @@ def model_answer_detectors() -> list[Detector]:
                 Severity.HIGH,
                 # v2: a fetch tool's URL and Hugging Face's `generated_text`; fetch-tool
                 # failures and web pages aren't answers, a result still running is unknown;
-                # not a model server the agent started (as model_call v5).
-                "2",
+                # not a model server the agent started (as model_call v5). v3: an open by
+                # reference is judged by the page its result names.
+                "3",
                 title="Another model answered from the sandbox",
             )
         )

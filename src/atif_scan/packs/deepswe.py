@@ -38,7 +38,12 @@ from typing import TYPE_CHECKING
 from ..checks import CheckSpec, Context, Detection, Severity, Status, Unread
 from ..data import shell
 from ..data.model import Channel
-from ..detectors.side_channel import ModelCall, model_call_in, model_call_surfaces
+from ..detectors.side_channel import (
+    ModelCall,
+    model_call_in,
+    model_call_surfaces,
+    opened_model_calls,
+)
 from ..detectors.vocabulary import INPUT, PATHS_TEXT
 from ..rules import Allowance, Ref
 
@@ -519,7 +524,9 @@ class ModelClientSource:
             return Detection(Status.UNKNOWN, complete=False, unread=found.unread)
         if found.status != Status.MATCH:
             return found
-        if not all(written_source_only(s) for s in model_call_surfaces(trace)):
+        if opened_model_calls(trace)[0] or not all(
+            written_source_only(s) for s in model_call_surfaces(trace)
+        ):
             return Detection(Status.NO_MATCH)
         return found
 

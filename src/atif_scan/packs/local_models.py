@@ -19,6 +19,7 @@ from ..detectors.side_channel import (
     TOKEN_BREAK,
     ModelCall,
     model_call_surfaces,
+    opened_model_calls,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +76,8 @@ class LocalStreamingTests:
             return Detection(Status.UNKNOWN, complete=False, unread=found.unread)
         if found.status != Status.MATCH:
             return found
-        if not all(local_streaming_test(s) for s in model_call_surfaces(trace)):
+        if opened_model_calls(trace)[0] or not all(
+            local_streaming_test(s) for s in model_call_surfaces(trace)
+        ):
             return Detection(Status.NO_MATCH)
         return found

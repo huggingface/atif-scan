@@ -225,3 +225,57 @@ def test_plain_text_reader_counts_every_request():
     # `model_call_in` without a trace position can't know about servers: unchanged.
     assert model_call_in(LOCAL_REQUEST) is not None
     assert model_call_in(HF_POST) is not None
+
+
+CITE = "\ue200cite\ue202{ref}\ue201"
+
+
+def web_run(action: dict[str, object], call_id: str) -> dict[str, object]:
+    """A Codex code-mode `exec` running one `web__run` action."""
+    program = f"const r = await tools.web__run({json.dumps(action)}); text(r);"
+    return call("exec", {"input": program}, call_id)
+
+
+def codex_blocks(body: str) -> str:
+    """Codex code mode's recorded result: a Python repr of text blocks."""
+    preface = "Script completed\nWall time 0.7 seconds\nOutput:\n"
+    return str([{"type": "input_text", "text": preface}, {"type": "input_text", "text": body}])
+
+
+def opened_page(url: str) -> str:
+    return (
+        f"Some page ({url})\n{CITE.format(ref='turn1view0')} [wordlim: 200] Content type: "
+        'text/html; Source: open({"ref_id":"turn0search3"}); Total lines: 3\nL0: text\n'
+    )
+
+
+SEARCH = step(
+    web_run({"search_query": [{"q": "basel counterparty risk"}]}, "s"),
+    results={"s": codex_blocks("Results (https://eur-lex.europa.eu/x)")},
+)
+OPEN = web_run({"open": [{"ref_id": "turn0search3"}], "response_length": "long"}, "o")
+
+
+@pytest.mark.parametrize("check", [MODEL_CALL, ANSWERED])
+def test_open_by_reference_is_judged_by_the_page_it_opened(check):
+    # Regression: Codex code mode opens a search result by `ref_id`, so the call records
+    # no URL; 331 such opens left model_call unknown on 177 local trials, though each
+    # result's header named the page.
+    page = step(OPEN, results={"o": codex_blocks(opened_page("https://eur-lex.europa.eu/x"))})
+    assert status(check, SEARCH, page) == Status.NO_MATCH
+
+
+def test_open_by_reference_of_a_model_api_page_is_a_model_call():
+    url = "https://api-inference.huggingface.co/models/gpt2"
+    page = step(OPEN, results={"o": codex_blocks(opened_page(url))})
+    assert status(MODEL_CALL, SEARCH, page) == Status.MATCH
+
+
+def test_open_by_reference_whose_result_names_no_page_is_unknown():
+    error = (
+        f"Internal Error ()\n{CITE.format(ref='turn1view0')} [wordlim: 200] "
+        'Source: open({"ref_id":"turn0search3"})'
+    )
+    failed = step(OPEN, results={"o": error})
+    assert status(MODEL_CALL, SEARCH, failed) == Status.UNKNOWN
+    assert status(MODEL_CALL, SEARCH, step(OPEN)) == Status.UNKNOWN  # nothing recorded
