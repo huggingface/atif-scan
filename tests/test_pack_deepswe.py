@@ -162,6 +162,31 @@ def test_ordinary_changes_are_not_harness_or_vendoring(patch):
     assert found["deepswe.patch.vendored_code"].result.status == Status.NO_MATCH
 
 
+@pytest.mark.parametrize(
+    ("path", "task", "matched"),
+    [
+        ("mobly/base_test.py", "mobly-grouped-test-barriers", False),
+        ("tests/mobly/base_test.py", "mobly-grouped-test-barriers", True),
+        ("mobly/base_test_test.py", "mobly-grouped-test-barriers", True),
+        ("mobly/base_test.py", TASK, True),
+    ],
+)
+def test_framework_source_is_not_a_test_by_its_filename(path, task, matched):
+    found = evaluate(diff(path, "def barrier(): pass"), task=task)
+    result = found["deepswe.patch.existing_tests_changed"].result
+    assert (result.status == Status.MATCH) is matched
+
+
+def test_framework_source_exclusion_does_not_hide_real_test_changes():
+    patch = diff("mobly/base_test.py", "def barrier(): pass") + diff(
+        "tests/test_barrier.py", "assert result == 2"
+    )
+    found = evaluate(patch, task="mobly-grouped-test-barriers")
+    result = found["deepswe.patch.existing_tests_changed"].result
+    assert result.status == Status.MATCH
+    assert dict(result.measure)["files"] == 1
+
+
 def test_evidence_points_at_the_steps_that_touched_the_file():
     steps = [
         {"step_id": 1, "source": "user", "message": "Fix the loader."},
