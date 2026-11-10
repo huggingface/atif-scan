@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "atif-scan"
-version = "0.8.22"
+version = "0.8.23"
 source = { editable = "." }
 dependencies = [
     { name = "huggingface-hub" },

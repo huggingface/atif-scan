@@ -29,7 +29,7 @@ def surface_requests(surface: Surface) -> RequestRead:
 SEARCH_CANDIDATE = CheckSpec(
     "network.search_candidate",
     Severity.INFO,
-    "1",
+    "2",  # Recognized code-search endpoints are counted separately from unknown services.
     title="HTTP request with a search-like query",
 )
 

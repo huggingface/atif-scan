@@ -1,9 +1,11 @@
 """Credential shapes shared by the secret detectors and citation masking (stdlib only).
 
-Two kinds of evidence:
+Three kinds of evidence:
 
 - **Token shapes** that are credentials wherever they appear (`sk-…`, `hf_…`, `ghp_…`,
   AWS key IDs, JWTs, private-key blocks, `LLM|<id>|<token>` harness keys, …).
+- **Bearer webhooks**: exact Slack/Discord incoming capability targets, including
+  bounded source-literal assembly. Their IDs/tokens are masked wherever repeated.
 - **Named values**: an assignment whose *name* says it holds a secret
   (`OPENAI_API_KEY=…`, `"api_key": "…"`, `os.environ["X_TOKEN"] = "…"`,
   `--api-key …`, `x-api-key: …`). Names are split into components, so
@@ -22,6 +24,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from . import webhooks
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -69,6 +73,13 @@ _FLAG = re.compile(
     r"(?i)(?=[-xap])(?:(?<![\w-])--?(?P<flag>api[_-]?key|token|password|secret)[= ]\s*|"
     r"\b(?P<header>x-api-key|api-key|x-[a-z0-9-]*token)\s*:\s*|"
     r"\b(?:proxy-)?authorization\s*:\s*bearer\s+)(?P<q>['\"]?)(?P<value>[^\s'\"]+)"
+)
+# Mask supported HTTP authentication carrier roles even when the header key/value
+# are quoted JSON/native-tool arguments. This is a privacy superset, not a new
+# exposure predicate. Keep the scheme outside the sensitive value for propagation.
+_AUTHORIZATION = re.compile(
+    r"""(?i)(?<![\w-])(?P<nq>['"]?)(?:proxy-)?authorization(?P=nq)\s*[:=]\s*"""
+    r"""['"]?(?:Bearer|Basic|Token|Key)[ \t]+(?P<value>[^\s'"]{8,})"""
 )
 _SECRET_PART = re.compile(
     r"(?:^|_)(?:api_?key|apikey|secret|token|password|passwd|pwd|credentials?|"
@@ -248,7 +259,7 @@ def _masked_value(value: str) -> bool:
 
 @dataclass(frozen=True)
 class Found:
-    kind: str  # "token" (a known credential shape) or "named" (a secret-named assignment)
+    kind: str  # "token", "webhook", "authorization" (mask-only), or "named"
     span: tuple[int, int]  # where to point a citation: the name for named values
     value: tuple[int, int]  # the secret itself (masked in citations)
 
@@ -264,6 +275,10 @@ def find(text: str) -> Iterator[Found]:
         return
     for m in TOKEN_SHAPES.finditer(text):
         yield Found("token", m.span(), m.span())
+    for span, value in webhooks.find(text):
+        yield Found("webhook", span, value)
+    for m in _AUTHORIZATION.finditer(text):
+        yield Found("authorization", m.span(), m.span("value"))
     yield from _named(text, secret_name, _masked_value)
 
 
@@ -282,6 +297,8 @@ def find_exposures(text: str) -> Iterator[Found]:
             and not _PUBLIC_SSH_ALGORITHM.match(text, m.start())
         ):
             yield Found("token", m.span(), m.span())
+    for span, value in webhooks.find(text, exposure=True):
+        yield Found("webhook", span, value)
     yield from _named(text, _exposure_name, _exposure_value)
 
 
@@ -303,6 +320,7 @@ def values(texts: Iterable[str]) -> frozenset[str]:
     reappears (a bare value printed on its own line, copied into code)."""
     out: set[str] = set()
     for text in texts:
+        out.update(webhooks.values(text))
         for f in find(text):
             out.add(text[f.value[0] : f.value[1]])
     return frozenset(v for v in out if len(v) >= MIN_SECRET_LENGTH)
@@ -311,7 +329,8 @@ def values(texts: Iterable[str]) -> frozenset[str]:
 def mask(text: str, known: Iterable[str] = ()) -> str:
     """Replace every credential value (and any `known` value) with `***`."""
     spans = sorted(f.value for f in find(text))
-    for value in sorted(set(known) - {""}, key=len, reverse=True):
+    local = webhooks.values(text) | {m["value"] for m in _AUTHORIZATION.finditer(text)}
+    for value in sorted((set(known) | local) - {""}, key=len, reverse=True):
         start = text.find(value)
         while start != -1:
             spans.append((start, start + len(value)))

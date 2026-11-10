@@ -946,6 +946,37 @@ def search_patterns(command: Command) -> list[Span] | None:
     return search.patterns
 
 
+def literal_search_patterns(text: str) -> tuple[Span, ...]:
+    """Known grep/rg pattern operands, never commands used to construct them.
+
+    Incomplete scripts get no exemption; substitution command spans are retained.
+    Consumers must restrict this to shell commands, not arbitrary written code.
+    """
+    script = parse(text)
+    if not script.complete:
+        return ()
+    return tuple(
+        literal
+        for command in script.commands
+        for span in search_patterns(command) or []
+        for literal in _literal_pattern_parts(command, span)
+    )
+
+
+def _literal_pattern_parts(command: Command, span: Span) -> list[Span]:
+    start, end = span
+    parts = []
+    for child_start, child_end in sorted(child.span for child in command.substituted):
+        if child_end <= start or child_start >= end:
+            continue
+        if start < child_start:
+            parts.append((start, child_start))
+        start = max(start, child_end)
+    if start < end:
+        parts.append((start, end))
+    return parts
+
+
 def _search_word(search: _Search, word: str, span: Span, words: Iterator[tuple[str, Span]]) -> bool:
     """Read one word of a search command; False when its meaning is unsure."""
     if not word.startswith("-") or word == "-":

@@ -111,6 +111,10 @@ ENCODED_URL_PARAM = re.compile(r"[?&;][\w.-]{1,32}=(https?%3A%2F%2F[^&\s\"'<>]{4
 # Hub catalogue APIs also list repositories without searching, so require a nonempty
 # search parameter there; ordinary repository pages and downloads are not searches.
 SEARCH_ENDPOINT = re.compile(
+    r"https?://(?:grep\.app/(?:api/search|search)/?(?=[?#]|$)|"
+    r"sourcegraph\.com/(?:\.api/search/stream|search/stream|search)/?(?=[?#]|$)|"
+    r"searchcode\.com/api/codesearch_I/?(?=[?#]|$)|"
+    r"api\.searchcode\.com/api/v1/code_search/?(?=[?#]|$))|"
     r"https?://(?:[\w-]+\.)*(?:"
     r"bing\.com/(?:search|news/search)|google\.[a-z.]{2,7}/search|"
     r"(?:html|lite)\.duckduckgo\.com/|duckduckgo\.com/(?:html|lite)\b|duckduckgo\.com/\?|"

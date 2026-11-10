@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from ..checks import check_selected
 from ..data import account_ids, credentials
+from ..data.jsonval import compact_json
 from ..data.model import Channel, Content, Locator, Step, ToolCall, Trace
 
 if TYPE_CHECKING:
@@ -74,6 +75,8 @@ def mask(text: str, known: frozenset[str] = frozenset()) -> str:
     its shape and the rest left unmatched), then token shapes, then `credentials.mask`,
     whose named-value test sees tokens already masked (a glued token isn't "code").
     OpenAI account identifiers go first, while their keys are still intact."""
+    # Collect before broad assignment/header masks can erase URL/source context.
+    known = known | credentials.values([text])
     text = _mask_spans(text, account_ids.spans(text))
     text = credentials.PRIVATE_KEY.sub("[private key]", text)
     for pattern, replacement in HEADERS:
@@ -113,6 +116,11 @@ def trace_secrets(trace: Trace) -> frozenset[str]:
     for step in trace.steps:
         texts += [step.message.text or "", step.reasoning.text or ""]
         texts += [c.text or "" for call in step.calls for _, c in call.fields]
+        # Native arguments are flattened into scalar fields without their header
+        # names. Retain role context privately when collecting trace-wide masks.
+        texts += [
+            encoded for call in step.calls if (encoded := compact_json(call.arguments)) is not None
+        ]
         texts += [o.content.text or "" for o in step.observations]
     return credentials.values(texts) | account_ids.values(texts)
 
