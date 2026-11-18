@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal
 
 from . import jslit
 from .content import content
+from .harness_messages import delivery_observations
 from .jsonval import JsonObject, as_list, as_object, as_str, compact_json, count, is_object
 from .model import Observation, Step, ToolCall, Trace
 from .pairing import drop_rejected_unknowns, reconstruct_observation_links
@@ -218,12 +219,17 @@ def parse_step(index: int, value: object, declared: Declared | None = None) -> S
         {call_id: args for _, call_id, args in map(_call_parts, raw_calls)},
     )
     calls = drop_rejected_unknowns(calls, observations)
+    message = content(raw.get("message"))
+    delivery = None if observations or raw_calls else delivery_observations(raw)
+    if delivery is not None:
+        message, delivered = delivery
+        observations = list(delivered)
     step_id = raw.get("step_id")
     return Step(
         index,
         source,
         copied,
-        content(raw.get("message")),
+        message,
         content(raw.get("reasoning_content")),
         tuple(calls),
         tuple(observations),

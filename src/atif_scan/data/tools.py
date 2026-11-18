@@ -171,6 +171,13 @@ HARNESS_ALIASES = {
     "tb_bridge.task": "inert",
     "tb_bridge.upload": "write",
     "tb_bridge.finalize": "inert",
+    # Antigravity CLI (agy), seen on the TB4 leaderboard. `manage_task` polls, lists or
+    # kills a background task (`run_command` past WaitMsBeforeAsync, a `schedule` timer)
+    # by its id; `manage_subagents` lists subagents. Its `invoke_subagent` is a launcher
+    # (integrity.subagent_unrecorded) and stays unrecognized, like Claude Code's `Agent`.
+    "search_web": "web_search",
+    "manage_task": "inert",
+    "manage_subagents": "inert",
 }
 ALIASES = {name: category for category, names in TOOLS.items() for name in names}
 ALIASES.update(HARNESS_ALIASES)
@@ -200,6 +207,7 @@ COMMAND_KEYS = _keys(
     "shellcommand",
     "bash",
     "code",
+    "commandline",  # Antigravity CLI run_command
     # Text typed into a terminal: Devin text_input, Terminus keystrokes, Codex write_stdin.
     "textinput",
     "keystrokes",
@@ -244,6 +252,7 @@ PAYLOAD_KEYS = _keys(
     "newstring",
     "newstr",
     "newtext",
+    "replacement",  # Antigravity CLI edit_file: the new text, like Claude Code new_string
     "insertline",
     "patch",
     "diff",
@@ -257,6 +266,7 @@ PAYLOAD_KEYS = _keys(
     "notes",
     "todos",
     "summary",
+    "toolsummary",  # Antigravity CLI: a one-line label of the call, like `explanation`
     "reasoning",
     "thought",
     "explanation",
@@ -299,12 +309,18 @@ PROSE_TOOLS = {
     "finish": ("message", Channel.MESSAGE),
     # Codex goal mode: the goal the agent sets itself, in its own words.
     "create_goal": ("objective", Channel.MESSAGE),
+    # Antigravity CLI's timer: after DurationSeconds (or when the TimerCondition task
+    # ends) the harness hands the agent's own Prompt back to it. Nothing runs.
+    "schedule": ("Prompt", Channel.MESSAGE),
 }
+# A prose tool's other arguments, which carry no command, path, URL or text.
+PROSE_SETTINGS = {"schedule": frozenset({"DurationSeconds", "TimerCondition"})}
 
 
 def _prose_tool(name: str, args: object) -> bool:
     key, _ = PROSE_TOOLS[name]
-    return is_object(args) and not (set(args) - {key, "kind"}) and isinstance(args.get(key), str)
+    allowed = {key, "kind"} | PROSE_SETTINGS.get(name, frozenset())
+    return is_object(args) and not (set(args) - allowed) and isinstance(args.get(key), str)
 
 
 # Non-JSON ("freeform") tools take raw text rather than an object: Responses custom
@@ -568,12 +584,24 @@ def call_fields(tool: str, args: object, *, name: str = "") -> tuple[Field, ...]
     if name in PROSE_TOOLS and tool == "inert":
         key, channel = PROSE_TOOLS[name]
         return ((channel, content(as_object(args).get(key))),)
-    fields = _generic_call_fields(tool, args)
+    fields = _generic_call_fields(tool, _quoted_target_removed(args))
     if name in (PROSE_TOOLS.keys() | ACTION_KEYS.keys()) and tool == "other":
         return _unknown_action(fields)
     if tool == "write" and name not in DELETE_TOOLS and _contents_unrecorded(args, fields):
         fields = (*fields, (Channel.PAYLOAD, Content(understood=False)))
     return fields
+
+
+# Antigravity CLI's `edit_file {Path, Target, Replacement}`: Target is the existing text
+# the edit replaces ("the Target must exactly match existing file text"), quoted rather
+# than authored, so not a path (`target` names one for other tools, e.g. a link target).
+QUOTED_TARGET = ("Target", "Replacement")
+
+
+def _quoted_target_removed(args: object) -> object:
+    if not is_object(args) or not all(isinstance(args.get(k), str) for k in QUOTED_TARGET):
+        return args
+    return {key: value for key, value in args.items() if key != QUOTED_TARGET[0]}
 
 
 # Write tools that remove a file: they carry no contents by design.
