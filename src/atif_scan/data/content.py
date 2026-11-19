@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 
 from .jsonval import as_list, as_object, as_str
-from .media import MEDIA_BLOCKS, block_media, text_media
+from .media import MEDIA_BLOCKS, MIN_TEXT_PAYLOAD, block_media, text_media
 from .model import Content
 
 # Harness text standing in for an attached image (Devin CLI: "[Image 1]").
@@ -25,7 +25,7 @@ MEDIA_PLACEHOLDER = re.compile(
 # src="data:image/png;base64,abc">`, TB4 html-js-filter) would otherwise make the field
 # unreadable and every unprompted-recall check unknown from that step on.
 MEDIA_INLINE = re.compile(
-    r"\bdata:(?:image|audio|video)/[\w.+-]+;base64,[A-Za-z0-9+/]{64}|"
+    rf"\bdata:(?:image|audio|video)/[\w.+-]+;base64,[A-Za-z0-9+/]{{{MIN_TEXT_PAYLOAD}}}|"
     r"""["']image_url["']\s*:\s*["']data:(?:image|audio|video)/|"""
     r"^[^\S\n]*\[Image: original \d+x\d+, displayed at \d+x\d+\.|"
     r"""["']media_type["']\s*:\s*["'](?:image/|audio/|video/|application/pdf)""",

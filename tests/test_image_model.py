@@ -91,6 +91,25 @@ def test_inline_images_are_identified_by_payload_hash_only():
     assert [m.digest for m in find_media(trace(frame))] == [sha(frame)]
 
 
+def test_short_data_uri_in_text_is_not_sent_as_an_image():
+    """Regression (TB4 Antigravity sglang-qwen-burst, 3 trials): a test file the agent read
+    held `"data:image/png;base64,abcd"`; the loader read it as text, but --image-model
+    collected it and sent 3 bytes as a PNG, failing every call."""
+    source = '143:  self.assertEqual(url, "data:image/png;base64,abcd")\n'
+    raw = trace()
+    raw["steps"].insert(2, {"step_id": 3, "source": "agent", "message": source})
+    assert list(find_media(raw)) == []
+    assert not content(source).media
+    # A real payload in text still counts, and an explicit block counts at any size.
+    frame = png()
+    assert [m.digest for m in find_media({"text": f"see {uri(frame)}"})] == [sha(frame)]
+    block = {
+        "type": "image",
+        "source": {"media_type": "image/png", "path": "data:image/png;base64,abcd"},
+    }
+    assert len(list(find_media([block]))) == 1
+
+
 @pytest.mark.parametrize(
     "value",
     [

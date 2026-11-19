@@ -44,9 +44,17 @@ def decode(mime: str, payload: str) -> Media | None:
     return Media(hashlib.sha256(data).hexdigest(), mime.lower(), data) if data else None
 
 
+# A data URI inside text carries media only with a real payload: the smallest PNG is ~90
+# base64 characters. A shorter one is text (a sanitizer test, `<img src="data:…,abc">`
+# in HTML the agent writes, a placeholder in a test file it reads). Explicit image blocks
+# are media at any size. Regression: an sglang test's `data:image/png;base64,abcd` in
+# three TB4 traces was sent to --image-model as a 3-byte "PNG" (every call failed).
+MIN_TEXT_PAYLOAD = 64
+
+
 def text_media(text: str) -> list[Media]:
-    """Every data-URI payload in a string."""
-    found = (decode(m[1], m[2]) for m in DATA_URI.finditer(text))
+    """Every data-URI payload in a string that is long enough to be media."""
+    found = (decode(m[1], m[2]) for m in DATA_URI.finditer(text) if len(m[2]) >= MIN_TEXT_PAYLOAD)
     return [m for m in found if m is not None]
 
 
